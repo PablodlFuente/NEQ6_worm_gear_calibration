@@ -55,13 +55,18 @@ export default function HelpModal({ open, onClose }: Props) {
           <div className="grid gap-3 md:grid-cols-2">
             <HelpBlock title="Flujo recomendado">
               En Ajustes conecta la montura y ejecuta «Escanear montura». Conecta el Flipper por BLE o USB-COM,
-              sincroniza su reloj y abre «Test ejes». El test retrocede 2°, arranca hacia delante y sólo inicia el
-              ADC cuando <Code>:j</Code> confirma el cruce por 0°, ya con el motor en régimen.
+              sincroniza su reloj y abre «Test ejes». Elige CW o CCW. El test mueve primero 2° en el sentido contrario,
+              invierte el giro y sólo inicia el ADC cuando <Code>:j</Code> confirma el cruce por 0°, ya con el motor en régimen.
             </HelpBlock>
             <HelpBlock title="Tres velocidades distintas">
               <b className="text-fog">Solicitada</b>: la que escribes. <b className="text-fog">Programada real</b>:
               la posible tras redondear T1 y respetar T1≥6. <b className="text-fog">Medida :j</b>: desplazamiento
               angular dividido por el tiempo entre lecturas reales del controlador; es la referencia experimental.
+            </HelpBlock>
+            <HelpBlock title="Modo de motor y frenado">
+              Los recorridos cortos usan el modo GOTO lento; los largos, el modo rápido y su ratio detectado. Antes
+              de arrancar se programa también <Code>:M</Code> (200 pasos en lento, 3200 en rápido), evitando reutilizar
+              una distancia de frenado antigua que puede causar una aceleración inicial seguida de avance muy lento.
             </HelpBlock>
             <HelpBlock title="De dónde sale el ángulo">
               Cada punto de posición ancla procede de la respuesta <Code>:j</Code> de la montura, con el offset

@@ -20,6 +20,11 @@ export function lowSpeedGotoMarginSteps(cpr: number): number {
   return Math.round((640 * cpr) / SIDEREAL_DAY_SECONDS);
 }
 
+/** Escrituras con riesgo persistente o que alteran la referencia de posición. */
+export function requiresDangerConfirmation(command: string): boolean {
+  return /^:(?:Q|E|W)/.test(command.trim());
+}
+
 export interface MotionTiming {
   t1: number;
   realDegPerSec: number;

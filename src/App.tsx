@@ -16,6 +16,7 @@ import {
   MAX_POSITION_DELTA,
   POS_OFFSET,
   posField,
+  requiresDangerConfirmation,
   statusFromChars,
   type MountProfile,
   type QuickCmd,
@@ -442,7 +443,7 @@ export default function App() {
       logFault("No hay puerto abierto: pulsa «Conectar» primero.");
       return false;
     }
-    if (/^:(?:Q|E|W)/.test(raw.trim())) {
+    if (requiresDangerConfirmation(raw)) {
       const accepted = window.confirm(
         `COMANDO DE RIESGO\n\n${raw.trim()} puede modificar posición, memoria o firmware de la montura.\n\n¿Quieres enviarlo realmente?`,
       );

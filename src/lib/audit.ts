@@ -21,7 +21,7 @@ function controlLabel(element: HTMLElement): string {
   return (
     element.getAttribute("aria-label") ||
     element.getAttribute("title") ||
-    element.innerText?.trim().replace(/\s+/g, " ").slice(0, 160) ||
+    element.textContent?.trim().replace(/\s+/g, " ").slice(0, 160) ||
     element.tagName
   );
 }

@@ -33,6 +33,17 @@ Se necesitan simultáneamente: COM de montura abierto, CPR detectado, Flipper
 conectado, reloj alineado, ningún movimiento/diagnóstico activo, revoluciones
 enteras entre 1 y 10 y velocidad entre 0,01 y 5 °/s.
 
+## El motor acelera y después avanza muy lento
+
+- No compares directamente `800` de EQMOD con grados por segundo: normalmente
+  representa un múltiplo de la velocidad sideral, no 800 °/s.
+- La aplicación elige GOTO lento o rápido según el recorrido, aplica el ratio de
+  alta velocidad detectado y programa `:M` antes de `:J`.
+- Ejecuta de nuevo **Escanear montura** y comprueba que timer, CPR y ratio no
+  sean cero. En el monitor serie deben aparecer `:G`, `:H`, `:M`, `:T` y `:J`.
+- Haz primero un recorrido corto y sin carga peligrosa. Si persiste, detén la
+  montura y conserva `logs/AAAA-MM-DD.jsonl` para comparar órdenes y respuestas.
+
 ## Hay `OOR` o `OVF`
 
 - `OOR`: la conversión HAL da una corriente fuera de 0–2,5 A. Detén el test y
@@ -54,4 +65,3 @@ npm run check
 cd flipper_fw\neq6_current_logger
 ..\..\.tools\ufbt-venv\Scripts\ufbt.exe
 ```
-

@@ -66,6 +66,7 @@ export default function RightPanel(props: Props) {
         {TABS.map((t) => (
           <button
             key={t.id}
+            aria-label={t.label}
             onClick={() => onTab(t.id)}
             className={`flex flex-1 items-center justify-center gap-1.5 rounded px-1.5 py-2 font-display text-[9.5px] font-bold uppercase tracking-[0.12em] transition-all xl:text-[10px] xl:tracking-[0.16em] ${
               tab === t.id

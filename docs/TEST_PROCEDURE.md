@@ -28,13 +28,19 @@ el sentido y la holgura. Para la primera captura automática usa:
 - 1 revolución.
 - 100 Hz de ADC.
 - 0,5 °/s.
+- Sentido CW o CCW según el recorrido seguro de cables y contrapesos.
 - El eje con menor riesgo de cables o colisión.
 
 En **Test ejes**, el panel derecho contiene únicamente eje, vueltas, muestreo,
 velocidad, velocidad programada/medida, muestras por grado, progreso, inicio y parada. Al pulsar inicio se borra la vista actual,
-el eje retrocede 2° y vuelve hacia delante para alcanzar su régimen. La captura
+el eje recorre 2° en sentido contrario al seleccionado y después invierte el giro para alcanzar su régimen. La captura
 ADC comienza únicamente cuando el feedback `:j` confirma el cruce por 0°; el
 motor no se detiene allí. La gráfica de la izquierda crece durante la adquisición.
+
+La aplicación selecciona GOTO lento para recorridos cortos y GOTO rápido para
+recorridos largos. Antes de arrancar programa también la distancia de frenado
+`:M` (200 pasos en lento y 3200 en rápido); así no se reutiliza un ajuste antiguo
+del controlador que provoque una aceleración inicial seguida de avance lento.
 
 La velocidad programada puede diferir de la solicitada por el redondeo entero
 de T1 y por el límite T1≥6. La velocidad medida usa el desplazamiento devuelto

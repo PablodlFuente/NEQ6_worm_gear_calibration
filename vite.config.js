@@ -53,6 +53,9 @@ export default defineConfig({
     host: "0.0.0.0",
     port: 3000,
     strictPort: true,
+    watch: {
+      ignored: ["**/logs/**", "**/docs/docs_dev/**"],
+    },
     hmr: {
       port: 3000,
     },

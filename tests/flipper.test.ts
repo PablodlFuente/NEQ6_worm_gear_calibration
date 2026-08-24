@@ -12,7 +12,7 @@ import {
   parseCsv,
   unwrapDegrees,
 } from "../src/lib/flipper.ts";
-import { calculateMotionTiming, lowSpeedGotoMarginSteps, MAX_GOTO_STEPS, MAX_POSITION_DELTA, MAX_SAFE_ABSOLUTE_GOTO_DELTA, MIN_T1_TICKS } from "../src/lib/protocol.ts";
+import { calculateMotionTiming, lowSpeedGotoMarginSteps, MAX_GOTO_STEPS, MAX_POSITION_DELTA, MAX_SAFE_ABSOLUTE_GOTO_DELTA, MIN_T1_TICKS, requiresDangerConfirmation } from "../src/lib/protocol.ts";
 import { buildZip } from "../src/lib/zip.ts";
 
 function frame(timestamp: number, adc: number): Uint8Array {
@@ -113,6 +113,15 @@ test("la carrerilla de 2° usa GOTO lento y la vuelta usa GOTO rápido", () => {
   const margin = lowSpeedGotoMarginSteps(cpr);
   assert.ok((2 * cpr) / 360 < margin);
   assert.ok(cpr > margin);
+});
+
+test("sólo las escrituras persistentes de riesgo piden confirmación", () => {
+  assert.equal(requiresDangerConfirmation(":Q55AA"), true);
+  assert.equal(requiresDangerConfirmation(" :E1800000"), true);
+  assert.equal(requiresDangerConfirmation(":W1ABCD"), true);
+  assert.equal(requiresDangerConfirmation(":L1"), false);
+  assert.equal(requiresDangerConfirmation(":L2"), false);
+  assert.equal(requiresDangerConfirmation(":j1"), false);
 });
 
 test("la velocidad respeta la cuantización y el mínimo T1=6", () => {
