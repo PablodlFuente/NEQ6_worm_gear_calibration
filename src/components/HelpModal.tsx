@@ -73,6 +73,11 @@ export default function HelpModal({ open, onClose }: Props) {
               calcula el valor medido usando sólo muestras situadas entre anclas de feedback y el recorrido angular
               observado. Una tasa alta o una velocidad baja aportan más muestras por grado.
             </HelpBlock>
+            <HelpBlock title="Tasa ADC solicitada y efectiva">
+              La tasa solicitada es la orden enviada al Flipper; la efectiva se calcula con sus timestamps. Si difieren,
+              revisa OVF y el transporte. El firmware v3.1 elimina una conversión lenta que limitaba 1000 Hz a unos
+              320 Hz. BLE puede rendir menos que USB-COM; reduce la tasa si aparecen desbordamientos.
+            </HelpBlock>
             <HelpBlock title="Promedio y barras de error">
               ×1 conserva cada muestra. ×N agrupa N muestras consecutivas y representa su media. En cartesiano,
               las barras Y son el SEM de la corriente y las X el SEM del ángulo; el CSV procesado guarda ambos,
@@ -82,6 +87,11 @@ export default function HelpModal({ open, onClose }: Props) {
               La frecuencia indica repeticiones por segundo y el periodo su separación temporal. «Cada °» convierte
               ese periodo a recorrido de la montura mediante la velocidad medida por <Code>:j</Code>: por ejemplo,
               2 s a 0,4 °/s equivalen a una repetición cada 0,8°. Sin feedback angular no se muestra esa conversión.
+            </HelpBlock>
+            <HelpBlock title="Zoom, picos, elipse y exportación">
+              Activa Zoom/Pan, usa la rueda y arrastra; Restaurar recupera el encuadre. En FFT, pulsa un pico para
+              añadirlo a la lista y × para quitarlo. Al terminar, Polar muestra la elipse ajustada, sus ejes e inclinación.
+              «Exportar todo» crea un ZIP con PNG, CSV crudo/procesado, espectro FFT, picos y resumen JSON.
             </HelpBlock>
           </div>
 

@@ -15,6 +15,8 @@ export interface AxisTestState {
   currentDeg: number;
   targetDeg: number;
   message: string;
+  elapsedSec: number;
+  actualDurationSec: number | null;
 }
 
 interface Props {
@@ -56,6 +58,13 @@ export default function AxisTestPanel({
   const estimatedSamplesPerDeg = timing ? inputs.sampleRate / timing.realDegPerSec : null;
   const measuredSpeed = flip.derived?.st.feedbackSpeedDegS ?? null;
   const measuredSamplesPerDeg = flip.derived?.st.samplesPerDeg ?? null;
+  const effectiveRate = flip.derived?.st.rateEst ?? null;
+  const estimatedDurationSec = timing ? state.targetDeg / timing.realDegPerSec : null;
+  const formatTime = (seconds: number) => {
+    const mins = Math.floor(seconds / 60);
+    const secs = Math.round(seconds % 60);
+    return mins ? `${mins} min ${secs.toString().padStart(2, "0")} s` : `${secs} s`;
+  };
 
   return (
     <section className="rounded border border-line bg-panel p-3">
@@ -145,8 +154,28 @@ export default function AxisTestPanel({
         <span className="text-right tabular-nums text-fog">{estimatedSamplesPerDeg ? estimatedSamplesPerDeg.toFixed(1) : "—"}</span>
         <span className="text-dim">muestras/° medidas</span>
         <span className="text-right tabular-nums text-ion">{measuredSamplesPerDeg ? measuredSamplesPerDeg.toFixed(1) : "—"}</span>
+        <span className="text-dim">ADC efectivo</span>
+        <span className={`text-right tabular-nums ${effectiveRate && effectiveRate < inputs.sampleRate * 0.9 ? "text-alert" : "text-ion"}`}>
+          {effectiveRate ? `${effectiveRate.toFixed(1)} Hz` : "—"}
+        </span>
+        <span className="text-dim">tiempo estimado</span>
+        <span className="text-right tabular-nums text-fog">{estimatedDurationSec ? formatTime(estimatedDurationSec) : "—"}</span>
+        <span className="text-dim">tiempo {state.running ? "transcurrido" : "real"}</span>
+        <span className="text-right tabular-nums text-ion">
+          {state.running
+            ? formatTime(state.elapsedSec)
+            : state.actualDurationSec !== null
+              ? formatTime(state.actualDurationSec)
+              : "—"}
+        </span>
         {timing?.limited && (
           <p className="col-span-2 mt-1 text-alert">Límite de esta montura: {timing.maxDegPerSec.toFixed(4)} °/s (T1=6).</p>
+        )}
+        {effectiveRate !== null && effectiveRate < inputs.sampleRate * 0.9 && (
+          <p className="col-span-2 mt-1 text-alert">
+            La diferencia muestras/° se debe a que llegan {effectiveRate.toFixed(1)} Hz de {inputs.sampleRate} Hz solicitados
+            {flip.deviceInfo?.overflow ? ` · OVF=${flip.deviceInfo.overflow}` : ""}. Actualiza el firmware v3.1 o reduce la tasa.
+          </p>
         )}
       </div>
 

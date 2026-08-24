@@ -13,6 +13,9 @@ ufbt launch
 
 Ejecuta los comandos dentro de esta carpeta y cierra qFlipper antes de `launch`.
 El SDK descargado por `ufbt update` debe corresponder al firmware instalado.
+
+La versión v3.1 elimina la conversión HAL por muestra que limitaba la tasa
+efectiva alta. `INFO` y la web permiten comprobar `OOR`, `OVF` y la tasa medida.
 Para el Momentum probado en este proyecto se incluye también el binario
 `release/neq6_current_logger-momentum-api87.1.fap`; si el firmware del Flipper
 usa otra API, recompila las fuentes en lugar de forzar ese FAP.

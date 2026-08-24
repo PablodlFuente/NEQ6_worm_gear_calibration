@@ -9,6 +9,7 @@ import {
   buildRawCsv,
   circularStats,
   fftMag,
+  fitPolarEllipse,
   idb,
   mean,
   median,
@@ -21,6 +22,7 @@ import {
   type Sample,
   type Session,
 } from "../lib/flipper";
+import { buildZip, downloadBlob } from "../lib/zip";
 
 const MAX_SAMPLES = 1_500_000;
 
@@ -45,6 +47,14 @@ export function useFlipper({ cpr1 }: Props) {
   const [avgFactor, setAvgFactor] = useState(1);
   const [overlayRevs, setOverlayRevs] = useState(true);
   const [notice, setNotice] = useState<string | null>(null);
+  const [deviceInfo, setDeviceInfo] = useState<{
+    version: string;
+    requestedHz: number;
+    timerHz: number;
+    outOfRange: number;
+    overflow: number;
+    total: number;
+  } | null>(null);
   const [sessions, setSessions] = useState<Session[]>([]);
 
   const pendingLineRef = useRef<((line: string) => void) | null>(null);
@@ -212,6 +222,7 @@ export function useFlipper({ cpr1 }: Props) {
     const requestedRate = rateOverride ?? rate;
     const generation = ++captureGenerationRef.current;
     setRate(requestedRate);
+    setDeviceInfo(null);
     setNotice(null);
     const r1 = await sendCmd(`RATE ${requestedRate}`);
     if (!r1 || r1 !== "OK") {
@@ -237,7 +248,21 @@ export function useFlipper({ cpr1 }: Props) {
     captureGenerationRef.current++;
     capturingRef.current = false;
     setCapturing(false);
-    if (connected) await sendCmd("STOP", 700);
+    if (connected) {
+      await sendCmd("STOP", 700);
+      const info = await sendCmd("INFO", 900);
+      const match = info?.match(/^INFO\s+(\S+)\s+r=(\d+)\s+a=(\d+)\s+c=\d+\s+oor=(\d+)\s+ovf=(\d+)\s+n=(\d+)$/);
+      if (match) {
+        setDeviceInfo({
+          version: match[1],
+          requestedHz: Number(match[2]),
+          timerHz: Number(match[3]),
+          outOfRange: Number(match[4]),
+          overflow: Number(match[5]),
+          total: Number(match[6]),
+        });
+      }
+    }
     if (bump) setVersion((v) => v + 1);
   };
 
@@ -311,6 +336,10 @@ export function useFlipper({ cpr1 }: Props) {
     const plot = perUnw
       ? averageAngleSeries(tsRef.current, tbRef.current, adcRef.current, amps, perUnw, m)
       : null;
+    const angleSpanDeg = unwrapped.length >= 2
+      ? Math.abs(unwrapped[unwrapped.length - 1].deg - unwrapped[0].deg)
+      : 0;
+    const ellipse = plot && angleSpanDeg >= 330 ? fitPolarEllipse(plot.angles, plot.amps) : null;
 
     const D = (tsRef.current[n - 1] - tsRef.current[0]) / 1e6;
     let mag: Float64Array | null = null;
@@ -335,10 +364,11 @@ export function useFlipper({ cpr1 }: Props) {
       dThetaEnc: cpr1 ? 360 / cpr1 : null,
       feedbackSpeedDegS: null as number | null,
       samplesPerDeg: null as number | null,
+      angleSpanDeg,
       maxA: 0,
     };
     if (unwrapped.length >= 2 && perUnw) {
-      const angleSpan = Math.abs(unwrapped[unwrapped.length - 1].deg - unwrapped[0].deg);
+      const angleSpan = angleSpanDeg;
       const segmentSpeeds: number[] = [];
       for (let i = 1; i < unwrapped.length; i++) {
         const dtS = (unwrapped[i].tb - unwrapped[i - 1].tb) / 1000;
@@ -364,6 +394,7 @@ export function useFlipper({ cpr1 }: Props) {
       nRevs,
       avgA,
       plot,
+      ellipse,
       mag,
       peaks,
       df: D > 0 ? 1 / D : 0,
@@ -388,23 +419,10 @@ export function useFlipper({ cpr1 }: Props) {
 
   const stamp = () => new Date().toISOString().slice(0, 19).replace(/[:T]/g, "-");
 
-  const exportRaw = () => {
-    if (!adcRef.current.length) {
-      setNotice("No hay muestras que exportar.");
-      return;
-    }
-    download(`neq6-raw-${stamp()}.csv`, buildRawCsv(makeSamples(), rate));
-  };
+  const rawCsvText = () => buildRawCsv(makeSamples(), rate);
 
-  const exportProc = () => {
-    if (!derived) {
-      setNotice("No hay datos procesados que exportar.");
-      return;
-    }
-    if (!derived.plot) {
-      setNotice("No hay muestras con ángulo para el CSV procesado.");
-      return;
-    }
+  const processedCsvText = () => {
+    if (!derived?.plot) return null;
     const rows = Array.from({ length: derived.plot.length }, (_, i) => ({
       ts: derived.plot!.ts[i],
       tb: derived.plot!.tb[i],
@@ -424,7 +442,56 @@ export function useFlipper({ cpr1 }: Props) {
         ? `feedback_speed=${derived.st.feedbackSpeedDegS.toFixed(6)} deg/s · samples_per_deg=${(derived.st.samplesPerDeg ?? 0).toFixed(3)}`
         : "feedback_speed=unavailable",
     ];
-    download(`neq6-proc-${stamp()}.csv`, buildProcCsv(rows, rate, statsTxt));
+    return buildProcCsv(rows, rate, statsTxt);
+  };
+
+  const exportRaw = () => {
+    if (!adcRef.current.length) {
+      setNotice("No hay muestras que exportar.");
+      return;
+    }
+    download(`neq6-raw-${stamp()}.csv`, rawCsvText());
+  };
+
+  const exportProc = () => {
+    if (!derived) {
+      setNotice("No hay datos procesados que exportar.");
+      return;
+    }
+    if (!derived.plot) {
+      setNotice("No hay muestras con ángulo para el CSV procesado.");
+      return;
+    }
+    download(`neq6-proc-${stamp()}.csv`, processedCsvText()!);
+  };
+
+  const exportBundle = async (extraFiles: { name: string; data: string | Uint8Array }[] = []) => {
+    if (!derived || !adcRef.current.length) {
+      setNotice("No hay datos que exportar.");
+      return;
+    }
+    const files: { name: string; data: string | Uint8Array }[] = [
+      { name: "datos/adc-crudo.csv", data: rawCsvText() },
+    ];
+    const processed = processedCsvText();
+    if (processed) files.push({ name: "datos/angulo-corriente-procesado.csv", data: processed });
+    if (derived.mag) {
+      const speed = derived.st.feedbackSpeedDegS;
+      let fftCsv = "bin,frequency_hz,period_s,period_mount_deg,magnitude\n";
+      for (let i = 1; i < derived.mag.length; i++) {
+        const frequency = i * derived.df;
+        const period = 1 / frequency;
+        fftCsv += `${i},${frequency.toFixed(9)},${period.toFixed(9)},${speed ? (period * speed).toFixed(9) : ""},${derived.mag[i].toExponential(9)}\n`;
+      }
+      files.push({ name: "datos/fft-espectro.csv", data: fftCsv });
+    }
+    files.push({
+      name: "datos/resumen.json",
+      data: JSON.stringify({ exportedAt: new Date().toISOString(), requestedRateHz: rate, statistics: derived.st, ellipse: derived.ellipse, deviceInfo }, null, 2),
+    });
+    files.push(...extraFiles);
+    downloadBlob(`neq6-test-${stamp()}.zip`, buildZip(files));
+    setNotice("Exportación completa preparada: gráficas, CSV, FFT y resumen.");
   };
 
   const importCsv = async (file: File) => {
@@ -517,10 +584,12 @@ export function useFlipper({ cpr1 }: Props) {
     setOverlayRevs,
     recalc: () => setVersion((v) => v + 1),
     notice,
+    deviceInfo,
     sessions,
     makeSamples,
     exportRaw,
     exportProc,
+    exportBundle,
     importCsv,
     saveSession,
     loadSession,

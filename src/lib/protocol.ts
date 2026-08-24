@@ -5,6 +5,12 @@ export const POS_OFFSET = 0x800000;
 export const MAX_POSITION_DELTA = 0x7fffff;
 /** Máximo recorrido modular que cabe en un objetivo GOTO de 24 bits. */
 export const MAX_GOTO_STEPS = 0xffffff;
+/**
+ * Máximo incremento seguro al usar un destino absoluto :S. Por encima de
+ * media escala, el mismo destino modular representa un recorrido más corto
+ * en el sentido opuesto (una vuelta EQ6 acabaría en ~309°).
+ */
+export const MAX_SAFE_ABSOLUTE_GOTO_DELTA = 0x7fffff;
 /** Límite aplicado por la implementación de referencia de SkyWatcher/INDI. */
 export const MIN_T1_TICKS = 6;
 

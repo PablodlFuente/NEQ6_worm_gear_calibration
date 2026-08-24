@@ -47,6 +47,15 @@ de error estándar tanto horizontales (ángulo) como verticales (corriente). El
 CSV procesado exporta esas mismas medias, errores y el tamaño de cada bloque.
 La tabla FFT añade «cada (montura)»: periodo × velocidad medida, expresado en
 grados, para localizar la separación angular de cada repetición dominante.
+El eje FFT muestra el espectro completo hasta Nyquist. Pulsa sobre un pico para
+añadirlo a la tabla y usa × para quitarlo. Todas las gráficas disponen de modo
+Zoom/Pan y botón Restaurar.
+
+Al terminar, Polar dibuja el ajuste elíptico y sus dos ejes; sus parámetros
+también aparecen en Estadísticas. **Exportar todo** descarga un ZIP con las
+gráficas, CSV, FFT y resumen. Comprueba que el recorrido final confirmado por
+`:j` sea el objetivo completo: una captura incompleta ya no se etiqueta como
+terminada.
 
 Pulsa **Parada de emergencia** ante ruido anormal, atasco, aumento brusco de
 corriente o riesgo de cable. El motor recibe `:L` y el logger recibe `STOP`; el

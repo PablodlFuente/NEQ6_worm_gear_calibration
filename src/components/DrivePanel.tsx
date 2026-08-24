@@ -1,4 +1,4 @@
-import { calculateMotionTiming, MAX_GOTO_STEPS, type MountProfile } from "../lib/protocol";
+import { calculateMotionTiming, MAX_SAFE_ABSOLUTE_GOTO_DELTA, type MountProfile } from "../lib/protocol";
 import { IconAlert, IconPlay, IconStop } from "./icons";
 
 export interface MoveInputs {
@@ -80,7 +80,7 @@ export default function DrivePanel({
     limited = timing.limited;
     if (degOk) {
       steps = Math.max(1, Math.round(Math.abs(deg) * (cpr / 360)));
-      chunks = Math.max(1, Math.ceil(steps / MAX_GOTO_STEPS));
+      chunks = Math.max(1, Math.ceil(steps / MAX_SAFE_ABSOLUTE_GOTO_DELTA));
       secs = Math.abs(deg) / real;
     }
   }

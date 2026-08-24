@@ -36,9 +36,14 @@ genera en `dist/neq6_current_logger.fap`. La interfaz web permite descargar las
 fuentes como ZIP desde **Ajustes**.
 
 El repositorio incluye en `release/neq6_current_logger-momentum-api87.1.fap` el
-binario validado con el Momentum conectado durante esta revisión (SHA-256
-`EFE31A639B8F7888DC2F82F9858307F77113504279FB396DB6D620A3DA217162`). Para
+binario v3.1 compilado para Momentum API 87.1 (SHA-256
+`D9FC952EE73E8CB8691D6346D889F3C6E8B6AAB4C59714C3B84C6CC2143990E4`). Para
 otra versión/API del sistema, recompila el FAP desde las fuentes.
+
+La versión v3.1 usa un umbral ADC crudo equivalente para OOR y evita la
+conversión de voltaje HAL dentro del bucle de muestreo. Esta corrección es
+necesaria para acercarse a 1000 Hz; la web muestra siempre la tasa efectiva y
+el contador OVF para verificar el resultado real.
 
 ## Instalar y ejecutar
 

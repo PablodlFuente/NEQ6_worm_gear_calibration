@@ -34,6 +34,8 @@
 #define ADC_CAL_K   1.0025189f
 #define SHUNT_R_OHM 0.323f
 #define MAX_CURRENT 2.5f
+#define MAX_CURRENT_RAW \
+    ((uint16_t)((MAX_CURRENT * SHUNT_R_OHM * 4095.0f / (2.5f * ADC_CAL_K)) + 0.5f))
 
 #define PA7_CHANNEL FuriHalAdcChannel12
 
@@ -48,7 +50,7 @@
 #define TX_BATCH     8 /* 64 bytes: valid for USB CDC and BLE */
 #define USB_IFACE    1 /* CDC0 is reserved for CLI/qFlipper */
 
-#define APP_VERSION "v3.0"
+#define APP_VERSION "v3.1"
 
 typedef struct {
     uint32_t timestamp_us;
@@ -251,10 +253,10 @@ static int32_t adc_worker(void* context) {
 
         const uint32_t timestamp_us = micros_now(app);
         const uint16_t raw = furi_hal_adc_read(adc, PA7_CHANNEL);
-        const float voltage_calibrated =
-            ((float)furi_hal_adc_convert_to_voltage(adc, raw) / 1000.0f) * ADC_CAL_K;
-        const float current = voltage_calibrated / SHUNT_R_OHM;
-        if(current < 0.0f || current > MAX_CURRENT) {
+        /* La conversión HAL calibrada dentro del bucle costaba varios ms y
+         * limitaba una petición de 1000 Hz a ~320 Hz. El umbral equivalente
+         * en cuentas conserva la protección OOR sin frenar la adquisición. */
+        if(raw > MAX_CURRENT_RAW) {
             logger->out_of_range++;
             continue;
         }

@@ -18,6 +18,9 @@ const REV_COLORS = [
 ];
 
 type View = "vivo" | "polar" | "cartesiano" | "fft" | "stats";
+type Peak = { bin: number; freq: number; period: number; mag: number };
+type ChartTransform = { scale: number; x: number; y: number };
+const RESET_TRANSFORM: ChartTransform = { scale: 1, x: 0, y: 0 };
 
 const VIEWS: { id: View; label: string }[] = [
   { id: "vivo", label: "Vivo" },
@@ -30,11 +33,20 @@ const VIEWS: { id: View; label: string }[] = [
 function ChartCanvas({
   draw,
   className,
+  zoomMode,
+  transform,
+  onTransform,
+  onPick,
 }: {
   draw: (ctx: CanvasRenderingContext2D, w: number, h: number) => void;
   className: string;
+  zoomMode: boolean;
+  transform: ChartTransform;
+  onTransform: (next: ChartTransform) => void;
+  onPick?: (x: number, y: number) => void;
 }) {
   const ref = useRef<HTMLCanvasElement>(null);
+  const drag = useRef<{ x: number; y: number; tx: number; ty: number; moved: boolean } | null>(null);
   useEffect(() => {
     const cv = ref.current;
     if (!cv || !cv.parentElement) return;
@@ -58,9 +70,50 @@ function ChartCanvas({
     ro.observe(parent);
     return () => ro.disconnect();
   });
+  const pointerDown = (event: React.PointerEvent<HTMLCanvasElement>) => {
+    event.currentTarget.setPointerCapture(event.pointerId);
+    drag.current = { x: event.clientX, y: event.clientY, tx: transform.x, ty: transform.y, moved: false };
+  };
+  const pointerMove = (event: React.PointerEvent<HTMLCanvasElement>) => {
+    if (!drag.current) return;
+    const dx = event.clientX - drag.current.x;
+    const dy = event.clientY - drag.current.y;
+    if (Math.hypot(dx, dy) > 3) drag.current.moved = true;
+    if (zoomMode) onTransform({ ...transform, x: drag.current.tx + dx, y: drag.current.ty + dy });
+  };
+  const pointerUp = (event: React.PointerEvent<HTMLCanvasElement>) => {
+    const state = drag.current;
+    drag.current = null;
+    if (!state?.moved && onPick) {
+      const rect = event.currentTarget.getBoundingClientRect();
+      onPick((event.clientX - rect.left) / rect.width, (event.clientY - rect.top) / rect.height);
+    }
+  };
+  const wheel = (event: React.WheelEvent<HTMLCanvasElement>) => {
+    if (!zoomMode) return;
+    event.preventDefault();
+    const parentRect = event.currentTarget.parentElement!.getBoundingClientRect();
+    const px = event.clientX - parentRect.left;
+    const py = event.clientY - parentRect.top;
+    const scale = Math.min(12, Math.max(1, transform.scale * (event.deltaY < 0 ? 1.18 : 1 / 1.18)));
+    onTransform({
+      scale,
+      x: px - ((px - transform.x) * scale) / transform.scale,
+      y: py - ((py - transform.y) * scale) / transform.scale,
+    });
+  };
   return (
     <div className={`relative w-full overflow-hidden rounded border border-line bg-[#081120] ${className}`}>
-      <canvas ref={ref} className="block" />
+      <canvas
+        ref={ref}
+        className={`block touch-none ${zoomMode ? "cursor-grab active:cursor-grabbing" : onPick ? "cursor-crosshair" : ""}`}
+        style={{ transformOrigin: "0 0", transform: `translate(${transform.x}px, ${transform.y}px) scale(${transform.scale})` }}
+        onPointerDown={pointerDown}
+        onPointerMove={pointerMove}
+        onPointerUp={pointerUp}
+        onPointerCancel={() => (drag.current = null)}
+        onWheel={wheel}
+      />
     </div>
   );
 }
@@ -76,11 +129,26 @@ function StatCell({ k, v, tone }: { k: string; v: ReactNode; tone?: string }) {
 
 export default function FlipperLab({ flip, serialOpen }: { flip: FlipperApi; serialOpen: boolean }) {
   const [view, setView] = useState<View>("vivo");
+  const [zoomMode, setZoomMode] = useState(false);
+  const [transforms, setTransforms] = useState<Record<View, ChartTransform>>({
+    vivo: RESET_TRANSFORM,
+    polar: RESET_TRANSFORM,
+    cartesiano: RESET_TRANSFORM,
+    fft: RESET_TRANSFORM,
+    stats: RESET_TRANSFORM,
+  });
+  const [selectedPeaks, setSelectedPeaks] = useState<Peak[]>([]);
   const fileRef = useRef<HTMLInputElement>(null);
 
   const { derived, stats } = flip;
   const n = stats.n;
   void flip.tick;
+  useEffect(() => {
+    if (!n) setSelectedPeaks([]);
+  }, [n]);
+
+  const setTransform = (next: ChartTransform) => setTransforms((all) => ({ ...all, [view]: next }));
+  const resetView = () => setTransforms((all) => ({ ...all, [view]: RESET_TRANSFORM }));
 
   /* ── dibujo: vivo ────────────────────────────────────── */
   const drawLive = (ctx: CanvasRenderingContext2D, w: number, h: number) => {
@@ -199,6 +267,34 @@ export default function FlipperLab({ flip, serialOpen }: { flip: FlipperApi; ser
       }
     }
     plot("rgba(245,165,36,0.95)", 1.6);
+    const fit = derived?.ellipse;
+    if (fit && !flip.capturing) {
+      const scale = R / maxI;
+      const ex = cx + fit.centerX * scale;
+      const ey = cy + fit.centerY * scale;
+      const angle = (fit.angleDeg * Math.PI) / 180;
+      const ca = Math.cos(angle);
+      const sa = Math.sin(angle);
+      ctx.strokeStyle = "rgba(76,201,240,0.95)";
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.ellipse(ex, ey, fit.semiMajor * scale, fit.semiMinor * scale, angle, 0, Math.PI * 2);
+      ctx.stroke();
+      ctx.lineWidth = 1.2;
+      ctx.beginPath();
+      ctx.moveTo(ex - ca * fit.semiMajor * scale, ey - sa * fit.semiMajor * scale);
+      ctx.lineTo(ex + ca * fit.semiMajor * scale, ey + sa * fit.semiMajor * scale);
+      ctx.moveTo(ex + sa * fit.semiMinor * scale, ey - ca * fit.semiMinor * scale);
+      ctx.lineTo(ex - sa * fit.semiMinor * scale, ey + ca * fit.semiMinor * scale);
+      ctx.stroke();
+      ctx.fillStyle = "#4cc9f0";
+      ctx.textAlign = "left";
+      ctx.fillText(
+        `elipse a=${fit.semiMajor.toFixed(3)} A · b=${fit.semiMinor.toFixed(3)} A · φ=${fit.angleDeg.toFixed(1)}°`,
+        6,
+        23,
+      );
+    }
     ctx.fillStyle = "#f5a524";
     ctx.textAlign = "left";
     ctx.fillText(`max ${maxI.toFixed(3)} A · ${data.length.toLocaleString("es-ES")} puntos`, 6, 11);
@@ -303,7 +399,9 @@ export default function FlipperLab({ flip, serialOpen }: { flip: FlipperApi; ser
     }
     const L = 10;
     const Bm = 18;
-    const usable = Math.floor(mag.length * 0.6);
+    /* Mostrar el espectro completo hasta Nyquist. Antes se dibujaba sólo el
+     * 60 %, aunque la tabla buscaba picos en el 100 % del espectro. */
+    const usable = mag.length;
     let mx = 0;
     for (let i = 2; i < usable; i++) if (mag[i] > mx) mx = mag[i];
     const X = (i: number) => L + (i / usable) * (w - L * 2);
@@ -328,21 +426,90 @@ export default function FlipperLab({ flip, serialOpen }: { flip: FlipperApi; ser
       ctx.textAlign = "center";
       ctx.fillText(`${p.freq.toFixed(2)}Hz`, X(p.bin), Y(p.mag) - 6);
     }
+    for (const p of selectedPeaks) {
+      if (p.bin >= usable) continue;
+      ctx.strokeStyle = "#ff5d5d";
+      ctx.lineWidth = 1.5;
+      ctx.beginPath();
+      ctx.arc(X(p.bin), Y(p.mag), 6, 0, Math.PI * 2);
+      ctx.stroke();
+    }
+  };
+
+  const pickFft = (x: number) => {
+    const mag = derived?.mag;
+    if (!mag || !derived) return;
+    const center = Math.max(2, Math.min(mag.length - 2, Math.round(x * mag.length)));
+    const radius = Math.max(8, Math.round(mag.length * 0.008));
+    let bin = center;
+    for (let i = Math.max(2, center - radius); i <= Math.min(mag.length - 2, center + radius); i++) {
+      if (mag[i] > mag[bin]) bin = i;
+    }
+    const freq = bin * derived.df;
+    const peak = { bin, freq, period: 1 / freq, mag: mag[bin] };
+    setSelectedPeaks((current) =>
+      current.some((item) => item.bin === bin) ? current : [...current, peak].sort((a, b) => a.freq - b.freq),
+    );
+  };
+
+  const renderPng = async (draw: (ctx: CanvasRenderingContext2D, w: number, h: number) => void) => {
+    const canvas = document.createElement("canvas");
+    canvas.width = 1400;
+    canvas.height = 800;
+    const ctx = canvas.getContext("2d")!;
+    draw(ctx, canvas.width, canvas.height);
+    ctx.save();
+    ctx.globalCompositeOperation = "destination-over";
+    ctx.fillStyle = "#081120";
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    ctx.restore();
+    const blob = await new Promise<Blob>((resolve, reject) =>
+      canvas.toBlob((value) => (value ? resolve(value) : reject(new Error("No se pudo crear PNG"))), "image/png"),
+    );
+    return new Uint8Array(await blob.arrayBuffer());
+  };
+
+  const exportAll = async () => {
+    if (!derived) return void flip.exportBundle();
+    const [live, polar, cart, fft] = await Promise.all([
+      renderPng(drawLive),
+      renderPng(drawPolar),
+      renderPng(drawCart),
+      renderPng(drawFft),
+    ]);
+    let selectedCsv = "frequency_hz,period_s,period_mount_deg,magnitude\n";
+    for (const peak of selectedPeaks) {
+      selectedCsv += `${peak.freq.toFixed(9)},${peak.period.toFixed(9)},${
+        derived.st.feedbackSpeedDegS ? (peak.period * derived.st.feedbackSpeedDegS).toFixed(9) : ""
+      },${peak.mag.toExponential(9)}\n`;
+    }
+    await flip.exportBundle([
+      { name: "graficas/corriente-tiempo.png", data: live },
+      { name: "graficas/polar-elipse.png", data: polar },
+      { name: "graficas/cartesiana.png", data: cart },
+      { name: "graficas/fft.png", data: fft },
+      { name: "datos/fft-picos-seleccionados.csv", data: selectedCsv },
+    ]);
   };
 
   const chartFor = useMemo(() => {
+    const interaction = {
+      zoomMode,
+      transform: transforms[view],
+      onTransform: setTransform,
+    };
     switch (view) {
       case "polar":
-        return <ChartCanvas draw={drawPolar} className="h-[46dvh] min-h-[300px]" />;
+        return <ChartCanvas draw={drawPolar} className="h-[46dvh] min-h-[300px]" {...interaction} />;
       case "cartesiano":
-        return <ChartCanvas draw={drawCart} className="h-[46dvh] min-h-[300px]" />;
+        return <ChartCanvas draw={drawCart} className="h-[46dvh] min-h-[300px]" {...interaction} />;
       case "fft":
-        return <ChartCanvas draw={drawFft} className="h-[46dvh] min-h-[300px]" />;
+        return <ChartCanvas draw={drawFft} className="h-[46dvh] min-h-[300px]" onPick={(x) => pickFft(x)} {...interaction} />;
       default:
-        return <ChartCanvas draw={drawLive} className="h-[46dvh] min-h-[300px]" />;
+        return <ChartCanvas draw={drawLive} className="h-[46dvh] min-h-[300px]" {...interaction} />;
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [view, derived, n, flip.tick, flip.overlayRevs]);
+  }, [view, derived, n, flip.tick, flip.overlayRevs, flip.capturing, zoomMode, transforms, selectedPeaks]);
 
   const selCls =
     "rounded border border-line bg-[#0c1930] px-1.5 py-1 font-mono text-[10.5px] text-fog focus:border-ion/60 focus:outline-none disabled:opacity-40";
@@ -407,6 +574,21 @@ export default function FlipperLab({ flip, serialOpen }: { flip: FlipperApi; ser
             />
             superponer revs
           </label>
+          {view !== "stats" && (
+            <>
+              <button
+                onClick={() => setZoomMode((active) => !active)}
+                className={`rounded border px-2 py-1 font-display text-[9px] font-bold tracking-wider ${
+                  zoomMode ? "border-ion/60 bg-ion/15 text-ion" : "border-line text-dim hover:text-fog"
+                }`}
+              >
+                ZOOM / PAN
+              </button>
+              <button onClick={resetView} className="rounded border border-line px-2 py-1 font-display text-[9px] font-bold tracking-wider text-dim hover:border-ember/50 hover:text-ember">
+                RESTAURAR
+              </button>
+            </>
+          )}
           {!serialOpen && <span className="font-mono text-[10px] text-alert">sin montura</span>}
         </div>
       </div>
@@ -446,14 +628,20 @@ export default function FlipperLab({ flip, serialOpen }: { flip: FlipperApi; ser
         {view !== "stats" ? (
           <div className="flex h-full min-h-[300px] flex-col gap-2">
             {chartFor}
+            {zoomMode && (
+              <p className="font-mono text-[9.5px] text-ion">Modo zoom: rueda para ampliar/reducir · arrastra para desplazar · Restaurar vuelve al encuadre completo.</p>
+            )}
             {(view === "polar" || view === "cartesiano") && derived?.plot && (
               <p className="font-mono text-[9.5px] text-dim">
                 ×1 representa cada muestra con ángulo · ×N representa la media de bloques consecutivos de N
                 {view === "cartesiano" && flip.avgFactor > 1 ? " · barras X/Y = error estándar (SEM)" : ""}
               </p>
             )}
-            {view === "fft" && derived && derived.peaks.length > 0 && (
+            {view === "fft" && derived && (
               <div className="overflow-hidden rounded border border-line">
+                <p className="border-b border-line bg-[#0c1930] px-2 py-1.5 font-mono text-[9px] text-dim">
+                  Picos seleccionados · pulsa sobre el espectro para añadir
+                </p>
                 <table className="w-full font-mono text-[10px]">
                   <thead>
                     <tr className="bg-[#0c1930] text-left text-[8.5px] uppercase tracking-wider text-dim">
@@ -462,10 +650,11 @@ export default function FlipperLab({ flip, serialOpen }: { flip: FlipperApi; ser
                       <th className="px-2 py-1">periodo</th>
                       <th className="px-2 py-1">cada (montura)</th>
                       <th className="px-2 py-1 text-right">magnitud</th>
+                      <th className="w-8 px-2 py-1" />
                     </tr>
                   </thead>
                   <tbody>
-                    {derived.peaks.map((p, i) => (
+                    {selectedPeaks.map((p, i) => (
                       <tr key={p.bin} className="border-t border-line/60 text-fog">
                         <td className="px-2 py-1 text-ember">{i + 1}</td>
                         <td className="px-2 py-1 tabular-nums">{p.freq.toFixed(3)} Hz</td>
@@ -480,8 +669,21 @@ export default function FlipperLab({ flip, serialOpen }: { flip: FlipperApi; ser
                         <td className="px-2 py-1 text-right tabular-nums text-dim">
                           {p.mag.toExponential(2)}
                         </td>
+                        <td className="px-2 py-1 text-right">
+                          <button
+                            title="Quitar pico"
+                            aria-label={`Quitar pico ${p.freq.toFixed(3)} Hz`}
+                            onClick={() => setSelectedPeaks((items) => items.filter((item) => item.bin !== p.bin))}
+                            className="text-dim hover:text-alert"
+                          >
+                            ×
+                          </button>
+                        </td>
                       </tr>
                     ))}
+                    {!selectedPeaks.length && (
+                      <tr><td colSpan={6} className="px-2 py-3 text-center text-dim">Ningún pico seleccionado.</td></tr>
+                    )}
                   </tbody>
                 </table>
               </div>
@@ -500,14 +702,20 @@ export default function FlipperLab({ flip, serialOpen }: { flip: FlipperApi; ser
         ) : (
           <div className="grid grid-cols-1 gap-1.5 font-mono text-[10px] sm:grid-cols-2">
             <StatCell k="N (crudo / promediado)" v={`${derived.st.n.toLocaleString("es-ES")} / ${derived.st.nAvg.toLocaleString("es-ES")}`} />
-            <StatCell k="duración" v={`${derived.st.durS.toFixed(2)} s`} />
-            <StatCell k="tasa estimada" v={`${derived.st.rateEst.toFixed(1)} Hz`} />
+            <StatCell k="tiempo real adquisición" v={`${derived.st.durS.toFixed(2)} s`} />
+            <StatCell k="tasa ADC efectiva" v={`${derived.st.rateEst.toFixed(1)} Hz`} />
+            <StatCell
+              k="rendimiento solicitado/efectivo"
+              v={`${Math.min(999, (derived.st.rateEst / flip.rate) * 100).toFixed(1)} %`}
+              tone={derived.st.rateEst < flip.rate * 0.9 ? "text-alert" : "text-mint"}
+            />
             {derived.st.feedbackSpeedDegS !== null && (
               <StatCell k="velocidad medida (:j)" v={`${derived.st.feedbackSpeedDegS.toFixed(4)} °/s`} tone="text-ion" />
             )}
             {derived.st.samplesPerDeg !== null && (
               <StatCell k="muestras / grado medidas" v={derived.st.samplesPerDeg.toFixed(1)} tone="text-ion" />
             )}
+            <StatCell k="recorrido confirmado :j" v={`${derived.st.angleSpanDeg.toFixed(2)}°`} tone={derived.st.angleSpanDeg >= 358 ? "text-mint" : "text-alert"} />
             <StatCell k="factor de promedio" v={`×${flip.avgFactor}`} tone="text-ion" />
             <StatCell k="media" v={`${derived.st.mean.toFixed(5)} A`} />
             <StatCell k="mediana" v={`${derived.st.median.toFixed(5)} A`} />
@@ -527,6 +735,21 @@ export default function FlipperLab({ flip, serialOpen }: { flip: FlipperApi; ser
             {derived.st.dThetaEnc !== null && (
               <StatCell k="δθ encoder (360/CPR)" v={`${derived.st.dThetaEnc.toExponential(2)}°`} tone="text-ion" />
             )}
+            {flip.deviceInfo && (
+              <StatCell
+                k={`Flipper ${flip.deviceInfo.version} · OOR / OVF`}
+                v={`${flip.deviceInfo.outOfRange} / ${flip.deviceInfo.overflow}`}
+                tone={flip.deviceInfo.overflow ? "text-alert" : "text-mint"}
+              />
+            )}
+            {!flip.capturing && derived.ellipse && (
+              <>
+                <StatCell k="elipse · semiejes a / b" v={`${derived.ellipse.semiMajor.toFixed(4)} / ${derived.ellipse.semiMinor.toFixed(4)} A`} tone="text-ion" />
+                <StatCell k="elipse · inclinación φ" v={`${derived.ellipse.angleDeg.toFixed(2)}°`} tone="text-ion" />
+                <StatCell k="elipse · centro x / y" v={`${derived.ellipse.centerX.toFixed(4)} / ${derived.ellipse.centerY.toFixed(4)} A`} tone="text-ion" />
+                <StatCell k="elipse · excentricidad / RMS" v={`${derived.ellipse.eccentricity.toFixed(4)} / ${derived.ellipse.rms.toFixed(4)}`} tone="text-ion" />
+              </>
+            )}
           </div>
         )}
 
@@ -535,18 +758,13 @@ export default function FlipperLab({ flip, serialOpen }: { flip: FlipperApi; ser
           <p className="mb-1.5 font-display text-[10px] font-semibold uppercase tracking-[0.2em] text-[#4d6389]">
             Datos · crudo inmutable
           </p>
-          <div className="grid grid-cols-2 gap-1.5 sm:grid-cols-4">
+          <div className="grid grid-cols-1 gap-1.5 sm:grid-cols-3">
             <button
-              onClick={flip.exportRaw}
+              onClick={() => void exportAll()}
+              disabled={!derived}
               className="flex items-center justify-center gap-1.5 rounded border border-line px-2 py-1.5 font-display text-[9.5px] font-bold tracking-[0.1em] text-fog transition-colors hover:border-ember/50 hover:text-ember"
             >
-              <IconDownload className="h-3 w-3" /> CSV CRUDO
-            </button>
-            <button
-              onClick={flip.exportProc}
-              className="flex items-center justify-center gap-1.5 rounded border border-line px-2 py-1.5 font-display text-[9.5px] font-bold tracking-[0.1em] text-fog transition-colors hover:border-ember/50 hover:text-ember"
-            >
-              <IconDownload className="h-3 w-3" /> CSV PROCESADO
+              <IconDownload className="h-3 w-3" /> EXPORTAR TODO (.ZIP)
             </button>
             <button
               onClick={() => fileRef.current?.click()}

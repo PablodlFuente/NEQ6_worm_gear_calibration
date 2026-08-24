@@ -43,9 +43,10 @@ ambos exponen exactamente el mismo protocolo.
 ## Integridad y límites
 
 Las muestras transmiten `adc_raw`; la corriente se calcula en la web con
-`I = raw × 2.5 × 1.0025189 / 4096 / 0.323`. El firmware usa además la conversión
-oficial HAL para decidir si la muestra está dentro de 0–2,5 A, sin alterar el
-protocolo. Por ello el CSV crudo siempre permite reprocesar una sesión.
+`I = raw × 2.5 × 1.0025189 / 4096 / 0.323`. Desde el firmware v3.1, la protección
+0–2,5 A compara el crudo con el umbral matemáticamente equivalente. Evita hacer
+una conversión HAL costosa en cada muestra, que limitaba una petición de 1000 Hz
+a aproximadamente 320 Hz. El CSV crudo siempre permite reprocesar una sesión.
 
 El ángulo se obtiene por sondeo, no por una marca de encoder en cada muestra.
 La curva angular es una interpolación entre posiciones reales; aumentar mucho
@@ -66,3 +67,14 @@ El selector `bloque ×N` agrupa muestras consecutivas, no bins angulares. Con
 error estándar (SEM) de corriente y ángulo. El CSV procesado usa la misma serie.
 La tabla de picos FFT convierte cada periodo temporal a grados mediante la
 velocidad medida por `:j`; sin feedback válido esa celda queda vacía.
+
+El objetivo absoluto `:S` es modular de 24 bits. Los incrementos mayores de
+`0x7fffff` son ambiguos: una vuelta EQ6 de unas 9,02 M cuentas puede resolverse
+como el complemento de unas 7,76 M cuentas (~309°). Por eso cada GOTO absoluto
+se divide en tramos de media escala como máximo y el test sólo se declara
+completo cuando el recorrido acumulado de `:j` alcanza al menos el 99,5 %.
+
+Al terminar la captura, la nube Polar se convierte a coordenadas cartesianas y
+se ajusta por PCA una elipse. Se guardan centro, semiejes, inclinación,
+excentricidad y residuo RMS. La exportación única genera un ZIP con las cuatro
+gráficas PNG, ambos CSV, espectro FFT, picos seleccionados y resumen JSON.

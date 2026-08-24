@@ -47,7 +47,7 @@ function HoldBtn({
       onPointerCancel={end}
       onLostPointerCapture={end}
       onContextMenu={(e) => e.preventDefault()}
-      className={`flex h-14 items-center justify-center rounded-md border transition-all select-none ${
+      className={`flex aspect-square w-full items-center justify-center rounded-md border transition-all select-none ${
         active
           ? "border-ember bg-ember/20 text-ember shadow-[0_0_16px_rgba(245,165,36,0.35)]"
           : "border-line bg-[#0c1930] text-dim hover:border-ember/50 hover:text-fog active:scale-95"
@@ -81,30 +81,30 @@ export default function JogPad({ disabled, activeAxis, speedLabel, onStart, onSt
       <div className="mx-auto mt-2.5 grid w-full max-w-[270px] grid-cols-3 grid-rows-3 gap-1.5">
         <div className="col-start-2 row-start-1">
           <HoldBtn label="DEC norte" active={activeAxis === 2} disabled={disabled} onStart={() => onStart(2, 1)} onStop={onStop}>
-            <span className="flex flex-col items-center gap-0.5"><IconArrowUp className="h-5 w-5" /><small className="font-display text-[8px] tracking-wider">DEC+</small></span>
+            <span className="flex flex-col items-center gap-1"><IconArrowUp className="h-5 w-5" /><small className="font-display text-[8px] tracking-wider">DEC+</small></span>
           </HoldBtn>
         </div>
         <div className="col-start-1 row-start-2">
           <HoldBtn label="AR antihorario" active={activeAxis === 1} disabled={disabled} onStart={() => onStart(1, -1)} onStop={onStop}>
-            <span className="flex items-center gap-1"><IconArrowUp className="h-5 w-5 -rotate-90" /><small className="font-display text-[8px] tracking-wider">AR−</small></span>
+            <span className="flex flex-col items-center gap-1"><IconArrowUp className="h-5 w-5 -rotate-90" /><small className="font-display text-[8px] tracking-wider">AR−</small></span>
           </HoldBtn>
         </div>
         <button
           onClick={onStop}
           disabled={disabled}
           title="Parada suave del eje activo"
-          className="col-start-2 row-start-2 flex h-14 flex-col items-center justify-center gap-1 rounded-md border border-alert/50 bg-alert/5 font-display text-[9px] font-bold tracking-[0.12em] text-alert transition-colors hover:bg-alert/15 disabled:opacity-30"
+          className="col-start-2 row-start-2 flex aspect-square w-full flex-col items-center justify-center gap-1 rounded-md border border-line bg-[#0c1930] font-display text-[9px] font-bold tracking-[0.12em] text-alert transition-all hover:border-alert/50 hover:bg-alert/10 active:scale-95 disabled:opacity-30"
         >
           <IconStop className="h-4 w-4" /> STOP
         </button>
         <div className="col-start-3 row-start-2">
           <HoldBtn label="AR horario" active={activeAxis === 1} disabled={disabled} onStart={() => onStart(1, 1)} onStop={onStop}>
-            <span className="flex items-center gap-1"><small className="font-display text-[8px] tracking-wider">AR+</small><IconArrowUp className="h-5 w-5 rotate-90" /></span>
+            <span className="flex flex-col items-center gap-1"><IconArrowUp className="h-5 w-5 rotate-90" /><small className="font-display text-[8px] tracking-wider">AR+</small></span>
           </HoldBtn>
         </div>
         <div className="col-start-2 row-start-3">
           <HoldBtn label="DEC sur" active={activeAxis === 2} disabled={disabled} onStart={() => onStart(2, -1)} onStop={onStop}>
-            <span className="flex flex-col items-center gap-0.5"><small className="font-display text-[8px] tracking-wider">DEC−</small><IconArrowUp className="h-5 w-5 rotate-180" /></span>
+            <span className="flex flex-col items-center gap-1"><IconArrowUp className="h-5 w-5 rotate-180" /><small className="font-display text-[8px] tracking-wider">DEC−</small></span>
           </HoldBtn>
         </div>
       </div>

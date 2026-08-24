@@ -150,6 +150,75 @@ export function circularStats(angles: number[]): { meanDeg: number; R: number; s
   return { meanDeg, R, stdDeg: isFinite(stdDeg) ? stdDeg : 360 };
 }
 
+export interface PolarEllipseFit {
+  centerX: number;
+  centerY: number;
+  semiMajor: number;
+  semiMinor: number;
+  angleDeg: number;
+  eccentricity: number;
+  rms: number;
+}
+
+/** Ajuste geométrico PCA de la nube polar convertida a coordenadas cartesianas. */
+export function fitPolarEllipse(angles: ArrayLike<number>, radii: ArrayLike<number>): PolarEllipseFit | null {
+  const n = Math.min(angles.length, radii.length);
+  if (n < 12) return null;
+  let cx = 0;
+  let cy = 0;
+  const xs = new Float64Array(n);
+  const ys = new Float64Array(n);
+  for (let i = 0; i < n; i++) {
+    const a = (angles[i] * Math.PI) / 180;
+    xs[i] = Math.sin(a) * radii[i];
+    ys[i] = -Math.cos(a) * radii[i];
+    cx += xs[i];
+    cy += ys[i];
+  }
+  cx /= n;
+  cy /= n;
+  let xx = 0;
+  let xy = 0;
+  let yy = 0;
+  for (let i = 0; i < n; i++) {
+    const x = xs[i] - cx;
+    const y = ys[i] - cy;
+    xx += x * x;
+    xy += x * y;
+    yy += y * y;
+  }
+  xx /= n;
+  xy /= n;
+  yy /= n;
+  const trace = xx + yy;
+  const root = Math.sqrt(Math.max(0, (xx - yy) ** 2 + 4 * xy ** 2));
+  const l1 = (trace + root) / 2;
+  const l2 = (trace - root) / 2;
+  if (!(l1 > 0) || !(l2 > 0)) return null;
+  const semiMajor = Math.sqrt(2 * l1);
+  const semiMinor = Math.sqrt(2 * l2);
+  const angle = 0.5 * Math.atan2(2 * xy, xx - yy);
+  const ca = Math.cos(angle);
+  const sa = Math.sin(angle);
+  let residual = 0;
+  for (let i = 0; i < n; i++) {
+    const x = xs[i] - cx;
+    const y = ys[i] - cy;
+    const u = x * ca + y * sa;
+    const v = -x * sa + y * ca;
+    residual += (Math.sqrt((u / semiMajor) ** 2 + (v / semiMinor) ** 2) - 1) ** 2;
+  }
+  return {
+    centerX: cx,
+    centerY: cy,
+    semiMajor,
+    semiMinor,
+    angleDeg: ((angle * 180) / Math.PI + 180) % 180,
+    eccentricity: Math.sqrt(Math.max(0, 1 - (semiMinor * semiMinor) / (semiMajor * semiMajor))),
+    rms: Math.sqrt(residual / n),
+  };
+}
+
 /* ── ángulos: unwrap + interpolación temporal ─────────── */
 export function unwrapDegrees(pts: AnglePoint[]): AnglePoint[] {
   if (pts.length < 2) return [...pts];

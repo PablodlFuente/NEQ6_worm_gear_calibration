@@ -16,7 +16,7 @@ function crc32(data: Uint8Array): number {
   return (c ^ 0xffffffff) >>> 0;
 }
 
-export function buildZip(files: { name: string; data: string }[]): Blob {
+export function buildZip(files: { name: string; data: string | Uint8Array }[]): Blob {
   const enc = new TextEncoder();
   const parts: Uint8Array[] = [];
   const central: Uint8Array[] = [];
@@ -24,7 +24,7 @@ export function buildZip(files: { name: string; data: string }[]): Blob {
 
   for (const f of files) {
     const nameB = enc.encode(f.name);
-    const dataB = enc.encode(f.data);
+    const dataB = typeof f.data === "string" ? enc.encode(f.data) : f.data;
     const crc = crc32(dataB);
 
     const local = new Uint8Array(30 + nameB.length);

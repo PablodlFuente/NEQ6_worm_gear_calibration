@@ -9,7 +9,7 @@ import {
   DIAG_SEQUENCE,
   hexLE,
   le24,
-  MAX_GOTO_STEPS,
+  MAX_SAFE_ABSOLUTE_GOTO_DELTA,
   MAX_POSITION_DELTA,
   POS_OFFSET,
   posField,
@@ -170,6 +170,8 @@ export default function App() {
     currentDeg: 0,
     targetDeg: 360,
     message: "Listo para una vuelta completa.",
+    elapsedSec: 0,
+    actualDurationSec: null,
   });
   const [helpOpen, setHelpOpen] = useState(false);
 
@@ -643,7 +645,7 @@ export default function App() {
     const { t1, realDegPerSec: real } = timing;
     const stepsPerDeg = cpr / 360;
     const totalSteps = Math.max(1, Math.round(Math.abs(deg) * stepsPerDeg));
-    const chunks = Math.max(1, Math.ceil(totalSteps / MAX_GOTO_STEPS));
+    const chunks = Math.max(1, Math.ceil(totalSteps / MAX_SAFE_ABSOLUTE_GOTO_DELTA));
     const axes: (1 | 2)[] = axis === 3 ? [1, 2] : [axis as 1 | 2];
 
     moveCancelRef.current = false;
@@ -676,7 +678,10 @@ export default function App() {
 
       /* 1) leer posición actual de cada eje */
       setMove((m) => ({ ...m, chunk: ci + 1, phase: "leyendo posición (:j)" }));
-      const chunkSteps = Math.min(MAX_GOTO_STEPS, totalSteps - ci * MAX_GOTO_STEPS);
+      const chunkSteps = Math.min(
+        MAX_SAFE_ABSOLUTE_GOTO_DELTA,
+        totalSteps - ci * MAX_SAFE_ABSOLUTE_GOTO_DELTA,
+      );
       const target: Record<number, number> = {};
       for (const ax of axes) {
         if (!(await sendRaw(`:j${ax}`, false))) {
@@ -919,6 +924,8 @@ export default function App() {
       currentDeg: 0,
       targetDeg,
       message: "Preparando ADC y sincronización…",
+      elapsedSec: 0,
+      actualDurationSec: null,
     });
 
     const captureStarted = await flip.startCapture(axisTestInputs.sampleRate);
@@ -940,9 +947,10 @@ export default function App() {
     let previousPosition: number | null = null;
     let travelledSteps = 0;
     const totalSteps = revolutions * cpr;
-    let success = false;
+    let moveSuccess = false;
+    const testStartedAt = performance.now();
     try {
-      success = await runMove({
+      moveSuccess = await runMove({
         axis,
         speed,
         deg: targetDeg,
@@ -963,6 +971,7 @@ export default function App() {
             currentDeg,
             progress: totalSteps ? Math.min(1, Math.abs(travelledSteps) / totalSteps) : 0,
             message: "Adquiriendo corriente y posición…",
+            elapsedSec: (performance.now() - testStartedAt) / 1000,
           }));
         },
       });
@@ -971,16 +980,30 @@ export default function App() {
     }
 
     const cancelled = axisTestCancelRef.current;
+    const actualDurationSec = (performance.now() - testStartedAt) / 1000;
+    const measuredDeg = (Math.abs(travelledSteps) * 360) / cpr;
+    const feedbackComplete = measuredDeg >= targetDeg * 0.995;
+    const success = moveSuccess && feedbackComplete;
+    if (moveSuccess && !feedbackComplete) {
+      logFault(
+        `Movimiento detenido en ${measuredDeg.toFixed(2)}° de ${targetDeg.toFixed(2)}° según :j. ` +
+          "La captura queda marcada como incompleta.",
+      );
+    }
     setAxisTest((state) => ({
       ...state,
       running: false,
-      progress: success ? 1 : state.progress,
-      currentDeg: success ? targetDeg : state.currentDeg,
+      progress: totalSteps ? Math.min(1, Math.abs(travelledSteps) / totalSteps) : 0,
+      currentDeg: Math.min(targetDeg, measuredDeg),
+      elapsedSec: actualDurationSec,
+      actualDurationSec,
       message: cancelled
         ? "Test detenido por el usuario; los datos parciales se conservan."
         : success
           ? "Test completado; datos listos para revisar o exportar."
-          : "Test interrumpido por un error; revisa el registro.",
+          : moveSuccess
+            ? `Captura incompleta: :j confirmó ${measuredDeg.toFixed(1)}° de ${targetDeg.toFixed(0)}°.`
+            : "Test interrumpido por un error; revisa el registro.",
     }));
   };
 

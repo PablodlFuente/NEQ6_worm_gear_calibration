@@ -8,10 +8,12 @@ import {
   angleAt,
   buildProcCsv,
   buildRawCsv,
+  fitPolarEllipse,
   parseCsv,
   unwrapDegrees,
 } from "../src/lib/flipper.ts";
-import { calculateMotionTiming, MAX_GOTO_STEPS, MAX_POSITION_DELTA, MIN_T1_TICKS } from "../src/lib/protocol.ts";
+import { calculateMotionTiming, MAX_POSITION_DELTA, MAX_SAFE_ABSOLUTE_GOTO_DELTA, MIN_T1_TICKS } from "../src/lib/protocol.ts";
+import { buildZip } from "../src/lib/zip.ts";
 
 function frame(timestamp: number, adc: number): Uint8Array {
   return Uint8Array.from([
@@ -97,8 +99,8 @@ test("CSV procesado incluye errores X/Y y tamaño de bloque", () => {
   assert.deepEqual(imported?.angles, [{ tb: 20, deg: 45 }]);
 });
 
-test("una vuelta EQ6 cabe en un único GOTO de 24 bits", () => {
-  assert.equal(Math.ceil(9_020_208 / MAX_GOTO_STEPS), 1);
+test("una vuelta EQ6 se divide para evitar la ambigüedad modular de :S", () => {
+  assert.equal(Math.ceil(9_020_208 / MAX_SAFE_ABSOLUTE_GOTO_DELTA), 2);
   assert.equal(MAX_POSITION_DELTA, 0x7fffff);
 });
 
@@ -114,4 +116,29 @@ test("la velocidad respeta la cuantización y el mínimo T1=6", () => {
   assert.ok(normal.t1 > MIN_T1_TICKS);
   assert.equal(normal.limited, false);
   assert.ok(Math.abs(normal.realDegPerSec - 0.2) < 0.01);
+});
+
+test("ajusta los semiejes y la inclinación de una elipse polar", () => {
+  const angles: number[] = [];
+  const radii: number[] = [];
+  for (let deg = 0; deg < 360; deg += 2) {
+    const t = (deg * Math.PI) / 180;
+    const x = 2 * Math.cos(t);
+    const y = Math.sin(t);
+    angles.push(((Math.atan2(x, -y) * 180) / Math.PI + 360) % 360);
+    radii.push(Math.hypot(x, y));
+  }
+  const fit = fitPolarEllipse(angles, radii)!;
+  assert.ok(Math.abs(fit.semiMajor - 2) < 0.03);
+  assert.ok(Math.abs(fit.semiMinor - 1) < 0.03);
+  assert.ok(fit.rms < 0.03);
+});
+
+test("el ZIP de exportación admite CSV y PNG binario", async () => {
+  const bytes = new Uint8Array(await buildZip([
+    { name: "datos/test.csv", data: "a,b\n1,2\n" },
+    { name: "graficas/test.png", data: Uint8Array.from([0x89, 0x50, 0x4e, 0x47]) },
+  ]).arrayBuffer());
+  assert.deepEqual(Array.from(bytes.slice(0, 4)), [0x50, 0x4b, 0x03, 0x04]);
+  assert.ok(bytes.length > 100);
 });

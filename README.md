@@ -14,8 +14,12 @@ worm-gear sin perder el registro crudo.
   `0.323 Ω`.
 - Dos transportes equivalentes para el logger: BLE Serial y USB dual CDC
   (segundo puerto COM).
-- Gráficas temporal, por ángulo, polar y espectral; CSV crudo/procesado y
-  sesiones locales en IndexedDB.
+- Gráficas temporal, por ángulo, polar y espectral con zoom/pan, picos FFT
+  seleccionables y ajuste elíptico final. Exportación ZIP de PNG, CSV, FFT y
+  resumen; sesiones locales en IndexedDB.
+- Verificación de recorrido exclusivamente por feedback `:j`, GOTO absolutos
+  divididos para evitar la ambigüedad modular de 24 bits y firmware v3.1 con
+  medición visible de la tasa ADC efectiva.
 
 ## Puesta en marcha rápida
 
@@ -55,4 +59,3 @@ cd flipper_fw\neq6_current_logger
 La aplicación requiere un contexto seguro (`localhost` o HTTPS) para Web
 Serial y Web Bluetooth. Los datos de medida se mantienen crudos; filtros,
 promedios y conversiones se calculan como vistas derivadas.
-
