@@ -99,15 +99,23 @@ export default function AxisTestPanel({
 
         <label className="col-span-2 font-mono text-[9.5px] uppercase tracking-[0.12em] text-dim">
           Sentido de medida
-          <select
-            className={`${inputClass} mt-1`}
-            value={inputs.direction}
-            disabled={state.running}
-            onChange={(event) => onInputs({ direction: event.target.value as "cw" | "ccw" })}
-          >
-            <option value="cw">CW · horario</option>
-            <option value="ccw">CCW · antihorario</option>
-          </select>
+          <div className="mt-1 flex overflow-hidden rounded border border-line">
+            {(["cw", "ccw"] as const).map((direction) => (
+              <button
+                key={direction}
+                type="button"
+                disabled={state.running}
+                onClick={() => onInputs({ direction })}
+                className={`flex-1 px-2 py-2 font-display text-[10.5px] font-bold tracking-[0.12em] transition-colors disabled:opacity-40 ${
+                  inputs.direction === direction
+                    ? "bg-ember/15 text-ember shadow-[inset_0_-2px_0_rgba(245,165,36,0.8)]"
+                    : "bg-[#0c1930] text-dim hover:bg-white/[0.03] hover:text-fog"
+                }`}
+              >
+                {direction === "cw" ? "CW · horario" : "CCW · antihorario"}
+              </button>
+            ))}
+          </div>
         </label>
 
         <label className="font-mono text-[9.5px] uppercase tracking-[0.12em] text-dim">
