@@ -17,9 +17,9 @@ const TERMS = [
   ["FFT", "Transformada rápida de Fourier: separa las repeticiones periódicas de la corriente."],
   ["Hz", "Ciclos por segundo. En la FFT, 1 Hz significa una repetición cada segundo."],
   ["SEM", "Error estándar de la media (σ/√N); barras X/Y cuando se promedian bloques."],
-  ["RMS", "Root Mean Square o valor eficaz. I RMS₀․₅s usa una ventana temporal móvil de medio segundo."],
+  ["RMS", "Root Mean Square o valor eficaz. I RMS usa una ventana temporal móvil de medio segundo."],
   ["σ", "Desviación típica: dispersión de las medidas respecto a su media."],
-  ["R̄ circular", "Concentración angular entre 0 y 1; cerca de 1 significa ángulos muy agrupados."],
+  ["R̄ circular", "Concentración de la carga en una dirección entre 0 y 1; se calcula ponderando cada ángulo por la corriente."],
   ["OOR / OVF", "Muestras fuera de rango / desbordamientos del búfer del firmware."],
   ["RTT / jitter", "Tiempo de ida y vuelta / variación temporal usados al sincronizar navegador y Flipper."],
   ["CSV", "Archivo tabular exportable; el crudo conserva las muestras y el procesado conserva medias y errores."],
@@ -105,12 +105,19 @@ export default function HelpModal({ open, onClose }: Props) {
               puede ser una periodicidad mecánica, conmutación del motor, resonancia, ruido eléctrico o un armónico.
               Picos cercanos a 2f, 3f… suelen ser armónicos de una misma repetición; bandas laterales pueden indicar modulación.
             </HelpBlock>
+            <HelpBlock title="Estadística circular">
+              Trata los 0° y 360° como el mismo punto y pondera cada posición por la corriente. La
+              <b className="text-fog"> dirección de carga</b> es hacia donde apunta el vector resultante: indica el sector
+              dominante de la asimetría, no necesariamente el pico máximo. <b className="text-fog">R̄</b> mide cuánto se
+              concentra esa carga: cerca de 1 hay una dirección dominante; cerca de 0 la corriente es casi uniforme o hay
+              sectores opuestos que se cancelan. Con R̄ baja, el ángulo resultante y la σ circular no son representativos.
+            </HelpBlock>
             <HelpBlock title="Zoom, picos, elipse y exportación">
               La rueda hace zoom siempre; desplaza con el botón derecho. «Zoom rect» funciona como la lupa de Matplotlib:
               actívala y arrastra con el botón izquierdo el rectángulo que quieres ampliar. Se desactiva tras aplicarlo y
-              Restaurar recupera la vista completa. FFT conserva cinco picos
+              Restaurar recupera la vista completa. La FFT básica destaca cinco picos
               automáticos y permite añadir/quitar otros manuales. Pulsa un punto Polar/Cartesiano para reposicionar.
-              I RMS₀․₅s es el valor eficaz móvil de medio segundo. Al terminar, Polar muestra la elipse y sus ejes.
+              I RMS es el valor eficaz móvil de medio segundo. Al terminar, Polar muestra la elipse y sus ejes.
               «Exportar todo» crea un ZIP con PNG, CSV crudo/procesado, espectro FFT, picos y resumen JSON.
             </HelpBlock>
             <HelpBlock title="Revoluciones y metadatos">
@@ -121,7 +128,8 @@ export default function HelpModal({ open, onClose }: Props) {
             <HelpBlock title="Test básico y extendido">
               El básico realiza una pasada con los parámetros elegidos. El extendido ejecuta cuatro: velocidad seleccionada
               y su 50 %, ambas en CW y CCW. Después agrupa picos FFT: periodo angular repetible sugiere origen mecánico;
-              frecuencia temporal fija sugiere electrónica/muestreo; los múltiplos enteros se marcan como armónicos.
+              frecuencia temporal fija sugiere electrónica/muestreo; los múltiplos enteros se marcan como armónicos. Cada
+              coincidencia reúne señales compatibles entre pasadas y el listado desplegable conserva hasta 40 picos por pasada.
             </HelpBlock>
             <HelpBlock title="Calibración ADC">
               En Ajustes puedes cambiar la resistencia del shunt y el factor K. Los valores iniciales son 0,323 Ω y

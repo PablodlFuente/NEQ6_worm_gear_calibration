@@ -44,6 +44,32 @@ export interface ExtendedPeak {
   magnitude: number;
 }
 
+export interface ExtendedPassStatistics {
+  n: number;
+  durationS: number;
+  effectiveRateHz: number;
+  meanA: number;
+  medianA: number;
+  sdA: number;
+  semA: number;
+  maxA: number;
+  maxAngleDeg: number | null;
+  angleSpanDeg: number;
+  measuredSpeedDegS: number | null;
+  samplesPerDeg: number | null;
+  circularMeanDeg: number | null;
+  circularR: number | null;
+  circularStdDeg: number | null;
+  ellipse: PolarEllipseFit | null;
+}
+
+export interface ExtendedAngularProfile {
+  /** Centros de 360 sectores de un grado. */
+  anglesDeg: number[];
+  /** Media de corriente del sector; null si no hubo muestra posicionada. */
+  currentA: (number | null)[];
+}
+
 export interface ExtendedPassResult {
   id: string;
   label: string;
@@ -51,6 +77,8 @@ export interface ExtendedPassResult {
   requestedSpeedDegS: number;
   measuredSpeedDegS: number | null;
   peaks: ExtendedPeak[];
+  statistics: ExtendedPassStatistics;
+  profile: ExtendedAngularProfile;
 }
 
 export interface ExtendedPeakGroup {
@@ -73,7 +101,9 @@ const relativeDifference = (a: number, b: number) => Math.abs(a - b) / Math.max(
 
 /** Clasificación comparativa; es evidencia experimental, no identificación
  * automática de una pieza concreta. */
-export function classifyExtendedPeaks(passes: ExtendedPassResult[]): ExtendedPeakGroup[] {
+export function classifyExtendedPeaks(
+  passes: Array<Pick<ExtendedPassResult, "id" | "label" | "direction" | "requestedSpeedDegS" | "measuredSpeedDegS" | "peaks">>,
+): ExtendedPeakGroup[] {
   const observations = passes.flatMap((pass) => pass.peaks.map((peak) => ({ pass, peak })));
   const used = new Set<number>();
   const groups: ExtendedPeakGroup[] = [];
@@ -270,17 +300,21 @@ export function std(a: ArrayLike<number>): number {
 }
 
 /* estadística circular para ángulos (0–360) */
-export function circularStats(angles: number[]): { meanDeg: number; R: number; stdDeg: number } {
+export function circularStats(angles: number[], weights?: ArrayLike<number>): { meanDeg: number; R: number; stdDeg: number } {
   let sx = 0;
   let sy = 0;
-  for (const a of angles) {
+  let totalWeight = 0;
+  for (let i = 0; i < angles.length; i++) {
+    const a = angles[i];
+    const weight = weights ? Math.max(0, Number(weights[i]) || 0) : 1;
     const r = (a * Math.PI) / 180;
-    sx += Math.cos(r);
-    sy += Math.sin(r);
+    sx += Math.cos(r) * weight;
+    sy += Math.sin(r) * weight;
+    totalWeight += weight;
   }
-  const n = angles.length || 1;
-  sx /= n;
-  sy /= n;
+  const denominator = totalWeight || 1;
+  sx /= denominator;
+  sy /= denominator;
   const R = Math.hypot(sx, sy);
   const meanDeg = ((Math.atan2(sy, sx) * 180) / Math.PI + 360) % 360;
   const Rc = Math.min(R, 0.999999);

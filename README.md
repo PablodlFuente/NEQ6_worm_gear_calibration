@@ -17,7 +17,7 @@ excentricidad, rozamiento o zonas de carga irregular del conjunto sinfín-corona
 - Corriente instantánea e `I RMS` móvil de 0,5 s; shunt y factor K configurables (0,323 Ω y 1,0025189 por defecto).
 - Flipper Zero por BLE o por su segundo puerto USB-COM.
 - Gráficas en vivo, Polar, Cartesiano, FFT y estadísticas.
-- Promedio por bloques, barras SEM, elipse polar, zoom y pan.
+- Promedio por bloques con tamaño libre, barras SEM, elipse polar, zoom y pan.
 - Exportación ZIP con CSV crudo/procesado, FFT, PNG y resumen JSON.
 - Registro local JSONL de acciones, mensajes y tráfico serie.
 
@@ -86,7 +86,7 @@ de pasos si el motor llega a bloquearse.
 
 - **Polar:** corriente frente a fase angular y ajuste final de elipse.
 - **Cartesiano:** corriente frente a grados; con promedio muestra SEM en X/Y.
-- **FFT:** cinco picos automáticos y picos manuales; convierte cada periodo a
+- **FFT básica:** cinco picos automáticos y picos manuales; convierte cada periodo a
   separación angular usando la velocidad medida.
 - **Estadísticas:** corriente, ruido, tasa efectiva, muestras por grado,
   recorrido confirmado, velocidad real y parámetros de la elipse.

@@ -159,15 +159,15 @@ const STAT_HELP: Record<string, string> = {
   "muestras / grado medidas": "Muestras ADC que pudieron interpolarse entre anclas :j, divididas por el recorrido confirmado.",
   "recorrido confirmado :j": "Ángulo acumulado calculado exclusivamente con posiciones devueltas por la montura.",
   "factor de promedio": "Cantidad de muestras consecutivas agrupadas en cada punto representado.",
-  media: "Promedio aritmético de la corriente procesada.",
+  "media ± σ": "Promedio aritmético y desviación típica de la corriente: describe el nivel central y la dispersión de las medidas.",
+  "media ± SEM": "Promedio e incertidumbre estadística de esa media (σ/√N). No representa la dispersión de las muestras individuales.",
   mediana: "Valor central de la corriente; es menos sensible a picos aislados.",
-  "desv. típica σ": "Dispersión de la corriente respecto a su media.",
-  "σ de la media (σ/√N)": "Error estándar de la media: incertidumbre estadística del promedio.",
   "pico máximo / posición": "Mayor muestra instantánea y ángulo interpolado donde apareció.",
   "sector 10° de mayor media": "Entre las 36 secciones angulares, la de corriente media más alta.",
   "sector 10° de menor media": "Entre las 36 secciones angulares, la de corriente media más baja.",
-  "ángulo medio (circ.)": "Dirección media calculada con estadística circular.",
-  "R̄ / σ circular": "R̄ mide concentración angular (0–1) y σ circular su dispersión equivalente.",
+  "dirección de carga circular": "Dirección del vector resultante al ponderar cada ángulo por su corriente. Sólo es representativa cuando R̄ no es baja.",
+  "concentración R̄": "Asimetría angular de la carga entre 0 y 1. Cerca de 0: carga uniforme o sectores opuestos que se cancelan; cerca de 1: concentrada en una dirección.",
+  "dispersión circular σ": "Dispersión angular equivalente derivada de R̄. Si R̄ está cerca de cero, tanto σ como la dirección media son poco informativas.",
   "δθ encoder (360/CPR)": "Resolución teórica de una cuenta del controlador; no equivale a precisión mecánica.",
   "elipse · semiejes a / b": "Semiejes mayor y menor del ajuste elíptico de la curva polar.",
   "elipse · cociente a/b": "Elongación de la elipse; 1 representa una circunferencia.",
@@ -184,6 +184,18 @@ function StatCell({ k, v, tone }: { k: string; v: ReactNode; tone?: string }) {
       <span className="text-[8.5px] uppercase tracking-wider text-dim">{k}</span>
       <span className={`tabular-nums ${tone ?? "text-fog"}`}>{v}</span>
     </div>
+  );
+}
+
+function StatSection({ title, subtitle, children }: { title: string; subtitle?: string; children: ReactNode }) {
+  return (
+    <section className="overflow-hidden rounded border border-line bg-[#091426]/70">
+      <header className="border-b border-line bg-[#0c1930] px-2.5 py-2">
+        <h3 className="font-display text-[9.5px] font-bold uppercase tracking-[0.16em] text-fog">{title}</h3>
+        {subtitle && <p className="mt-0.5 font-mono text-[8.5px] text-dim">{subtitle}</p>}
+      </header>
+      <div className="grid grid-cols-1 gap-1.5 p-2 font-mono text-[10px] sm:grid-cols-2">{children}</div>
+    </section>
   );
 }
 
@@ -213,6 +225,41 @@ export default function FlipperLab({
 
   const { derived, stats } = flip;
   const n = stats.n;
+  /* Sesiones guardadas antes de incorporar perfiles/estadísticas extendidas
+   * siguen siendo cargables; sencillamente no se dibujan como multipasada. */
+  const extendedPasses = (flip.extendedAnalysis?.passes ?? []).filter(
+    (pass) => Boolean(pass.profile?.currentA && pass.statistics),
+  );
+  const extendedMeanProfile = useMemo(() => {
+    if (extendedPasses.length < 2) return null;
+    const size = Math.max(...extendedPasses.map((pass) => pass.profile.currentA.length));
+    return Array.from({ length: size }, (_, index) => {
+      const values = extendedPasses
+        .map((pass) => pass.profile.currentA[index])
+        .filter((value): value is number => value !== null && Number.isFinite(value));
+      return values.length ? values.reduce((sum, value) => sum + value, 0) / values.length : null;
+    });
+  }, [extendedPasses]);
+  const extendedSummary = useMemo(() => {
+    if (!extendedPasses.length) return null;
+    const passStats = extendedPasses.map((pass) => pass.statistics);
+    const average = (values: number[]) => values.reduce((sum, value) => sum + value, 0) / values.length;
+    const means = passStats.map((item) => item.meanA);
+    const meanOfMeans = average(means);
+    const betweenSd = means.length > 1
+      ? Math.sqrt(means.reduce((sum, value) => sum + (value - meanOfMeans) ** 2, 0) / (means.length - 1))
+      : 0;
+    return {
+      meanA: meanOfMeans,
+      betweenSd,
+      rateHz: average(passStats.map((item) => item.effectiveRateHz)),
+      speedDegS: average(passStats.map((item) => item.measuredSpeedDegS ?? 0)),
+      circularR: average(passStats.map((item) => item.circularR ?? 0)),
+      maxA: Math.max(...passStats.map((item) => item.maxA)),
+      totalSamples: passStats.reduce((sum, item) => sum + item.n, 0),
+      totalDurationS: passStats.reduce((sum, item) => sum + item.durationS, 0),
+    };
+  }, [extendedPasses]);
   void flip.tick;
   useEffect(() => {
     if (!n) setSelectedPeaks([]);
@@ -284,14 +331,17 @@ export default function FlipperLab({
     const cy = h / 2;
     const R = Math.min(w, h) / 2 - 22;
     const data = derived?.plot;
-    if (!data) {
+    if (!data && !extendedPasses.length) {
       ctx.fillStyle = "#42567a";
       ctx.textAlign = "center";
       ctx.fillText("necesita ángulo de la montura durante la captura", w / 2, h / 2);
       return;
     }
     let maxI = 0.05;
-    for (let i = 0; i < data.length; i++) maxI = Math.max(maxI, data.amps[i]);
+    if (data) for (let i = 0; i < data.length; i++) maxI = Math.max(maxI, data.amps[i]);
+    for (const pass of extendedPasses) {
+      for (const current of pass.profile.currentA) if (current !== null) maxI = Math.max(maxI, current);
+    }
     maxI *= 1.15;
     const shadeSector = (angle: number, color: string) => {
       const a0 = ((angle - 5 - 90) * Math.PI) / 180;
@@ -303,8 +353,8 @@ export default function FlipperLab({
       ctx.closePath();
       ctx.fill();
     };
-    if (derived?.minSector) shadeSector(derived.minSector.angle, "rgba(76,201,240,0.09)");
-    if (derived?.maxSector) shadeSector(derived.maxSector.angle, "rgba(245,165,36,0.12)");
+    if (derived?.minSector && !extendedPasses.length) shadeSector(derived.minSector.angle, "rgba(76,201,240,0.09)");
+    if (derived?.maxSector && !extendedPasses.length) shadeSector(derived.maxSector.angle, "rgba(245,165,36,0.12)");
     ctx.strokeStyle = "rgba(29,48,80,0.9)";
     ctx.fillStyle = "#42567a";
     ctx.font = "8.5px IBM Plex Mono, monospace";
@@ -324,6 +374,7 @@ export default function FlipperLab({
       ctx.fillText(`${a}°`, cx + Math.sin(r) * (R + 12), cy - Math.cos(r) * (R + 12) + 3);
     }
     const plot = (color: string, width: number, rev?: number) => {
+      if (!data) return;
       ctx.strokeStyle = color;
       ctx.lineWidth = width;
       ctx.beginPath();
@@ -343,7 +394,39 @@ export default function FlipperLab({
       }
       ctx.stroke();
     };
-    if (flip.overlayRevs) {
+    const plotProfile = (currents: (number | null)[], color: string, width: number) => {
+      ctx.strokeStyle = color;
+      ctx.lineWidth = width;
+      ctx.beginPath();
+      let started = false;
+      for (let i = 0; i < currents.length; i++) {
+        const current = currents[i];
+        if (current === null) { started = false; continue; }
+        const phase = i + 0.5;
+        const angle = (phase * Math.PI) / 180;
+        const radius = (current / maxI) * R;
+        const x = cx + Math.sin(angle) * radius;
+        const y = cy - Math.cos(angle) * radius;
+        started ? ctx.lineTo(x, y) : ctx.moveTo(x, y);
+        started = true;
+      }
+      if (currents[0] !== null && currents[currents.length - 1] !== null) ctx.closePath();
+      ctx.stroke();
+    };
+    if (extendedPasses.length) {
+      extendedPasses.forEach((pass, index) => plotProfile(pass.profile.currentA, REV_COLORS[index % REV_COLORS.length], 1.35));
+      if (flip.capturing) plot("rgba(245,165,36,0.75)", 1);
+      if (extendedMeanProfile) plotProfile(extendedMeanProfile, "rgba(240,245,255,0.98)", 3);
+      ctx.textAlign = "right";
+      extendedPasses.forEach((pass, index) => {
+        ctx.fillStyle = REV_COLORS[index % REV_COLORS.length];
+        ctx.fillText(pass.label, w - 8, 11 + index * 11);
+      });
+      if (extendedMeanProfile) {
+        ctx.fillStyle = "#f0f5ff";
+        ctx.fillText("PROMEDIO", w - 8, 11 + extendedPasses.length * 11);
+      }
+    } else if (flip.overlayRevs && data) {
       const lastRev = data.revs[data.length - 1] ?? 0;
       for (let rev = 0; rev <= Math.min(lastRev, 11); rev++) {
         plot(REV_COLORS[rev % REV_COLORS.length], 1.7, rev);
@@ -355,7 +438,7 @@ export default function FlipperLab({
       }
     } else plot("rgba(245,165,36,0.95)", 1.6);
     const fit = derived?.ellipse;
-    if (fit && !flip.capturing) {
+    if (fit && !flip.capturing && !extendedPasses.length) {
       const scale = R / maxI;
       const ex = cx + fit.centerX * scale;
       const ey = cy + fit.centerY * scale;
@@ -386,7 +469,7 @@ export default function FlipperLab({
     }
     ctx.fillStyle = "#f5a524";
     ctx.textAlign = "left";
-    ctx.fillText(`max ${maxI.toFixed(3)} A · ${data.length.toLocaleString("es-ES")} puntos`, 6, 11);
+    ctx.fillText(`max ${maxI.toFixed(3)} A · ${data?.length.toLocaleString("es-ES") ?? 0} puntos actuales`, 6, 11);
   };
 
   /* ── dibujo: cartesiano con barras de error ──────────── */
@@ -397,7 +480,7 @@ export default function FlipperLab({
     const T = 10;
     const Rg = 10;
     const data = derived?.plot;
-    if (!data) {
+    if (!data && !extendedPasses.length) {
       ctx.fillStyle = "#42567a";
       ctx.font = "9px IBM Plex Mono, monospace";
       ctx.textAlign = "center";
@@ -406,9 +489,14 @@ export default function FlipperLab({
     }
     let minI = Infinity;
     let maxI = -Infinity;
-    for (let i = 0; i < data.length; i++) {
+    if (data) for (let i = 0; i < data.length; i++) {
       minI = Math.min(minI, data.amps[i] - data.ampsErr[i]);
       maxI = Math.max(maxI, data.amps[i] + data.ampsErr[i]);
+    }
+    for (const pass of extendedPasses) for (const current of pass.profile.currentA) {
+      if (current === null) continue;
+      minI = Math.min(minI, current);
+      maxI = Math.max(maxI, current);
     }
     if (!Number.isFinite(minI) || !Number.isFinite(maxI)) return;
     const span = Math.max(0.01, maxI - minI);
@@ -416,11 +504,11 @@ export default function FlipperLab({
     maxI += span * 0.12;
     const X = (a: number) => L + (a / 360) * (w - L - Rg);
     const Y = (v: number) => h - Bm - ((v - minI) / (maxI - minI || 1)) * (h - T - Bm);
-    if (derived?.minSector) {
+    if (derived?.minSector && !extendedPasses.length) {
       ctx.fillStyle = "rgba(76,201,240,0.09)";
       ctx.fillRect(X(derived.minSector.angle - 5), T, X(derived.minSector.angle + 5) - X(derived.minSector.angle - 5), h - T - Bm);
     }
-    if (derived?.maxSector) {
+    if (derived?.maxSector && !extendedPasses.length) {
       ctx.fillStyle = "rgba(245,165,36,0.12)";
       ctx.fillRect(X(derived.maxSector.angle - 5), T, X(derived.maxSector.angle + 5) - X(derived.maxSector.angle - 5), h - T - Bm);
     }
@@ -439,7 +527,7 @@ export default function FlipperLab({
     }
     ctx.textAlign = "center";
     for (let a = 0; a <= 360; a += 60) ctx.fillText(`${a}°`, X(a), h - 7);
-    if (data.factor > 1) {
+    if (data && data.factor > 1 && !extendedPasses.length) {
       ctx.strokeStyle = "rgba(76,201,240,0.85)";
       ctx.lineWidth = 1;
       for (let i = 0; i < data.length; i++) {
@@ -467,6 +555,7 @@ export default function FlipperLab({
       }
     }
     const plotRevision = (color: string, rev?: number) => {
+      if (!data) return;
       ctx.strokeStyle = color;
       ctx.lineWidth = 1.8;
       ctx.beginPath();
@@ -488,7 +577,36 @@ export default function FlipperLab({
       }
       ctx.stroke();
     };
-    if (flip.overlayRevs) {
+    const plotProfile = (currents: (number | null)[], color: string, width: number) => {
+      ctx.strokeStyle = color;
+      ctx.lineWidth = width;
+      ctx.beginPath();
+      let started = false;
+      for (let i = 0; i < currents.length; i++) {
+        const current = currents[i];
+        if (current === null) { started = false; continue; }
+        const x = X(i + 0.5);
+        const y = Y(current);
+        started ? ctx.lineTo(x, y) : ctx.moveTo(x, y);
+        started = true;
+      }
+      ctx.stroke();
+    };
+    if (extendedPasses.length) {
+      extendedPasses.forEach((pass, index) => plotProfile(pass.profile.currentA, REV_COLORS[index % REV_COLORS.length], 1.4));
+      if (flip.capturing) plotRevision("rgba(245,165,36,0.75)");
+      if (extendedMeanProfile) plotProfile(extendedMeanProfile, "rgba(240,245,255,0.98)", 3);
+      ctx.font = "8.5px IBM Plex Mono, monospace";
+      ctx.textAlign = "right";
+      extendedPasses.forEach((pass, index) => {
+        ctx.fillStyle = REV_COLORS[index % REV_COLORS.length];
+        ctx.fillText(pass.label, w - 12, 12 + index * 11);
+      });
+      if (extendedMeanProfile) {
+        ctx.fillStyle = "#f0f5ff";
+        ctx.fillText("PROMEDIO", w - 12, 12 + extendedPasses.length * 11);
+      }
+    } else if (flip.overlayRevs && data) {
       const lastRev = data.revs[data.length - 1] ?? 0;
       for (let rev = 0; rev <= Math.min(lastRev, 11); rev++) plotRevision(REV_COLORS[rev % REV_COLORS.length], rev);
     } else plotRevision("rgba(245,165,36,0.95)");
@@ -635,7 +753,7 @@ export default function FlipperLab({
         return <ChartCanvas draw={drawLive} className="h-[46dvh] min-h-[300px]" {...interaction} />;
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [view, derived, n, flip.tick, flip.overlayRevs, flip.capturing, regionZoom, transforms, selectedPeaks]);
+  }, [view, derived, n, flip.tick, flip.overlayRevs, flip.capturing, flip.extendedAnalysis, extendedMeanProfile, regionZoom, transforms, selectedPeaks]);
 
   const selCls =
     "rounded border border-line bg-[#0c1930] px-1.5 py-1 font-mono text-[10.5px] text-fog focus:border-ion/60 focus:outline-none disabled:opacity-40";
@@ -683,13 +801,23 @@ export default function FlipperLab({
         <div className="ml-auto flex items-center gap-2">
           <label className="hidden items-center gap-1.5 font-mono text-[10px] text-dim sm:flex">
             bloque ×
-            <select value={flip.avgFactor} onChange={(e) => flip.setAvgFactor(Number(e.target.value))} className={selCls}>
-              {AVGS.map((a) => (
-                <option key={a} value={a}>
-                  {a}
-                </option>
-              ))}
-            </select>
+            <input
+              type="number"
+              min={1}
+              max={100000}
+              step={1}
+              list="average-factor-presets"
+              aria-label="Muestras por bloque de promedio"
+              value={flip.avgFactor}
+              onChange={(event) => {
+                const next = Math.floor(Number(event.target.value));
+                if (next >= 1 && next <= 100000) flip.setAvgFactor(next);
+              }}
+              className={`${selCls} w-20 tabular-nums`}
+            />
+            <datalist id="average-factor-presets">
+              {AVGS.map((value) => <option key={value} value={value} />)}
+            </datalist>
           </label>
           <label className="hidden cursor-pointer items-center gap-1.5 font-mono text-[10px] text-dim md:flex">
             <input
@@ -838,92 +966,132 @@ export default function FlipperLab({
                 <p className="border-b border-line bg-ion/5 px-2 py-1.5 font-display text-[9.5px] font-bold uppercase tracking-[0.14em] text-ion">
                   Comparación del test extendido · {flip.extendedAnalysis.passes.length}/4 pasadas
                 </p>
+                <p className="border-b border-line px-2 py-1.5 font-mono text-[9px] text-dim">
+                  Cada coincidencia reúne picos de distintas pasadas que conservan aproximadamente sus Hz o su periodicidad en grados. Se analizan hasta 40 máximos locales por pasada, no sólo los cinco destacados en la gráfica.
+                </p>
                 <table className="w-full font-mono text-[9.5px]">
                   <thead className="bg-[#0c1930] text-left text-[8.5px] uppercase tracking-wider text-dim">
-                    <tr><th className="px-2 py-1">grupo</th><th className="px-2 py-1">clasificación</th><th className="px-2 py-1">Hz</th><th className="px-2 py-1">cada °</th><th className="px-2 py-1">evidencia</th></tr>
+                    <tr><th className="px-2 py-1">coincidencia</th><th className="px-2 py-1">clasificación</th><th className="px-2 py-1">Hz</th><th className="px-2 py-1">cada °</th><th className="px-2 py-1">pasadas</th><th className="px-2 py-1">evidencia</th></tr>
                   </thead>
                   <tbody>
-                    {flip.extendedAnalysis.groups.map((group) => (
+                    {flip.extendedAnalysis.groups.map((group, index) => (
                       <tr key={group.id} className="border-t border-line/60 text-fog">
-                        <td className="px-2 py-1 text-ember">{group.id}</td>
+                        <td className="px-2 py-1 text-ember">C{index + 1}</td>
                         <td className={`px-2 py-1 ${group.classification === "mecánica" ? "text-mint" : group.classification === "eléctrica/muestreo" ? "text-ion" : "text-fog"}`}>{group.classification}</td>
                         <td className="px-2 py-1 tabular-nums">{group.representativeHz.toFixed(3)}</td>
                         <td className="px-2 py-1 tabular-nums">{group.representativeDeg !== null ? `${group.representativeDeg.toFixed(3)}°` : "—"}</td>
+                        <td className="px-2 py-1 tabular-nums">{group.passes.length}</td>
                         <td className="px-2 py-1 text-dim" title={group.passes.join(" · ")}>{group.reason}{group.harmonicOfHz ? ` Armónico de ≈${group.harmonicOfHz.toFixed(3)} Hz.` : ""}</td>
                       </tr>
                     ))}
                   </tbody>
                 </table>
+                <div className="border-t border-line p-2">
+                  {flip.extendedAnalysis.passes.map((pass, passIndex) => (
+                    <details key={pass.id} className="mb-1 rounded border border-line/70 bg-[#091426] last:mb-0">
+                      <summary className="cursor-pointer px-2 py-1.5 font-mono text-[9.5px] text-fog">
+                        <span style={{ color: REV_COLORS[passIndex % REV_COLORS.length] }}>●</span> {pass.label} · {pass.peaks.length} frecuencias detectadas
+                      </summary>
+                      <div className="max-h-48 overflow-y-auto border-t border-line/60 p-2 font-mono text-[9px] text-dim">
+                        {pass.peaks.map((peak, peakIndex) => (
+                          <span key={`${pass.id}-${peakIndex}`} className="mr-3 inline-block py-0.5 tabular-nums">
+                            {peak.frequencyHz.toFixed(3)} Hz · {peak.periodMountDeg !== null ? `${peak.periodMountDeg.toFixed(3)}°` : "—"} · {peak.magnitude.toExponential(2)}
+                          </span>
+                        ))}
+                      </div>
+                    </details>
+                  ))}
+                </div>
                 <p className="border-t border-line px-2 py-1.5 font-mono text-[9px] text-dim">Clasificación orientativa: confirma repitiendo el ensayo y comparando amplitud/fase; no identifica automáticamente una pieza.</p>
               </div>
             )}
           </div>
-        ) : !derived ? (
+        ) : !derived && !extendedSummary ? (
           <p className="rounded border border-dashed border-line px-3 py-10 text-center font-mono text-[10.5px] text-dim">
             Sin datos todavía: captura, importa un CSV o carga una sesión.
           </p>
-        ) : (
-          <div className="grid grid-cols-1 gap-1.5 font-mono text-[10px] sm:grid-cols-2">
-            <StatCell k="N (crudo / promediado)" v={`${derived.st.n.toLocaleString("es-ES")} / ${derived.st.nAvg.toLocaleString("es-ES")}`} />
-            <StatCell k="tiempo real adquisición" v={`${derived.st.durS.toFixed(2)} s`} />
-            <StatCell k="tasa ADC efectiva" v={`${derived.st.rateEst.toFixed(1)} Hz`} />
-            <StatCell
-              k="rendimiento solicitado/efectivo"
-              v={`${Math.min(999, (derived.st.rateEst / flip.rate) * 100).toFixed(1)} %`}
-              tone={derived.st.rateEst < flip.rate * 0.9 ? "text-alert" : "text-mint"}
-            />
-            {derived.st.feedbackSpeedDegS !== null && (
-              <StatCell k="velocidad medida (:j)" v={`${derived.st.feedbackSpeedDegS.toFixed(4)} °/s`} tone="text-ion" />
-            )}
-            {derived.st.samplesPerDeg !== null && (
-              <StatCell k="muestras / grado medidas" v={derived.st.samplesPerDeg.toFixed(1)} tone="text-ion" />
-            )}
-            <StatCell k="recorrido confirmado :j" v={`${derived.st.angleSpanDeg.toFixed(2)}°`} tone={derived.st.angleSpanDeg >= 358 ? "text-mint" : "text-alert"} />
-            <StatCell k="factor de promedio" v={`×${flip.avgFactor}`} tone="text-ion" />
-            <StatCell k="media" v={`${derived.st.mean.toFixed(5)} A`} />
-            <StatCell k="mediana" v={`${derived.st.median.toFixed(5)} A`} />
-            <StatCell k="desv. típica σ" v={`${derived.st.sd.toFixed(5)} A`} />
-            <StatCell k="σ de la media (σ/√N)" v={`${derived.st.sem.toExponential(2)} A`} tone="text-mint" />
-            <StatCell k="pico máximo / posición" v={`${derived.st.maxA.toFixed(3)} A · ${derived.st.maxAngleDeg !== null ? `${derived.st.maxAngleDeg.toFixed(2)}°` : "sin ángulo"}`} tone="text-ember" />
-            {derived.maxSector && <StatCell k="sector 10° de mayor media" v={`${(derived.maxSector.angle - 5).toFixed(0)}–${(derived.maxSector.angle + 5).toFixed(0)}° · ${derived.maxSector.mean.toFixed(4)} A`} tone="text-ember" />}
-            {derived.minSector && <StatCell k="sector 10° de menor media" v={`${(derived.minSector.angle - 5).toFixed(0)}–${(derived.minSector.angle + 5).toFixed(0)}° · ${derived.minSector.mean.toFixed(4)} A`} tone="text-ion" />}
-            {derived.st.circ && (
-              <>
-                <StatCell k="ángulo medio (circ.)" v={`${derived.st.circ.meanDeg.toFixed(2)}°`} tone="text-ion" />
-                <StatCell
-                  k="R̄ / σ circular"
-                  v={`${derived.st.circ.R.toFixed(3)} / ${derived.st.circ.stdDeg.toFixed(2)}°`}
-                  tone="text-ion"
-                />
-              </>
-            )}
-            {derived.st.dThetaEnc !== null && (
-              <StatCell k="δθ encoder (360/CPR)" v={`${derived.st.dThetaEnc.toExponential(2)}°`} tone="text-ion" />
-            )}
-            {flip.deviceInfo && (
-              <StatCell
-                k={`Flipper ${flip.deviceInfo.version} · OOR / OVF`}
-                v={`${flip.deviceInfo.outOfRange} / ${flip.deviceInfo.overflow}`}
-                tone={flip.deviceInfo.overflow ? "text-alert" : "text-mint"}
-              />
-            )}
+        ) : extendedSummary ? (
+          <div className="space-y-2">
+            <StatSection title="Resumen medio del test extendido" subtitle={`${extendedPasses.length}/4 pasadas terminadas · la σ indicada compara las medias de las pasadas`}>
+              <StatCell k="media ± σ" v={`${extendedSummary.meanA.toFixed(5)} ± ${extendedSummary.betweenSd.toFixed(5)} A`} tone="text-mint" />
+              <StatCell k="N total" v={extendedSummary.totalSamples.toLocaleString("es-ES")} />
+              <StatCell k="tiempo total adquisición" v={`${extendedSummary.totalDurationS.toFixed(1)} s`} />
+              <StatCell k="tasa ADC efectiva media" v={`${extendedSummary.rateHz.toFixed(1)} Hz`} />
+              <StatCell k="velocidad |:j| media" v={`${extendedSummary.speedDegS.toFixed(4)} °/s`} tone="text-ion" />
+              <StatCell k="máximo global" v={`${extendedSummary.maxA.toFixed(4)} A`} tone="text-ember" />
+              <StatCell k="concentración R̄ media" v={extendedSummary.circularR.toFixed(4)} tone="text-ion" />
+            </StatSection>
+            {extendedPasses.map((pass, index) => {
+              const st = pass.statistics;
+              const ellipse = st.ellipse;
+              return (
+                <section key={pass.id} className="overflow-hidden rounded border border-line">
+                  <header className="flex items-center gap-2 border-b border-line bg-[#0c1930] px-2.5 py-2">
+                    <span className="h-2 w-2 rounded-full" style={{ background: REV_COLORS[index % REV_COLORS.length] }} />
+                    <h3 className="font-display text-[9.5px] font-bold uppercase tracking-[0.14em] text-fog">Pasada {index + 1} · {pass.label}</h3>
+                  </header>
+                  <div className="space-y-1.5 bg-[#091426]/70 p-2">
+                    <div className="grid grid-cols-1 gap-1.5 font-mono text-[10px] sm:grid-cols-2">
+                      <StatCell k="adquisición" v={`${st.n.toLocaleString("es-ES")} mues. · ${st.durationS.toFixed(1)} s · ${st.effectiveRateHz.toFixed(1)} Hz`} />
+                      <StatCell k="velocidad / recorrido" v={`${st.measuredSpeedDegS?.toFixed(4) ?? "—"} °/s · ${st.angleSpanDeg.toFixed(2)}°`} tone="text-ion" />
+                      <StatCell k="media ± σ" v={`${st.meanA.toFixed(5)} ± ${st.sdA.toFixed(5)} A`} />
+                      <StatCell k="media ± SEM" v={`${st.meanA.toFixed(5)} ± ${st.semA.toExponential(2)} A`} tone="text-mint" />
+                      <StatCell k="mediana" v={`${st.medianA.toFixed(5)} A`} />
+                      <StatCell k="pico máximo / posición" v={`${st.maxA.toFixed(4)} A · ${st.maxAngleDeg?.toFixed(2) ?? "—"}°`} tone="text-ember" />
+                      <StatCell k="dirección de carga circular" v={st.circularMeanDeg !== null ? `${st.circularMeanDeg.toFixed(2)}°${(st.circularR ?? 0) < 0.05 ? " · no representativa" : ""}` : "—"} tone="text-ion" />
+                      <StatCell k="concentración R̄" v={st.circularR?.toFixed(4) ?? "—"} tone="text-ion" />
+                      {ellipse && <StatCell k="elipse · semiejes a / b" v={`${ellipse.semiMajor.toFixed(4)} / ${ellipse.semiMinor.toFixed(4)} A`} tone="text-ion" />}
+                      {ellipse && <StatCell k="elipse · cociente a/b" v={(ellipse.semiMajor / ellipse.semiMinor).toFixed(4)} tone="text-ion" />}
+                    </div>
+                  </div>
+                </section>
+              );
+            })}
+          </div>
+        ) : derived ? (
+          <div className="space-y-2">
+            <StatSection title="Adquisición" subtitle="Calidad y cobertura temporal/posicional de los datos">
+              <StatCell k="N (crudo / promediado)" v={`${derived.st.n.toLocaleString("es-ES")} / ${derived.st.nAvg.toLocaleString("es-ES")}`} />
+              <StatCell k="tiempo real adquisición" v={`${derived.st.durS.toFixed(2)} s`} />
+              <StatCell k="tasa ADC efectiva" v={`${derived.st.rateEst.toFixed(1)} Hz`} />
+              <StatCell k="rendimiento solicitado/efectivo" v={`${Math.min(999, (derived.st.rateEst / flip.rate) * 100).toFixed(1)} %`} tone={derived.st.rateEst < flip.rate * 0.9 ? "text-alert" : "text-mint"} />
+              {derived.st.feedbackSpeedDegS !== null && <StatCell k="velocidad medida (:j)" v={`${derived.st.feedbackSpeedDegS.toFixed(4)} °/s`} tone="text-ion" />}
+              {derived.st.samplesPerDeg !== null && <StatCell k="muestras / grado medidas" v={derived.st.samplesPerDeg.toFixed(1)} tone="text-ion" />}
+              <StatCell k="recorrido confirmado :j" v={`${derived.st.angleSpanDeg.toFixed(2)}°`} tone={derived.st.angleSpanDeg >= 358 ? "text-mint" : "text-alert"} />
+              <StatCell k="factor de promedio" v={`×${flip.avgFactor}`} tone="text-ion" />
+              {flip.deviceInfo && <StatCell k={`Flipper ${flip.deviceInfo.version} · OOR / OVF`} v={`${flip.deviceInfo.outOfRange} / ${flip.deviceInfo.overflow}`} tone={flip.deviceInfo.overflow ? "text-alert" : "text-mint"} />}
+            </StatSection>
+            <StatSection title="Estadística básica" subtitle="Nivel, dispersión y extremos de la corriente">
+              <StatCell k="media ± σ" v={`${derived.st.mean.toFixed(5)} ± ${derived.st.sd.toFixed(5)} A`} />
+              <StatCell k="media ± SEM" v={`${derived.st.mean.toFixed(5)} ± ${derived.st.sem.toExponential(2)} A`} tone="text-mint" />
+              <StatCell k="mediana" v={`${derived.st.median.toFixed(5)} A`} />
+              <StatCell k="pico máximo / posición" v={`${derived.st.maxA.toFixed(3)} A · ${derived.st.maxAngleDeg !== null ? `${derived.st.maxAngleDeg.toFixed(2)}°` : "sin ángulo"}`} tone="text-ember" />
+            </StatSection>
+            <StatSection title="Estadística angular" subtitle="Distribución del esfuerzo alrededor de la corona">
+              {derived.maxSector && <StatCell k="sector 10° de mayor media" v={`${(derived.maxSector.angle - 5).toFixed(0)}–${(derived.maxSector.angle + 5).toFixed(0)}° · ${derived.maxSector.mean.toFixed(4)} A`} tone="text-ember" />}
+              {derived.minSector && <StatCell k="sector 10° de menor media" v={`${(derived.minSector.angle - 5).toFixed(0)}–${(derived.minSector.angle + 5).toFixed(0)}° · ${derived.minSector.mean.toFixed(4)} A`} tone="text-ion" />}
+              {derived.st.circ && <StatCell k="dirección de carga circular" v={`${derived.st.circ.meanDeg.toFixed(2)}°${derived.st.circ.R < 0.05 ? " · no representativa" : ""}`} tone="text-ion" />}
+              {derived.st.circ && <StatCell k="concentración R̄" v={derived.st.circ.R.toFixed(4)} tone="text-ion" />}
+              {derived.st.circ && <StatCell k="dispersión circular σ" v={`${derived.st.circ.stdDeg.toFixed(2)}°`} tone="text-ion" />}
+              {derived.st.dThetaEnc !== null && <StatCell k="δθ encoder (360/CPR)" v={`${derived.st.dThetaEnc.toExponential(2)}°`} tone="text-ion" />}
+            </StatSection>
             {!flip.capturing && derived.ellipse && (
-              <>
+              <StatSection title="Ajuste elíptico" subtitle="Geometría de la nube corriente–ángulo en la vista polar">
                 <StatCell k="elipse · semiejes a / b" v={`${derived.ellipse.semiMajor.toFixed(4)} / ${derived.ellipse.semiMinor.toFixed(4)} A`} tone="text-ion" />
                 <StatCell k="elipse · cociente a/b" v={(derived.ellipse.semiMajor / derived.ellipse.semiMinor).toFixed(4)} tone="text-ion" />
                 <StatCell k="elipse · inclinación φ" v={`${derived.ellipse.angleDeg.toFixed(2)}°`} tone="text-ion" />
                 <StatCell k="elipse · centro x / y" v={`${derived.ellipse.centerX.toFixed(4)} / ${derived.ellipse.centerY.toFixed(4)} A`} tone="text-ion" />
                 <StatCell k="elipse · centro polar r / θ" v={`${Math.hypot(derived.ellipse.centerX, derived.ellipse.centerY).toFixed(4)} A / ${(((Math.atan2(derived.ellipse.centerX, -derived.ellipse.centerY) * 180) / Math.PI + 360) % 360).toFixed(2)}°`} tone="text-ion" />
                 <StatCell k="elipse · excentricidad / RMS" v={`${derived.ellipse.eccentricity.toFixed(4)} / ${derived.ellipse.rms.toFixed(4)}`} tone="text-ion" />
-              </>
+              </StatSection>
             )}
           </div>
-        )}
+        ) : null}
 
         {/* datos */}
         <div className="mt-3 border-t border-line pt-2.5">
           <p className="mb-1.5 font-display text-[10px] font-semibold uppercase tracking-[0.2em] text-[#4d6389]">
-            Datos · crudo inmutable
+            Datos
           </p>
           <div className="grid grid-cols-1 gap-1.5 sm:grid-cols-3">
             <button

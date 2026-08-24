@@ -1282,6 +1282,9 @@ export default function App() {
       if (result) {
         results.push(result);
         flip.archiveExtendedPass(pass.id);
+        /* Publicar cada pasada inmediatamente mantiene sus curvas y sus
+         * estadísticas visibles mientras se adquiere la siguiente. */
+        flip.setExtendedAnalysis({ createdAt: Date.now(), passes: [...results], groups: classifyExtendedPeaks(results) });
       }
       await sleep(500);
     }

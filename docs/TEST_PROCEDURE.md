@@ -60,7 +60,7 @@ de error estándar tanto horizontales (ángulo) como verticales (corriente). El
 CSV procesado exporta esas mismas medias, errores y el tamaño de cada bloque.
 La tabla FFT añade «cada (montura)»: periodo × velocidad medida, expresado en
 grados, para localizar la separación angular de cada repetición dominante.
-El eje FFT muestra el espectro completo hasta Nyquist. La tabla conserva los
+El eje FFT muestra el espectro completo hasta Nyquist. La tabla básica conserva los
 cinco picos principales automáticos (`A1`–`A5`); pulsa sobre el espectro para
 añadir selecciones manuales (`M1`…) y usa × para quitar sólo estas últimas.
 Todas las gráficas admiten zoom con rueda, pan con botón derecho, zoom rectangular
@@ -74,6 +74,17 @@ de cada pasada y compara los picos FFT. Periodo angular estable entre velocidade
 y sentidos se clasifica como indicio mecánico; frecuencia en Hz estable pese al
 cambio de velocidad, como posible electrónica/muestreo. Es una clasificación
 orientativa, no la identificación automática de una pieza.
+
+Durante el test extendido las curvas terminadas permanecen visibles con colores
+distintos. Al finalizar se añade un perfil promedio grueso y Estadísticas muestra
+primero el resumen entre pasadas y después un bloque por pasada. El análisis
+comparativo conserva hasta 40 máximos locales de cada FFT; una «coincidencia»
+reúne picos compatibles en frecuencia temporal o periodicidad angular.
+
+La dirección circular se calcula ponderando cada ángulo por la corriente. `R̄`
+próxima a 1 indica una carga concentrada hacia esa dirección; próxima a 0 significa
+distribución casi uniforme o sectores opuestos que se cancelan. Con `R̄` baja, el
+ángulo asociado no debe interpretarse como una posición dominante.
 
 Al terminar, Polar dibuja el ajuste elíptico y sus dos ejes; sus parámetros
 también aparecen en Estadísticas. **Exportar todo** descarga un ZIP con las

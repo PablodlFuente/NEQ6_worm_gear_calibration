@@ -11,6 +11,7 @@ import {
   buildRawCsv,
   capturedAngleDeltaDeg,
   classifyExtendedPeaks,
+  circularStats,
   fitPolarEllipse,
   parseCsv,
   unwrapDegrees,
@@ -116,6 +117,12 @@ test("el test extendido separa periodicidad angular de frecuencia fija", () => {
   ]);
   assert.equal(groups.find((group) => Math.abs((group.representativeDeg ?? 0) - 1) < 0.01)?.classification, "mecánica");
   assert.equal(groups.find((group) => Math.abs(group.representativeHz - 7) < 0.1)?.classification, "eléctrica/muestreo");
+});
+
+test("la estadística circular ponderada apunta hacia la carga dominante", () => {
+  const circular = circularStats([0, 90, 180, 270], [10, 1, 1, 1]);
+  assert.ok(circular.R > 0.6);
+  assert.ok(circular.meanDeg < 1 || circular.meanDeg > 359);
 });
 
 test("promedio por bloques conserva x1 y calcula SEM en ambos ejes", () => {

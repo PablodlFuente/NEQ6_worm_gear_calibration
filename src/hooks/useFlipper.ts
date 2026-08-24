@@ -348,6 +348,33 @@ export function useFlipper({ cpr1 }: Props) {
       if (dt > 0 && da > 0) speeds.push(da / dt);
     }
     const measuredSpeedDegS = speeds.length ? median(speeds) : null;
+    const positionedAngles: number[] = [];
+    const positionedCurrents: number[] = [];
+    const binSum = new Float64Array(360);
+    const binCount = new Uint32Array(360);
+    let maxA = -Infinity;
+    let maxAngleDeg: number | null = null;
+    for (let i = 0; i < n; i++) {
+      const angle = angleAt(angles, tbRef.current[i]);
+      if (angle === null) continue;
+      const phase = ((angle % 360) + 360) % 360;
+      positionedAngles.push(phase);
+      positionedCurrents.push(amps[i]);
+      const bin = Math.min(359, Math.floor(phase));
+      binSum[bin] += amps[i];
+      binCount[bin]++;
+      if (amps[i] > maxA) {
+        maxA = amps[i];
+        maxAngleDeg = phase;
+      }
+    }
+    const circular = positionedAngles.length ? circularStats(positionedAngles, positionedCurrents) : null;
+    const angleSpanDeg = angles.length >= 2 ? Math.abs(angles[angles.length - 1].deg - angles[0].deg) : 0;
+    const sdA = std(amps);
+    if (!Number.isFinite(maxA)) {
+      maxA = 0;
+      for (let i = 0; i < amps.length; i++) maxA = Math.max(maxA, amps[i]);
+    }
     const magnitude = fftMag(resampleUniform(tsRef.current, amps, 4096));
     return {
       id,
@@ -355,11 +382,33 @@ export function useFlipper({ cpr1 }: Props) {
       direction,
       requestedSpeedDegS,
       measuredSpeedDegS,
-      peaks: topPeaks(magnitude, 1 / durationS, 5).map((peak) => ({
+      peaks: topPeaks(magnitude, 1 / durationS, 40).map((peak) => ({
         frequencyHz: peak.freq,
         periodMountDeg: measuredSpeedDegS ? peak.period * measuredSpeedDegS : null,
         magnitude: peak.mag,
       })),
+      statistics: {
+        n,
+        durationS,
+        effectiveRateHz: (n - 1) / durationS,
+        meanA: mean(amps),
+        medianA: median(amps),
+        sdA,
+        semA: n > 1 ? sdA / Math.sqrt(n) : 0,
+        maxA,
+        maxAngleDeg,
+        angleSpanDeg,
+        measuredSpeedDegS,
+        samplesPerDeg: angleSpanDeg > 0 ? positionedAngles.length / angleSpanDeg : null,
+        circularMeanDeg: circular?.meanDeg ?? null,
+        circularR: circular?.R ?? null,
+        circularStdDeg: circular?.stdDeg ?? null,
+        ellipse: positionedAngles.length >= 12 ? fitPolarEllipse(positionedAngles, positionedCurrents) : null,
+      },
+      profile: {
+        anglesDeg: Array.from({ length: 360 }, (_, index) => index + 0.5),
+        currentA: Array.from(binSum, (sum, index) => binCount[index] ? sum / binCount[index] : null),
+      },
     };
   };
 
@@ -480,7 +529,7 @@ export function useFlipper({ cpr1 }: Props) {
       sem: avgA.length > 1 ? std(avgA) / Math.sqrt(avgA.length) : 0,
       durS: D,
       rateEst: D > 0 ? (n - 1) / D : 0,
-      circ: plot ? circularStats(Array.from(plot.angles)) : null,
+      circ: plot ? circularStats(Array.from(plot.angles), plot.amps) : null,
       dThetaEnc: cpr1 ? 360 / cpr1 : null,
       feedbackSpeedDegS: null as number | null,
       samplesPerDeg: null as number | null,
