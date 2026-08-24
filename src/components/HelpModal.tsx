@@ -106,38 +106,26 @@ export default function HelpModal({ open, onClose }: Props) {
               Picos cercanos a 2f, 3f… suelen ser armónicos de una misma repetición; bandas laterales pueden indicar modulación.
             </HelpBlock>
             <HelpBlock title="Zoom, picos, elipse y exportación">
-              La rueda hace zoom siempre; desplaza con el botón derecho. «Lupa región» encuadra un rectángulo y
+              La rueda hace zoom siempre; desplaza con el botón derecho. «Zoom rect» funciona como la lupa de Matplotlib:
+              actívala y arrastra con el botón izquierdo el rectángulo que quieres ampliar. Se desactiva tras aplicarlo y
               Restaurar recupera la vista completa. FFT conserva cinco picos
               automáticos y permite añadir/quitar otros manuales. Pulsa un punto Polar/Cartesiano para reposicionar.
               I RMS₀․₅s es el valor eficaz móvil de medio segundo. Al terminar, Polar muestra la elipse y sus ejes.
               «Exportar todo» crea un ZIP con PNG, CSV crudo/procesado, espectro FFT, picos y resumen JSON.
             </HelpBlock>
-            <HelpBlock title="Estadísticas · adquisición">
-              <b className="text-fog">N crudo/promediado</b> cuenta muestras originales y puntos tras ×N. <b className="text-fog">Tiempo</b>
-              usa timestamps del Flipper; <b className="text-fog">tasa efectiva</b> es (N−1)/tiempo. <b className="text-fog">velocidad :j</b>
-              es la mediana de los desplazamientos/tiempo. <b className="text-fog">muestras/grado</b> sólo cuenta ADC situado entre
-              anclas válidas. <b className="text-fog">recorrido :j</b> es el arco realmente confirmado y <b className="text-fog">factor</b> es ×N.
-            </HelpBlock>
-            <HelpBlock title="Estadísticas · corriente y ángulo">
-              <b className="text-fog">Media</b> es el promedio; <b className="text-fog">mediana</b>, el valor central; <b className="text-fog">σ</b>,
-              la dispersión; y <b className="text-fog">SEM</b>, la incertidumbre estadística de la media. <b className="text-fog">Pico máximo</b>
-              da corriente y posición. Las 36 secciones de 10° muestran dónde la corriente media es mayor y menor; naranja = máxima,
-              azul = mínima. El ángulo medio circular, R̄ y σ circular describen la distribución angular, no el esfuerzo.
-            </HelpBlock>
-            <HelpBlock title="Estadísticas · resolución y Flipper">
-              <b className="text-fog">δθ=360/CPR</b> es la resolución teórica de una cuenta del controlador, no la precisión mecánica.
-              <b className="text-fog">OOR</b> cuenta lecturas fuera del rango admitido y <b className="text-fog">OVF</b> muestras perdidas
-              por desbordamiento. La versión identifica el firmware que produjo esos contadores.
-            </HelpBlock>
-            <HelpBlock title="Estadísticas · elipse">
-              <b className="text-fog">a y b</b> son semiejes mayor y menor; <b className="text-fog">a/b</b> mide elongación (1 = circular).
-              <b className="text-fog">φ</b> es la inclinación del eje mayor. El centro se da como x/y y también como radio/ángulo polar.
-              La excentricidad resume la forma y el RMS indica el residuo del ajuste: menor RMS significa mejor ajuste.
-            </HelpBlock>
             <HelpBlock title="Revoluciones y metadatos">
               «Superponer revs» representa cada vuelta completa con un color distinto para comparar repetibilidad.
               Eje, sentido CW/CCW y origen <Code>:j</Code> se guardan en sesión, CSV y resumen exportado; son necesarios
               para que «mover a esta posición» traduzca el ángulo relativo al destino absoluto correcto.
+            </HelpBlock>
+            <HelpBlock title="Test básico y extendido">
+              El básico realiza una pasada con los parámetros elegidos. El extendido ejecuta cuatro: velocidad seleccionada
+              y su 50 %, ambas en CW y CCW. Después agrupa picos FFT: periodo angular repetible sugiere origen mecánico;
+              frecuencia temporal fija sugiere electrónica/muestreo; los múltiplos enteros se marcan como armónicos.
+            </HelpBlock>
+            <HelpBlock title="Calibración ADC">
+              En Ajustes puedes cambiar la resistencia del shunt y el factor K. Los valores iniciales son 0,323 Ω y
+              1,0025189, pero no están fijados en el análisis: se guardan con cada sesión y exportación.
             </HelpBlock>
           </div>
 

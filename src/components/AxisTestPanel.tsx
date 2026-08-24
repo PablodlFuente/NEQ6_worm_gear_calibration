@@ -20,16 +20,25 @@ export interface AxisTestState {
   actualDurationSec: number | null;
 }
 
+export interface ExtendedTestState {
+  running: boolean;
+  pass: number;
+  total: number;
+  message: string;
+}
+
 interface Props {
   inputs: AxisTestInputs;
   onInputs: (patch: Partial<AxisTestInputs>) => void;
   state: AxisTestState;
+  extended: ExtendedTestState;
   mountOpen: boolean;
   mountBusy: boolean;
   flip: FlipperApi;
   profile: MountProfile;
   movePhase: string;
   onStart: () => void;
+  onStartExtended: () => void;
   onStop: () => void;
 }
 
@@ -41,18 +50,21 @@ export default function AxisTestPanel({
   inputs,
   onInputs,
   state,
+  extended,
   mountOpen,
   mountBusy,
   flip,
   profile,
   movePhase,
   onStart,
+  onStartExtended,
   onStop,
 }: Props) {
   const revs = Number(inputs.revolutions.replace(",", "."));
   const speed = Number(inputs.speed.replace(",", "."));
   const valuesOk = Number.isInteger(revs) && revs >= 1 && revs <= 10 && speed > 0 && speed <= 5;
-  const ready = mountOpen && flip.connected && Boolean(flip.sync) && !flip.syncing && !mountBusy && valuesOk;
+  const busy = state.running || extended.running;
+  const ready = mountOpen && flip.connected && Boolean(flip.sync) && !flip.syncing && !mountBusy && !extended.running && valuesOk;
   const progress = Math.max(0, Math.min(1, state.progress));
   const cpr = inputs.axis === 1 ? profile.cpr1 : profile.cpr2;
   const ratio = (inputs.axis === 1 ? profile.ratio1 : profile.ratio2) || 16;
@@ -85,7 +97,7 @@ export default function AxisTestPanel({
               <button
                 key={axis}
                 type="button"
-                disabled={state.running}
+                disabled={busy}
                 onClick={() => onInputs({ axis })}
                 className={`flex-1 px-2 py-2 font-display text-[10.5px] font-bold tracking-[0.14em] transition-colors disabled:opacity-40 ${
                   inputs.axis === axis ? "bg-ember/15 text-ember" : "bg-[#0c1930] text-dim hover:text-fog"
@@ -104,7 +116,7 @@ export default function AxisTestPanel({
               <button
                 key={direction}
                 type="button"
-                disabled={state.running}
+                disabled={busy}
                 onClick={() => onInputs({ direction })}
                 className={`flex-1 px-2 py-2 font-display text-[10.5px] font-bold tracking-[0.12em] transition-colors disabled:opacity-40 ${
                   inputs.direction === direction
@@ -127,7 +139,7 @@ export default function AxisTestPanel({
             max="10"
             step="1"
             value={inputs.revolutions}
-            disabled={state.running}
+            disabled={busy}
             onChange={(event) => onInputs({ revolutions: event.target.value })}
           />
         </label>
@@ -137,7 +149,7 @@ export default function AxisTestPanel({
           <select
             className={`${inputClass} mt-1`}
             value={inputs.sampleRate}
-            disabled={state.running}
+            disabled={busy}
             onChange={(event) => onInputs({ sampleRate: Number(event.target.value) })}
           >
             {RATES.map((rate) => (
@@ -158,7 +170,7 @@ export default function AxisTestPanel({
               max="5"
               step="0.01"
               value={inputs.speed}
-              disabled={state.running}
+              disabled={busy}
               onChange={(event) => onInputs({ speed: event.target.value })}
             />
             <span className="pointer-events-none absolute right-2.5 top-2 font-mono text-[10px] text-dim">°/s</span>
@@ -183,6 +195,8 @@ export default function AxisTestPanel({
         </span>
         <span className="text-dim">tiempo estimado</span>
         <span className="text-right tabular-nums text-fog">{estimatedDurationSec ? formatTime(estimatedDurationSec) : "—"}</span>
+        <span className="text-dim">tiempo extendido ≈</span>
+        <span className="text-right tabular-nums text-fog">{estimatedDurationSec ? formatTime(estimatedDurationSec * 6) : "—"}</span>
         <span className="text-dim">tiempo {state.running ? "transcurrido" : "real"}</span>
         <span className="text-right tabular-nums text-ion">
           {state.running
@@ -209,24 +223,34 @@ export default function AxisTestPanel({
             style={{ width: `${progress * 100}%` }}
           />
         </div>
-        <p className="mt-2 min-h-4 text-dim">{state.running ? movePhase || state.message : state.message}</p>
+        <p className="mt-2 min-h-4 text-dim">{extended.running ? extended.message : state.running ? movePhase || state.message : state.message}</p>
       </div>
 
-      {state.running ? (
+      {state.running || extended.running ? (
         <button
           onClick={onStop}
           className="mt-3 flex w-full items-center justify-center gap-2 rounded bg-alert px-3 py-2.5 font-display text-[11px] font-bold tracking-[0.18em] text-[#2b0707] transition-all hover:bg-[#ff7b7b] hover:shadow-[0_0_16px_rgba(255,93,93,0.4)]"
         >
-          <IconStop className="h-4 w-4" /> PARADA DE EMERGENCIA
+          <IconStop className="h-4 w-4" /> {extended.running ? `DETENER TEST EXTENDIDO · ${extended.pass}/${extended.total}` : "PARADA DE EMERGENCIA"}
         </button>
       ) : (
-        <button
-          onClick={onStart}
-          disabled={!ready}
-          className="mt-3 flex w-full items-center justify-center gap-2 rounded bg-ember px-3 py-2.5 font-display text-[11px] font-bold tracking-[0.18em] text-[#1c1204] transition-all hover:bg-[#ffc04d] hover:shadow-[0_0_18px_rgba(245,165,36,0.35)] disabled:cursor-not-allowed disabled:opacity-35"
-        >
-          <IconPlay className="h-4 w-4" /> INICIAR TEST SINCRONIZADO
-        </button>
+        <div className="mt-3 grid gap-2">
+          <button
+            onClick={onStart}
+            disabled={!ready}
+            className="flex w-full items-center justify-center gap-2 rounded bg-ember px-3 py-2.5 font-display text-[11px] font-bold tracking-[0.18em] text-[#1c1204] transition-all hover:bg-[#ffc04d] hover:shadow-[0_0_18px_rgba(245,165,36,0.35)] disabled:cursor-not-allowed disabled:opacity-35"
+          >
+            <IconPlay className="h-4 w-4" /> INICIAR TEST BÁSICO
+          </button>
+          <button
+            onClick={onStartExtended}
+            disabled={!ready}
+            title="Cuatro pasadas: velocidad seleccionada y 50 %, en CW y CCW"
+            className="flex w-full items-center justify-center gap-2 rounded border border-ion/60 bg-ion/10 px-3 py-2.5 font-display text-[11px] font-bold tracking-[0.18em] text-ion transition-all hover:bg-ion/20 disabled:cursor-not-allowed disabled:opacity-35"
+          >
+            <IconPlay className="h-4 w-4" /> INICIAR TEST EXTENDIDO
+          </button>
+        </div>
       )}
 
       {!ready && !state.running && (

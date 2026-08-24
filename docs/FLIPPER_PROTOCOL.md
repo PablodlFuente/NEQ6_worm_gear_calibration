@@ -36,8 +36,11 @@ el wrap físico corto de CYCCNT no introduzca discontinuidades.
 La conversión reproducible de la web es:
 
 ```text
-I [A] = adc_raw × 2.5 × 1.0025189 / 4096 / 0.323
+I [A] = adc_raw × 2.5 × K / 4096 / R_shunt
 ```
+
+Los valores iniciales son `K=1.0025189` y `R_shunt=0.323 Ω`, pero ambos se
+pueden cambiar en Ajustes. La web los conserva en cada sesión y CSV.
 
 `oor` cuenta adquisiciones rechazadas por estar fuera de 0–2,5 A según la
 conversión oficial HAL calibrada. `ovf` cuenta ticks o muestras perdidos porque

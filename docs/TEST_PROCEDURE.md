@@ -27,7 +27,7 @@ el sentido y la holgura. Para la primera captura automática usa:
 
 - 1 revolución.
 - 100 Hz de ADC.
-- 0,5 °/s.
+- 3,34 °/s como máximo nominal, o una velocidad menor para la primera prueba.
 - Sentido CW o CCW según el recorrido seguro de cables y contrapesos.
 - El eje con menor riesgo de cables o colisión.
 
@@ -63,9 +63,17 @@ grados, para localizar la separación angular de cada repetición dominante.
 El eje FFT muestra el espectro completo hasta Nyquist. La tabla conserva los
 cinco picos principales automáticos (`A1`–`A5`); pulsa sobre el espectro para
 añadir selecciones manuales (`M1`…) y usa × para quitar sólo estas últimas.
-Todas las gráficas disponen de modo Zoom/Pan y botón Restaurar. Al pulsar un
+Todas las gráficas admiten zoom con rueda, pan con botón derecho, zoom rectangular
+tipo Matplotlib y botón Restaurar. Al pulsar un
 punto Polar o Cartesiano se puede ordenar un reposicionado al ángulo elegido.
-`I RMS₅₀` es el valor eficaz móvil de las 50 muestras más recientes.
+`I RMS` es el valor eficaz móvil de los últimos 0,5 segundos.
+
+**Test básico** realiza una sola pasada. **Test extendido** realiza cuatro:
+velocidad seleccionada y su 50 %, ambas en CW y CCW. Conserva ADC y feedback
+de cada pasada y compara los picos FFT. Periodo angular estable entre velocidades
+y sentidos se clasifica como indicio mecánico; frecuencia en Hz estable pese al
+cambio de velocidad, como posible electrónica/muestreo. Es una clasificación
+orientativa, no la identificación automática de una pieza.
 
 Al terminar, Polar dibuja el ajuste elíptico y sus dos ejes; sus parámetros
 también aparecen en Estadísticas. **Exportar todo** descarga un ZIP con las

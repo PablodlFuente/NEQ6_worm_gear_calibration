@@ -21,10 +21,14 @@ import {
   topPeaks,
   unwrapDegrees,
   type AnglePoint,
+  type AdcCalibration,
   type CaptureMetadata,
+  type ExtendedAnalysis,
+  type ExtendedPassResult,
   type Sample,
   type Session,
   EMPTY_CAPTURE_METADATA,
+  DEFAULT_ADC_CALIBRATION,
 } from "../lib/flipper";
 import { buildZip, downloadBlob } from "../lib/zip";
 
@@ -60,8 +64,21 @@ export function useFlipper({ cpr1 }: Props) {
     total: number;
   } | null>(null);
   const [sessions, setSessions] = useState<Session[]>([]);
+  const [calibration, setCalibrationState] = useState<AdcCalibration>(() => {
+    try {
+      const saved = JSON.parse(localStorage.getItem("neq6-adc-calibration") ?? "null") as Partial<AdcCalibration> | null;
+      return saved && Number(saved.shuntOhm) > 0 && Number(saved.k) > 0
+        ? { shuntOhm: Number(saved.shuntOhm), k: Number(saved.k) }
+        : { ...DEFAULT_ADC_CALIBRATION };
+    } catch {
+      return { ...DEFAULT_ADC_CALIBRATION };
+    }
+  });
+  const calibrationRef = useRef(calibration);
   const [captureMetadata, setCaptureMetadataState] = useState<CaptureMetadata>({ ...EMPTY_CAPTURE_METADATA });
+  const [extendedAnalysis, setExtendedAnalysis] = useState<ExtendedAnalysis | null>(null);
   const captureMetadataRef = useRef<CaptureMetadata>({ ...EMPTY_CAPTURE_METADATA });
+  const extendedFilesRef = useRef<{ name: string; data: string }[]>([]);
 
   const pendingLineRef = useRef<((line: string) => void) | null>(null);
   const commandQueueRef = useRef<Promise<unknown>>(Promise.resolve());
@@ -303,6 +320,66 @@ export function useFlipper({ cpr1 }: Props) {
     setCaptureMetadataState({ ...metadata });
   };
 
+  const setCalibration = (next: AdcCalibration) => {
+    if (!(next.shuntOhm > 0) || !(next.k > 0)) return;
+    calibrationRef.current = { ...next };
+    setCalibrationState({ ...next });
+    localStorage.setItem("neq6-adc-calibration", JSON.stringify(next));
+    setVersion((value) => value + 1);
+  };
+
+  const snapshotExtendedPass = (
+    id: string,
+    label: string,
+    direction: "cw" | "ccw",
+    requestedSpeedDegS: number,
+  ): ExtendedPassResult | null => {
+    const n = adcRef.current.length;
+    if (n < 64) return null;
+    const durationS = (tsRef.current[n - 1] - tsRef.current[0]) / 1e6;
+    if (!(durationS > 0.5)) return null;
+    const amps = new Float64Array(n);
+    for (let i = 0; i < n; i++) amps[i] = adcToAmps(adcRef.current[i], calibrationRef.current);
+    const angles = unwrapDegrees(angleRef.current);
+    const speeds: number[] = [];
+    for (let i = 1; i < angles.length; i++) {
+      const dt = (angles[i].tb - angles[i - 1].tb) / 1000;
+      const da = Math.abs(angles[i].deg - angles[i - 1].deg);
+      if (dt > 0 && da > 0) speeds.push(da / dt);
+    }
+    const measuredSpeedDegS = speeds.length ? median(speeds) : null;
+    const magnitude = fftMag(resampleUniform(tsRef.current, amps, 4096));
+    return {
+      id,
+      label,
+      direction,
+      requestedSpeedDegS,
+      measuredSpeedDegS,
+      peaks: topPeaks(magnitude, 1 / durationS, 5).map((peak) => ({
+        frequencyHz: peak.freq,
+        periodMountDeg: measuredSpeedDegS ? peak.period * measuredSpeedDegS : null,
+        magnitude: peak.mag,
+      })),
+    };
+  };
+
+  const resetExtendedArchive = () => {
+    extendedFilesRef.current = [];
+  };
+
+  const archiveExtendedPass = (id: string) => {
+    const raw = buildRawCsv(makeSamples(), rate, captureMetadataRef.current, calibrationRef.current);
+    const angles = [
+      "tb_ms,angle_relative_deg",
+      ...angleRef.current.map((point) => `${point.tb.toFixed(3)},${point.deg.toFixed(9)}`),
+      "",
+    ].join("\n");
+    extendedFilesRef.current.push(
+      { name: `datos/test-extendido/${id}-adc-crudo.csv`, data: raw },
+      { name: `datos/test-extendido/${id}-feedback-j.csv`, data: angles },
+    );
+  };
+
   useEffect(() => {
     void idb.list().then(setSessions).catch(() => setSessions([]));
   }, []);
@@ -312,7 +389,7 @@ export function useFlipper({ cpr1 }: Props) {
     const n = adcRef.current.length;
     if (!n) return null;
     const amps = new Float64Array(n);
-    for (let i = 0; i < n; i++) amps[i] = adcToAmps(adcRef.current[i]);
+    for (let i = 0; i < n; i++) amps[i] = adcToAmps(adcRef.current[i], calibration);
 
     const unwrapped = unwrapDegrees(angleRef.current);
     let perUnw: Float64Array | null = null;
@@ -455,7 +532,7 @@ export function useFlipper({ cpr1 }: Props) {
       hasAngle: Boolean(plot?.length),
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [version, avgFactor, cpr1, tick]);
+  }, [version, avgFactor, cpr1, tick, calibration]);
 
   /* ── export / import / sesiones ──────────────────────── */
   const makeSamples = (): Sample[] =>
@@ -472,7 +549,7 @@ export function useFlipper({ cpr1 }: Props) {
 
   const stamp = () => new Date().toISOString().slice(0, 19).replace(/[:T]/g, "-");
 
-  const rawCsvText = () => buildRawCsv(makeSamples(), rate, captureMetadataRef.current);
+  const rawCsvText = () => buildRawCsv(makeSamples(), rate, captureMetadataRef.current, calibrationRef.current);
 
   const processedCsvText = () => {
     if (!derived?.plot) return null;
@@ -495,7 +572,7 @@ export function useFlipper({ cpr1 }: Props) {
         ? `feedback_speed=${derived.st.feedbackSpeedDegS.toFixed(6)} deg/s · samples_per_deg=${(derived.st.samplesPerDeg ?? 0).toFixed(3)}`
         : "feedback_speed=unavailable",
     ];
-    return buildProcCsv(rows, rate, statsTxt, captureMetadataRef.current);
+    return buildProcCsv(rows, rate, statsTxt, captureMetadataRef.current, calibrationRef.current);
   };
 
   const exportRaw = () => {
@@ -525,6 +602,7 @@ export function useFlipper({ cpr1 }: Props) {
     }
     const files: { name: string; data: string | Uint8Array }[] = [
       { name: "datos/adc-crudo.csv", data: rawCsvText() },
+      ...extendedFilesRef.current,
     ];
     const processed = processedCsvText();
     if (processed) files.push({ name: "datos/angulo-corriente-procesado.csv", data: processed });
@@ -542,7 +620,7 @@ export function useFlipper({ cpr1 }: Props) {
     }
     files.push({
       name: "datos/resumen.json",
-      data: JSON.stringify({ exportedAt: new Date().toISOString(), requestedRateHz: rate, metadata: captureMetadataRef.current, statistics: derived.st, sectors10deg: derived.sectors, ellipse: derived.ellipse, deviceInfo }, null, 2),
+      data: JSON.stringify({ exportedAt: new Date().toISOString(), requestedRateHz: rate, metadata: captureMetadataRef.current, calibration: calibrationRef.current, statistics: derived.st, sectors10deg: derived.sectors, ellipse: derived.ellipse, extendedAnalysis, deviceInfo }, null, 2),
     });
     files.push(...extraFiles);
     downloadBlob(`neq6-test-${stamp()}.zip`, buildZip(files));
@@ -561,6 +639,7 @@ export function useFlipper({ cpr1 }: Props) {
     adcRef.current = parsed.samples.map((s) => s.adc);
     angleRef.current = parsed.angles;
     setCaptureMetadata(parsed.metadata);
+    setCalibration(parsed.calibration);
     setVersion((v) => v + 1);
     setNotice(
       `Importadas ${parsed.samples.length.toLocaleString("es-ES")} muestras (${parsed.processed ? "CSV procesado" : "CSV crudo"})` +
@@ -584,6 +663,9 @@ export function useFlipper({ cpr1 }: Props) {
       angleTb: angleRef.current.map((a) => a.tb),
       angleDeg: angleRef.current.map((a) => a.deg),
       metadata: { ...captureMetadataRef.current },
+      calibration: { ...calibrationRef.current },
+      extendedAnalysis,
+      extendedFiles: extendedFilesRef.current.map((file) => ({ ...file })),
     };
     await idb.save(s);
     setSessions(await idb.list());
@@ -596,6 +678,9 @@ export function useFlipper({ cpr1 }: Props) {
     adcRef.current = [...s.adc];
     angleRef.current = s.angleTb.map((tb, i) => ({ tb, deg: s.angleDeg[i] }));
     setCaptureMetadata(s.metadata ?? { ...EMPTY_CAPTURE_METADATA });
+    if (s.calibration) setCalibration(s.calibration);
+    setExtendedAnalysis(s.extendedAnalysis ?? null);
+    extendedFilesRef.current = s.extendedFiles?.map((file) => ({ ...file })) ?? [];
     setRate(s.rateHz);
     setVersion((v) => v + 1);
     setNotice(`Sesión «${s.name}» cargada.`);
@@ -618,7 +703,7 @@ export function useFlipper({ cpr1 }: Props) {
   };
 
   const n = adcRef.current.length;
-  const lastA = n ? adcToAmps(adcRef.current[n - 1]) : 0;
+  const lastA = n ? adcToAmps(adcRef.current[n - 1], calibration) : 0;
   let rmsHalfSecond = 0;
   if (n) {
     const cutoffUs = tsRef.current[n - 1] - 500_000;
@@ -626,7 +711,7 @@ export function useFlipper({ cpr1 }: Props) {
     while (start > 0 && tsRef.current[start - 1] >= cutoffUs) start--;
     let sumSquares = 0;
     for (let i = start; i < n; i++) {
-      const amps = adcToAmps(adcRef.current[i]);
+      const amps = adcToAmps(adcRef.current[i], calibration);
       sumSquares += amps * amps;
     }
     rmsHalfSecond = Math.sqrt(sumSquares / (n - start));
@@ -670,6 +755,14 @@ export function useFlipper({ cpr1 }: Props) {
     recordAngle,
     captureMetadata,
     setCaptureMetadata,
+    calibration,
+    setCalibration,
+    adcToAmps: (raw: number) => adcToAmps(raw, calibrationRef.current),
+    extendedAnalysis,
+    setExtendedAnalysis,
+    snapshotExtendedPass,
+    resetExtendedArchive,
+    archiveExtendedPass,
     tick,
   };
 }

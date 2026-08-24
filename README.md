@@ -14,7 +14,7 @@ excentricidad, rozamiento o zonas de carga irregular del conjunto sinfín-corona
 - Test automático de 1 a 10 vueltas en sentido CW o CCW.
 - Carrerilla de 2° en sentido contrario antes de registrar.
 - Posición y velocidad calculadas exclusivamente desde respuestas `:j`, no integrando el tiempo.
-- Corriente instantánea e `I RMS₅₀` con el shunt calibrado de 0,323 Ω.
+- Corriente instantánea e `I RMS` móvil de 0,5 s; shunt y factor K configurables (0,323 Ω y 1,0025189 por defecto).
 - Flipper Zero por BLE o por su segundo puerto USB-COM.
 - Gráficas en vivo, Polar, Cartesiano, FFT y estadísticas.
 - Promedio por bloques, barras SEM, elipse polar, zoom y pan.

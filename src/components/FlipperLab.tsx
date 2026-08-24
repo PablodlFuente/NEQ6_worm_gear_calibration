@@ -1,12 +1,5 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import type { FlipperApi } from "../hooks/useFlipper";
-import {
-  adcToAmps,
-  AMP_PER_RAW,
-  MAX_CURRENT_A,
-  SHUNT_R_OHM,
-  ADC_CAL_K,
-} from "../lib/flipper";
 import { IconAlert, IconDownload, IconTrash } from "./icons";
 
 const AVGS = [1, 2, 5, 10, 20, 50, 100];
@@ -54,18 +47,21 @@ function ChartCanvas({
     const parent = cv.parentElement;
     const render = () => {
       const dpr = window.devicePixelRatio || 1;
-      const renderScale = Math.min(4, Math.max(1, transform.scale));
       const w = parent.clientWidth;
       const h = parent.clientHeight;
       if (!w || !h) return;
-      cv.width = Math.round(w * dpr * renderScale);
-      cv.height = Math.round(h * dpr * renderScale);
+      cv.width = Math.round(w * dpr);
+      cv.height = Math.round(h * dpr);
       cv.style.width = `${w}px`;
       cv.style.height = `${h}px`;
       const ctx = cv.getContext("2d");
       if (!ctx) return;
-      ctx.scale(dpr * renderScale, dpr * renderScale);
+      ctx.scale(dpr, dpr);
+      ctx.save();
+      ctx.translate(transform.x, transform.y);
+      ctx.scale(transform.scale, transform.scale);
       draw(ctx, w, h);
+      ctx.restore();
     };
     render();
     const ro = new ResizeObserver(render);
@@ -112,8 +108,8 @@ function ChartCanvas({
     } else if (state?.mode === "pick" && !state.moved && onPick) {
       const rect = event.currentTarget.getBoundingClientRect();
       onPick(
-        (event.clientX - rect.left) / rect.width,
-        (event.clientY - rect.top) / rect.height,
+        ((event.clientX - rect.left - transform.x) / transform.scale) / rect.width,
+        ((event.clientY - rect.top - transform.y) / transform.scale) / rect.height,
         event.clientX,
         event.clientY,
       );
@@ -137,7 +133,6 @@ function ChartCanvas({
       <canvas
         ref={ref}
         className={`block touch-none ${regionZoom ? "cursor-crosshair" : onPick ? "cursor-crosshair" : "cursor-default"}`}
-        style={{ transformOrigin: "0 0", transform: `translate(${transform.x}px, ${transform.y}px) scale(${transform.scale})` }}
         onPointerDown={pointerDown}
         onPointerMove={pointerMove}
         onPointerUp={pointerUp}
@@ -155,9 +150,37 @@ function ChartCanvas({
   );
 }
 
+const STAT_HELP: Record<string, string> = {
+  "N (crudo / promediado)": "Número de muestras ADC originales y número de puntos resultantes después de aplicar el promedio ×N.",
+  "tiempo real adquisición": "Duración calculada con los timestamps monotónicos del Flipper.",
+  "tasa ADC efectiva": "Frecuencia realmente recibida: (N−1) dividido por la duración.",
+  "sincronización reloj": "Desfase, jitter y tiempo de ida/vuelta entre el reloj del navegador y el Flipper.",
+  "velocidad medida (:j)": "Mediana de los desplazamientos del contador :j divididos por su intervalo real.",
+  "muestras / grado medidas": "Muestras ADC que pudieron interpolarse entre anclas :j, divididas por el recorrido confirmado.",
+  "recorrido confirmado :j": "Ángulo acumulado calculado exclusivamente con posiciones devueltas por la montura.",
+  "factor de promedio": "Cantidad de muestras consecutivas agrupadas en cada punto representado.",
+  media: "Promedio aritmético de la corriente procesada.",
+  mediana: "Valor central de la corriente; es menos sensible a picos aislados.",
+  "desv. típica σ": "Dispersión de la corriente respecto a su media.",
+  "σ de la media (σ/√N)": "Error estándar de la media: incertidumbre estadística del promedio.",
+  "pico máximo / posición": "Mayor muestra instantánea y ángulo interpolado donde apareció.",
+  "sector 10° de mayor media": "Entre las 36 secciones angulares, la de corriente media más alta.",
+  "sector 10° de menor media": "Entre las 36 secciones angulares, la de corriente media más baja.",
+  "ángulo medio (circ.)": "Dirección media calculada con estadística circular.",
+  "R̄ / σ circular": "R̄ mide concentración angular (0–1) y σ circular su dispersión equivalente.",
+  "δθ encoder (360/CPR)": "Resolución teórica de una cuenta del controlador; no equivale a precisión mecánica.",
+  "elipse · semiejes a / b": "Semiejes mayor y menor del ajuste elíptico de la curva polar.",
+  "elipse · cociente a/b": "Elongación de la elipse; 1 representa una circunferencia.",
+  "elipse · inclinación φ": "Orientación angular del semieje mayor.",
+  "elipse · centro x / y": "Desplazamiento cartesiano del centro respecto al origen polar.",
+  "elipse · centro polar r / θ": "Módulo y dirección del desplazamiento del centro.",
+  "elipse · excentricidad / RMS": "Forma de la elipse y residuo del ajuste; un RMS menor indica mejor ajuste.",
+};
+
 function StatCell({ k, v, tone }: { k: string; v: ReactNode; tone?: string }) {
+  const help = STAT_HELP[k] ?? (k.startsWith("Flipper ") ? "OOR cuenta lecturas fuera de rango y OVF pérdidas por desbordamiento del búfer." : undefined);
   return (
-    <div className="flex items-baseline justify-between gap-2 rounded border border-line bg-[#0c1930] px-2 py-1.5">
+    <div title={help} className={`flex items-baseline justify-between gap-2 rounded border border-line bg-[#0c1930] px-2 py-1.5 ${help ? "cursor-help" : ""}`}>
       <span className="text-[8.5px] uppercase tracking-wider text-dim">{k}</span>
       <span className={`tabular-nums ${tone ?? "text-fog"}`}>{v}</span>
     </div>
@@ -213,7 +236,7 @@ export default function FlipperLab({
     let mn = Infinity;
     let mx = -Infinity;
     for (let i = i0; i < n; i++) {
-      const a = adcToAmps(flip.buffers.adcRef.current[i]);
+      const a = flip.adcToAmps(flip.buffers.adcRef.current[i]);
       if (a < mn) mn = a;
       if (a > mx) mx = a;
     }
@@ -224,7 +247,7 @@ export default function FlipperLab({
     ctx.beginPath();
     for (let i = i0; i < n; i++) {
       const x = ((i - i0) / (W - 1)) * (w - 8) + 4;
-      const y = h - pad - ((adcToAmps(flip.buffers.adcRef.current[i]) - mn) / (mx - mn)) * (h - pad * 2);
+      const y = h - pad - ((flip.adcToAmps(flip.buffers.adcRef.current[i]) - mn) / (mx - mn)) * (h - pad * 2);
       i === i0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y);
     }
     ctx.stroke();
@@ -685,7 +708,7 @@ export default function FlipperLab({
                   regionZoom ? "border-ion/60 bg-ion/15 text-ion" : "border-line text-dim hover:text-fog"
                 }`}
               >
-                ⌕ LUPA REGIÓN
+                🔍 ZOOM RECT
               </button>
               <button onClick={resetView} className="rounded border border-line px-2 py-1 font-display text-[9px] font-bold tracking-wider text-dim hover:border-ember/50 hover:text-ember">
                 RESTAURAR
@@ -707,7 +730,7 @@ export default function FlipperLab({
           <span className="tabular-nums text-ember">{stats.lastA.toFixed(3)} A</span>
         </span>
         <span className="rounded border border-line bg-[#0c1930] px-1.5 py-px" title="Valor eficaz móvil de los últimos 0,5 segundos">
-          <span className="text-dim">I RMS₀․₅s </span>
+          <span className="text-dim">I RMS </span>
           <span className="tabular-nums text-ion">{stats.rmsHalfSecond.toFixed(3)} A</span>
         </span>
         <span className="rounded border border-line bg-[#0c1930] px-1.5 py-px">
@@ -718,9 +741,6 @@ export default function FlipperLab({
           <span className={flip.capturing ? "text-ember" : "text-dim"}>
             {flip.capturing ? "● REC" : "IDLE"}
           </span>
-        </span>
-        <span className="ml-auto hidden text-[9px] text-[#3c5178] lg:inline">
-          K={ADC_CAL_K} · R={SHUNT_R_OHM} Ω · I=ADC×{AMP_PER_RAW.toFixed(6)} · 0–{MAX_CURRENT_A} A
         </span>
       </div>
 
@@ -735,7 +755,7 @@ export default function FlipperLab({
         {view !== "stats" ? (
           <div className="flex min-h-[300px] flex-col gap-2">
             {chartFor}
-            <p className="font-mono text-[9.5px] text-dim">Rueda: zoom · botón derecho: desplazar · Lupa región: encuadrar un rectángulo · Restaurar: vista completa.</p>
+            <p className="font-mono text-[9.5px] text-dim">Rueda: zoom · botón derecho: desplazar · Zoom rect: arrastra un área con el botón izquierdo · Restaurar: vista completa.</p>
             {(view === "polar" || view === "cartesiano") && derived?.plot && (
               <p className="font-mono text-[9.5px] text-dim">
                 ×1 representa cada muestra con ángulo · ×N representa la media de bloques consecutivos de N
@@ -812,6 +832,30 @@ export default function FlipperLab({
                 Espectro · {derived.st.durS.toFixed(1)} s de señal · resolución{" "}
                 {(1 / (derived.st.durS || 1)).toFixed(3)} Hz · ventana de Hann · grados calculados con velocidad medida :j
               </p>
+            )}
+            {view === "fft" && flip.extendedAnalysis && (
+              <div className="overflow-hidden rounded border border-ion/35">
+                <p className="border-b border-line bg-ion/5 px-2 py-1.5 font-display text-[9.5px] font-bold uppercase tracking-[0.14em] text-ion">
+                  Comparación del test extendido · {flip.extendedAnalysis.passes.length}/4 pasadas
+                </p>
+                <table className="w-full font-mono text-[9.5px]">
+                  <thead className="bg-[#0c1930] text-left text-[8.5px] uppercase tracking-wider text-dim">
+                    <tr><th className="px-2 py-1">grupo</th><th className="px-2 py-1">clasificación</th><th className="px-2 py-1">Hz</th><th className="px-2 py-1">cada °</th><th className="px-2 py-1">evidencia</th></tr>
+                  </thead>
+                  <tbody>
+                    {flip.extendedAnalysis.groups.map((group) => (
+                      <tr key={group.id} className="border-t border-line/60 text-fog">
+                        <td className="px-2 py-1 text-ember">{group.id}</td>
+                        <td className={`px-2 py-1 ${group.classification === "mecánica" ? "text-mint" : group.classification === "eléctrica/muestreo" ? "text-ion" : "text-fog"}`}>{group.classification}</td>
+                        <td className="px-2 py-1 tabular-nums">{group.representativeHz.toFixed(3)}</td>
+                        <td className="px-2 py-1 tabular-nums">{group.representativeDeg !== null ? `${group.representativeDeg.toFixed(3)}°` : "—"}</td>
+                        <td className="px-2 py-1 text-dim" title={group.passes.join(" · ")}>{group.reason}{group.harmonicOfHz ? ` Armónico de ≈${group.harmonicOfHz.toFixed(3)} Hz.` : ""}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+                <p className="border-t border-line px-2 py-1.5 font-mono text-[9px] text-dim">Clasificación orientativa: confirma repitiendo el ensayo y comparando amplitud/fase; no identifica automáticamente una pieza.</p>
+              </div>
             )}
           </div>
         ) : !derived ? (

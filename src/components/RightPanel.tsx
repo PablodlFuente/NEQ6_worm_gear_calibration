@@ -1,12 +1,12 @@
 import SidePanel, { type AutoState } from "./SidePanel";
 import DrivePanel, { type MoveInputs, type MoveState } from "./DrivePanel";
 import JogPad from "./JogPad";
-import AxisTestPanel, { type AxisTestInputs, type AxisTestState } from "./AxisTestPanel";
+import AxisTestPanel, { type AxisTestInputs, type AxisTestState, type ExtendedTestState } from "./AxisTestPanel";
 import type { MountProfile, QuickCmd } from "../lib/protocol";
 import type { SerialSettings, SerialStatus } from "../hooks/useSerial";
 import type { FlipperApi } from "../hooks/useFlipper";
 import type { DecodedState } from "./DecoderPanel";
-import { IconBluetooth, IconCrosshair, IconSettings, IconZap } from "./icons";
+import { IconCrosshair, IconSettings, IconTelescope, IconZap } from "./icons";
 
 export type Tab = "mov" | "montura" | "ajustes" | "test";
 
@@ -44,15 +44,17 @@ interface Props {
   axisTestInputs: AxisTestInputs;
   onAxisTestInputs: (patch: Partial<AxisTestInputs>) => void;
   axisTest: AxisTestState;
+  extendedTest: ExtendedTestState;
   onStartAxisTest: () => void;
+  onStartExtendedTest: () => void;
   onStopAxisTest: () => void;
 }
 
 const TABS: { id: Tab; label: string; icon: (p: { className?: string }) => React.ReactNode }[] = [
   { id: "mov", label: "Movimiento", icon: (p) => <IconCrosshair {...p} /> },
   { id: "montura", label: "Montura", icon: (p) => <IconZap {...p} /> },
+  { id: "test", label: "Test ejes", icon: (p) => <IconTelescope {...p} /> },
   { id: "ajustes", label: "Ajustes", icon: (p) => <IconSettings {...p} /> },
-  { id: "test", label: "Test ejes", icon: (p) => <IconBluetooth {...p} /> },
 ];
 
 export default function RightPanel(props: Props) {
@@ -85,7 +87,7 @@ export default function RightPanel(props: Props) {
         {tab === "mov" && (
           <div className="flex flex-col gap-3 pb-2">
             <DrivePanel
-              open={open}
+              open={open && !props.extendedTest.running}
               profile={props.profile}
               inputs={props.inputs}
               onInputs={props.onInputs}
@@ -95,7 +97,7 @@ export default function RightPanel(props: Props) {
               onInitHome={props.onInitHome}
             />
             <JogPad
-              disabled={!open || props.move.running}
+              disabled={!open || props.move.running || props.extendedTest.running}
               activeAxis={props.jogAxis}
               speedLabel={props.inputs.speed || "—"}
               onStart={props.onStartJog}
@@ -153,12 +155,14 @@ export default function RightPanel(props: Props) {
             inputs={props.axisTestInputs}
             onInputs={props.onAxisTestInputs}
             state={props.axisTest}
+            extended={props.extendedTest}
             mountOpen={open}
-            mountBusy={props.move.running || props.auto.running || props.jogAxis !== 0}
+            mountBusy={props.move.running || props.auto.running || props.jogAxis !== 0 || props.extendedTest.running}
             flip={props.flip}
             profile={props.profile}
             movePhase={props.move.phase}
             onStart={props.onStartAxisTest}
+            onStartExtended={props.onStartExtendedTest}
             onStop={props.onStopAxisTest}
           />
         )}

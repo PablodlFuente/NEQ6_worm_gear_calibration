@@ -1,4 +1,4 @@
-import type { ReactNode } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import { BAUD_RATES, portLabel } from "../lib/serial";
 import { DIAG_SEQUENCE, QUICK, type MountProfile, type QuickCmd } from "../lib/protocol";
 import type { SerialSettings, SerialStatus } from "../hooks/useSerial";
@@ -7,6 +7,7 @@ import type { DecodedState } from "./DecoderPanel";
 import DecoderPanel from "./DecoderPanel";
 import FlipperConnection from "./FlipperConnection";
 import { IconBook, IconPlug, IconRadar, IconStop, IconUnplug } from "./icons";
+import { DEFAULT_ADC_CALIBRATION } from "../lib/flipper";
 
 export interface AutoState {
   running: boolean;
@@ -78,6 +79,17 @@ export default function SidePanel({
   const open = status === "open";
   const locked = status !== "closed";
   const ajustes = mode === "ajustes";
+  const [shuntText, setShuntText] = useState(String(flip.calibration.shuntOhm));
+  const [kText, setKText] = useState(String(flip.calibration.k));
+  useEffect(() => {
+    setShuntText(String(flip.calibration.shuntOhm));
+    setKText(String(flip.calibration.k));
+  }, [flip.calibration]);
+  const applyCalibration = () => {
+    const shuntOhm = Number(shuntText.replace(",", "."));
+    const k = Number(kText.replace(",", "."));
+    if (shuntOhm > 0 && k > 0) flip.setCalibration({ shuntOhm, k });
+  };
 
   return (
     <aside className="flex min-h-0 flex-col gap-3 lg:overflow-y-auto lg:pr-0.5">
@@ -171,7 +183,7 @@ export default function SidePanel({
               </>
             ) : (
               <>
-                <IconPlug className="h-4 w-4" /> SOLICITAR PUERTO
+                <IconPlug className="h-4 w-4" /> SELECCIONAR PUERTO
               </>
             )}
           </button>
@@ -257,6 +269,33 @@ export default function SidePanel({
               )}
             </div>
           )}
+        </section>
+      )}
+
+      {ajustes && (
+        <section className="rise rounded-md border border-line bg-panel p-3 shadow-[inset_0_1px_0_rgba(255,255,255,0.04)]">
+          <Head>Calibración ADC y shunt</Head>
+          <div className="mt-3 grid grid-cols-2 gap-2">
+            <Field label="Resistencia shunt (Ω)">
+              <input className={selCls} inputMode="decimal" value={shuntText} onChange={(event) => setShuntText(event.target.value)} onBlur={applyCalibration} />
+            </Field>
+            <Field label="Factor K">
+              <input className={selCls} inputMode="decimal" value={kText} onChange={(event) => setKText(event.target.value)} onBlur={applyCalibration} />
+            </Field>
+          </div>
+          <div className="mt-2 flex items-center justify-between gap-2 font-mono text-[9.5px] text-dim">
+            <span>I = ADC × 2,5 × K / 4096 / R</span>
+            <button
+              onClick={() => {
+                setShuntText(String(DEFAULT_ADC_CALIBRATION.shuntOhm));
+                setKText(String(DEFAULT_ADC_CALIBRATION.k));
+                flip.setCalibration({ ...DEFAULT_ADC_CALIBRATION });
+              }}
+              className="rounded border border-line px-2 py-1 text-fog hover:border-ember/50 hover:text-ember"
+            >
+              RESTAURAR
+            </button>
+          </div>
         </section>
       )}
 

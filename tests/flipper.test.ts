@@ -10,6 +10,7 @@ import {
   buildProcCsv,
   buildRawCsv,
   capturedAngleDeltaDeg,
+  classifyExtendedPeaks,
   fitPolarEllipse,
   parseCsv,
   unwrapDegrees,
@@ -52,6 +53,7 @@ test("desenvuelve el timestamp u32 al cruzar 71,6 minutos", () => {
 test("aplica la calibración exacta del shunt", () => {
   assert.equal(AMP_PER_RAW, (2.5 * 1.0025189) / 4096 / 0.323);
   assert.ok(Math.abs(adcToAmps(1320) - 2.5005989155) < 1e-9);
+  assert.equal(adcToAmps(4096, { shuntOhm: 0.5, k: 1 }), 5);
 });
 
 test("desenvuelve e interpola ángulos a través de 0 grados", () => {
@@ -88,15 +90,32 @@ test("CSV conserva eje, sentido y origen absoluto de la captura", () => {
     [{ ts: 100, adc: 321, tb: 1_700_000_000_000 }],
     500,
     { axis: 2, direction: "ccw", originSteps: 123456 },
+    { shuntOhm: 0.5, k: 0.99 },
   );
   const parsed = parseCsv(csv)!;
   assert.deepEqual(parsed.metadata, { axis: 2, direction: "ccw", originSteps: 123456 });
+  assert.deepEqual(parsed.calibration, { shuntOhm: 0.5, k: 0.99 });
 });
 
 test("reposiciona un ángulo relativo respetando origen y sentido", () => {
   const cpr = 360_000;
   assert.equal(capturedAngleDeltaDeg(110_000, cpr, { axis: 1, direction: "cw", originSteps: 100_000 }, 20), 10);
   assert.equal(capturedAngleDeltaDeg(90_000, cpr, { axis: 1, direction: "ccw", originSteps: 100_000 }, 20), -10);
+});
+
+test("el test extendido separa periodicidad angular de frecuencia fija", () => {
+  const groups = classifyExtendedPeaks([
+    { id: "f-cw", label: "f CW", direction: "cw", requestedSpeedDegS: 2, measuredSpeedDegS: 2, peaks: [
+      { frequencyHz: 2, periodMountDeg: 1, magnitude: 10 },
+      { frequencyHz: 7, periodMountDeg: 2 / 7, magnitude: 5 },
+    ] },
+    { id: "s-ccw", label: "s CCW", direction: "ccw", requestedSpeedDegS: 1, measuredSpeedDegS: 1, peaks: [
+      { frequencyHz: 1, periodMountDeg: 1, magnitude: 9 },
+      { frequencyHz: 7.01, periodMountDeg: 1 / 7.01, magnitude: 4 },
+    ] },
+  ]);
+  assert.equal(groups.find((group) => Math.abs((group.representativeDeg ?? 0) - 1) < 0.01)?.classification, "mecánica");
+  assert.equal(groups.find((group) => Math.abs(group.representativeHz - 7) < 0.1)?.classification, "eléctrica/muestreo");
 });
 
 test("promedio por bloques conserva x1 y calcula SEM en ambos ejes", () => {

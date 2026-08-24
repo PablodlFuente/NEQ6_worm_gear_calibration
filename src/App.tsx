@@ -21,14 +21,14 @@ import {
   type MountProfile,
   type QuickCmd,
 } from "./lib/protocol";
-import { capturedAngleDeltaDeg } from "./lib/flipper";
+import { capturedAngleDeltaDeg, classifyExtendedPeaks } from "./lib/flipper";
 import TerminalLog, { type DisplayMode, type EntryKind, type LogEntry } from "./components/TerminalLog";
 import CommandBar, { type CommandBarHandle } from "./components/CommandBar";
 import RightPanel, { type Tab } from "./components/RightPanel";
 import FlipperLab from "./components/FlipperLab";
 import { type AutoState } from "./components/SidePanel";
 import { IDLE_MOVE, type MoveInputs, type MoveState } from "./components/DrivePanel";
-import type { AxisTestInputs, AxisTestState } from "./components/AxisTestPanel";
+import type { AxisTestInputs, AxisTestState, ExtendedTestState } from "./components/AxisTestPanel";
 import type { DecodedState } from "./components/DecoderPanel";
 import HelpModal from "./components/HelpModal";
 import {
@@ -174,7 +174,7 @@ export default function App() {
     direction: "cw",
     revolutions: "1",
     sampleRate: 100,
-    speed: "0.5",
+    speed: "3.34",
   });
   const [axisTest, setAxisTest] = useState<AxisTestState>({
     running: false,
@@ -185,6 +185,7 @@ export default function App() {
     elapsedSec: 0,
     actualDurationSec: null,
   });
+  const [extendedTest, setExtendedTest] = useState<ExtendedTestState>({ running: false, pass: 0, total: 4, message: "" });
   const [helpOpen, setHelpOpen] = useState(false);
 
   /* pestaña activa + ancho del panel lateral */
@@ -209,6 +210,7 @@ export default function App() {
   const autoCancelRef = useRef(false);
   const moveCancelRef = useRef(false);
   const axisTestCancelRef = useRef(false);
+  const extendedTestCancelRef = useRef(false);
   const jogRef = useRef<{ axis: 1 | 2 } | null>(null);
   const barRef = useRef<CommandBarHandle>(null);
   const encoder = (encoderRef.current ??= new TextEncoder());
@@ -1084,12 +1086,12 @@ export default function App() {
     return !moveCancelRef.current && !aborted;
   };
 
-  const startAxisTest = async () => {
-    if (axisTest.running || move.running || auto.running || jogRef.current) return;
-    const revolutions = Number(axisTestInputs.revolutions.replace(",", "."));
-    const speed = Number(axisTestInputs.speed.replace(",", "."));
-    const axis = axisTestInputs.axis;
-    const measurementSign = axisTestInputs.direction === "cw" ? 1 : -1;
+  const startAxisTest = async (testInputs = axisTestInputs, preserveExtended = false): Promise<boolean> => {
+    if (axisTest.running || move.running || auto.running || jogRef.current) return false;
+    const revolutions = Number(testInputs.revolutions.replace(",", "."));
+    const speed = Number(testInputs.speed.replace(",", "."));
+    const axis = testInputs.axis;
+    const measurementSign = testInputs.direction === "cw" ? 1 : -1;
     const cpr = axis === 1 ? profile.cpr1 : profile.cpr2;
     const targetDeg = revolutions * 360;
     if (
@@ -1105,10 +1107,14 @@ export default function App() {
       speed > 5
     ) {
       logFault("Test no iniciado: revisa montura, Flipper, CPR, revoluciones y velocidad.");
-      return;
+      return false;
     }
 
     axisTestCancelRef.current = false;
+    if (!preserveExtended) {
+      flip.setExtendedAnalysis(null);
+      flip.resetExtendedArchive();
+    }
     flip.clearData();
     setAxisTest({
       running: true,
@@ -1132,7 +1138,7 @@ export default function App() {
           ? "Test cancelado durante la toma de impulso; no se adquirieron datos."
           : "No se pudo completar la toma de impulso de 2°.",
       }));
-      return;
+      return false;
     }
 
     setAxisTest((state) => ({ ...state, message: "Motor en marcha; esperando el cruce por 0°…" }));
@@ -1176,7 +1182,7 @@ export default function App() {
               message: `Tomando impulso hasta 0° (${Math.min(2, impulseDeg).toFixed(2)}° / 2,00°)…`,
             }));
             if (Math.abs(preRollTravelledSteps) < preRollSteps) return;
-            captureStarted = await flip.startCapture(axisTestInputs.sampleRate);
+            captureStarted = await flip.startCapture(testInputs.sampleRate);
             if (!captureStarted) {
               captureFailed = true;
               moveCancelRef.current = true;
@@ -1186,7 +1192,7 @@ export default function App() {
             acquisitionPreviousPosition = steps;
             flip.setCaptureMetadata({
               axis,
-              direction: axisTestInputs.direction,
+              direction: testInputs.direction,
               originSteps: steps,
             });
             /* El origen de la prueba es el cruce de adquisición, no el cero
@@ -1246,17 +1252,61 @@ export default function App() {
             ? `Captura incompleta: :j confirmó ${measuredDeg.toFixed(1)}° de ${targetDeg.toFixed(0)}°.`
             : "Test interrumpido por un error; revisa el registro.",
     }));
+    return success && !cancelled;
+  };
+
+  const startExtendedAxisTest = async () => {
+    if (extendedTest.running || axisTest.running || move.running || auto.running || jogRef.current) return;
+    const fast = Number(axisTestInputs.speed.replace(",", "."));
+    if (!(fast > 0)) return;
+    const slow = Math.max(0.01, fast / 2);
+    const passes = [
+      { id: "fast-cw", label: `rápida CW · ${fast.toFixed(3)}°/s`, direction: "cw" as const, speed: fast },
+      { id: "fast-ccw", label: `rápida CCW · ${fast.toFixed(3)}°/s`, direction: "ccw" as const, speed: fast },
+      { id: "slow-cw", label: `lenta CW · ${slow.toFixed(3)}°/s`, direction: "cw" as const, speed: slow },
+      { id: "slow-ccw", label: `lenta CCW · ${slow.toFixed(3)}°/s`, direction: "ccw" as const, speed: slow },
+    ];
+    extendedTestCancelRef.current = false;
+    flip.setExtendedAnalysis(null);
+    flip.resetExtendedArchive();
+    setExtendedTest({ running: true, pass: 0, total: passes.length, message: "Preparando test extendido…" });
+    const results = [];
+    for (let index = 0; index < passes.length; index++) {
+      if (extendedTestCancelRef.current) break;
+      const pass = passes[index];
+      setExtendedTest({ running: true, pass: index + 1, total: passes.length, message: `Pasada ${index + 1}/4 · ${pass.label}` });
+      const inputs: AxisTestInputs = { ...axisTestInputs, direction: pass.direction, speed: String(pass.speed) };
+      const ok = await startAxisTest(inputs, true);
+      if (!ok || extendedTestCancelRef.current) break;
+      const result = flip.snapshotExtendedPass(pass.id, pass.label, pass.direction, pass.speed);
+      if (result) {
+        results.push(result);
+        flip.archiveExtendedPass(pass.id);
+      }
+      await sleep(500);
+    }
+    const completed = results.length === passes.length;
+    if (results.length) {
+      flip.setExtendedAnalysis({ createdAt: Date.now(), passes: results, groups: classifyExtendedPeaks(results) });
+    }
+    setExtendedTest({
+      running: false,
+      pass: results.length,
+      total: passes.length,
+      message: completed ? "Test extendido completado: clasificación FFT disponible." : "Test extendido interrumpido; se conservan las pasadas completadas.",
+    });
   };
 
   const stopAxisTest = () => {
     axisTestCancelRef.current = true;
+    extendedTestCancelRef.current = true;
     setAxisTest((state) => ({ ...state, message: "Enviando parada inmediata…" }));
     stopMove(true);
     void flip.stopCapture();
   };
 
   const moveToCapturedAngle = async (angle: number) => {
-    if (status !== "open" || move.running || axisTest.running || auto.running) {
+    if (status !== "open" || move.running || axisTest.running || extendedTest.running || auto.running) {
       logFault("No se puede reposicionar mientras la montura está desconectada u ocupada.");
       return;
     }
@@ -1370,6 +1420,12 @@ export default function App() {
 
         <div className="ml-auto flex items-center gap-5">
           <ActivityMeter data={activity} />
+          <div
+            className={`hidden font-mono text-[10px] tabular-nums lg:block ${flip.deviceInfo && (flip.deviceInfo.overflow || flip.deviceInfo.outOfRange) ? "text-alert" : "text-dim"}`}
+            title="OOR: lecturas fuera de rango · OVF: pérdidas por desbordamiento del Flipper"
+          >
+            OOR {flip.deviceInfo ? flip.deviceInfo.outOfRange.toLocaleString("es-ES") : "—"} · OVF {flip.deviceInfo ? flip.deviceInfo.overflow.toLocaleString("es-ES") : "—"}
+          </div>
           <div className="hidden items-center gap-4 font-mono text-[11px] lg:flex">
             <div className="flex items-center gap-1.5" title="Bytes recibidos">
               <span key={`rx${rxPulse}`} className={rxPulse ? "led led-mint led-flash" : "led led-off"} />
@@ -1410,7 +1466,7 @@ export default function App() {
             <FlipperLab
               flip={flip}
               serialOpen={status === "open"}
-              canMoveToAngle={status === "open" && !move.running && !axisTest.running && !auto.running}
+              canMoveToAngle={status === "open" && !move.running && !axisTest.running && !extendedTest.running && !auto.running}
               onMoveToAngle={(angle) => void moveToCapturedAngle(angle)}
             />
           ) : (
@@ -1523,7 +1579,9 @@ export default function App() {
               }
             }}
             axisTest={axisTest}
-            onStartAxisTest={() => void startAxisTest()}
+            extendedTest={extendedTest}
+            onStartAxisTest={() => void startAxisTest(axisTestInputs, false)}
+            onStartExtendedTest={() => void startExtendedAxisTest()}
             onStopAxisTest={stopAxisTest}
           />
         </div>

@@ -14,6 +14,6 @@ Ambos aceptan `INFO`, `RATE <Hz>`, `SYNC`, `START` y `STOP`.
 `I = adc_raw × 2,5 × 1,0025189 / 4096 / 0,323`
 
 El CSV crudo conserva `adc_raw`, por lo que una calibración futura no destruye
-la medida original. `I RMS₅₀` es el valor eficaz de las últimas 50 muestras.
+la medida original. `I RMS` es el valor eficaz móvil de los últimos 0,5 segundos.
 
 Consulta también `docs/FLIPPER_SETUP.md` y `docs/FLIPPER_PROTOCOL.md`.

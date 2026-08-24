@@ -2,15 +2,24 @@
  * Configuración A: R_total 0.323 Ω · Vref 2.5 V · 12 bits · K = 1.0025189
  * El crudo NUNCA se modifica: todo procesado genera vistas derivadas. */
 
-export const ADC_CAL_K = 1.0025189;
-export const SHUNT_R_OHM = 0.323;
 export const ADC_VREF = 2.5;
 export const ADC_STEPS = 4096;
-/* I(A) = raw × 2.5 × K / 4096 / 0.323 */
-export const AMP_PER_RAW = (ADC_VREF * ADC_CAL_K) / ADC_STEPS / SHUNT_R_OHM;
 export const MAX_CURRENT_A = 2.5;
 
-export const adcToAmps = (raw: number) => raw * AMP_PER_RAW;
+export interface AdcCalibration {
+  shuntOhm: number;
+  k: number;
+}
+
+export const DEFAULT_ADC_CALIBRATION: AdcCalibration = { shuntOhm: 0.323, k: 1.0025189 };
+export const ADC_CAL_K = DEFAULT_ADC_CALIBRATION.k;
+export const SHUNT_R_OHM = DEFAULT_ADC_CALIBRATION.shuntOhm;
+export const ampsPerRaw = (calibration: AdcCalibration = DEFAULT_ADC_CALIBRATION) =>
+  (ADC_VREF * calibration.k) / ADC_STEPS / calibration.shuntOhm;
+export const AMP_PER_RAW = ampsPerRaw();
+
+export const adcToAmps = (raw: number, calibration: AdcCalibration = DEFAULT_ADC_CALIBRATION) =>
+  raw * ampsPerRaw(calibration);
 
 export interface Sample {
   tb: number; /* Date.now() del navegador al recibir */
@@ -27,6 +36,105 @@ export interface CaptureMetadata {
   axis: 1 | 2 | null;
   direction: "cw" | "ccw" | null;
   originSteps: number | null;
+}
+
+export interface ExtendedPeak {
+  frequencyHz: number;
+  periodMountDeg: number | null;
+  magnitude: number;
+}
+
+export interface ExtendedPassResult {
+  id: string;
+  label: string;
+  direction: "cw" | "ccw";
+  requestedSpeedDegS: number;
+  measuredSpeedDegS: number | null;
+  peaks: ExtendedPeak[];
+}
+
+export interface ExtendedPeakGroup {
+  id: string;
+  classification: "mecánica" | "tren motor" | "eléctrica/muestreo" | "incierta";
+  representativeHz: number;
+  representativeDeg: number | null;
+  passes: string[];
+  harmonicOfHz: number | null;
+  reason: string;
+}
+
+export interface ExtendedAnalysis {
+  createdAt: number;
+  passes: ExtendedPassResult[];
+  groups: ExtendedPeakGroup[];
+}
+
+const relativeDifference = (a: number, b: number) => Math.abs(a - b) / Math.max(Math.abs(a), Math.abs(b), 1e-12);
+
+/** Clasificación comparativa; es evidencia experimental, no identificación
+ * automática de una pieza concreta. */
+export function classifyExtendedPeaks(passes: ExtendedPassResult[]): ExtendedPeakGroup[] {
+  const observations = passes.flatMap((pass) => pass.peaks.map((peak) => ({ pass, peak })));
+  const used = new Set<number>();
+  const groups: ExtendedPeakGroup[] = [];
+  for (let i = 0; i < observations.length; i++) {
+    if (used.has(i)) continue;
+    const members = [observations[i]];
+    used.add(i);
+    for (let j = i + 1; j < observations.length; j++) {
+      if (used.has(j)) continue;
+      const a = observations[i];
+      const b = observations[j];
+      if (a.pass.id === b.pass.id) continue;
+      const sameHz = relativeDifference(a.peak.frequencyHz, b.peak.frequencyHz) <= 0.05;
+      const sameDeg = a.peak.periodMountDeg !== null && b.peak.periodMountDeg !== null &&
+        relativeDifference(a.peak.periodMountDeg, b.peak.periodMountDeg) <= 0.08;
+      if (sameHz || sameDeg) {
+        members.push(b);
+        used.add(j);
+      }
+    }
+    const differentSpeeds = members.some((a) => members.some((b) =>
+      a.pass.id !== b.pass.id && relativeDifference(a.pass.requestedSpeedDegS, b.pass.requestedSpeedDegS) >= 0.2));
+    const degreeStable = differentSpeeds && members.some((a) => members.some((b) =>
+      a.pass.id !== b.pass.id && a.peak.periodMountDeg !== null && b.peak.periodMountDeg !== null &&
+      relativeDifference(a.peak.periodMountDeg, b.peak.periodMountDeg) <= 0.08));
+    const hzStable = differentSpeeds && members.some((a) => members.some((b) =>
+      a.pass.id !== b.pass.id && relativeDifference(a.peak.frequencyHz, b.peak.frequencyHz) <= 0.05));
+    const bothDirections = new Set(members.map((member) => member.pass.direction)).size > 1;
+    const classification = degreeStable
+      ? bothDirections ? "mecánica" : "tren motor"
+      : hzStable ? "eléctrica/muestreo" : "incierta";
+    const representativeHz = median(members.map((member) => member.peak.frequencyHz));
+    const degreeValues = members.map((member) => member.peak.periodMountDeg).filter((value): value is number => value !== null);
+    let harmonicOfHz: number | null = null;
+    for (const candidate of observations) {
+      if (candidate.peak.frequencyHz >= representativeHz) continue;
+      const ratio = representativeHz / candidate.peak.frequencyHz;
+      const integer = Math.round(ratio);
+      if (integer >= 2 && integer <= 5 && Math.abs(ratio - integer) <= 0.04) {
+        harmonicOfHz = candidate.peak.frequencyHz;
+        break;
+      }
+    }
+    groups.push({
+      id: `X${groups.length + 1}`,
+      classification,
+      representativeHz,
+      representativeDeg: degreeValues.length ? median(degreeValues) : null,
+      passes: [...new Set(members.map((member) => member.pass.label))],
+      harmonicOfHz,
+      reason: degreeStable
+        ? bothDirections
+          ? "Periodo angular estable entre velocidades y presente en ambos sentidos."
+          : "La frecuencia escala con la velocidad; falta confirmación en ambos sentidos."
+        : hzStable
+          ? "Frecuencia temporal estable aunque cambia la velocidad."
+          : "Sin coincidencia suficiente entre velocidades/sentidos.",
+    });
+  }
+  const rank = { "mecánica": 0, "tren motor": 1, "eléctrica/muestreo": 2, "incierta": 3 } as const;
+  return groups.sort((a, b) => rank[a.classification] - rank[b.classification] || a.representativeHz - b.representativeHz);
 }
 
 export const EMPTY_CAPTURE_METADATA: CaptureMetadata = {
@@ -60,6 +168,9 @@ export interface Session {
   angleTb: number[];
   angleDeg: number[];
   metadata?: CaptureMetadata;
+  calibration?: AdcCalibration;
+  extendedAnalysis?: ExtendedAnalysis | null;
+  extendedFiles?: { name: string; data: string }[];
 }
 
 export const FLIPPER_COMMANDS = [
@@ -500,15 +611,15 @@ export function binCartesian(angles: number[], currents: number[], bins = 72): A
 }
 
 /* ── CSV (crudo y procesado) ──────────────────────────── */
-function metadataHeader(metadata?: CaptureMetadata): string {
+function metadataHeader(metadata?: CaptureMetadata, calibration: AdcCalibration = DEFAULT_ADC_CALIBRATION): string {
   const axis = metadata?.axis === 1 ? "AR" : metadata?.axis === 2 ? "DEC" : "unknown";
   const direction = metadata?.direction?.toUpperCase() ?? "unknown";
   const origin = metadata?.originSteps ?? "unknown";
-  return `# axis=${axis}\n# direction=${direction}\n# origin_steps=${origin}\n`;
+  return `# axis=${axis}\n# direction=${direction}\n# origin_steps=${origin}\n# shunt_ohm=${calibration.shuntOhm}\n# calibration_k=${calibration.k}\n`;
 }
 
-export function buildRawCsv(samples: Sample[], rate: number, metadata?: CaptureMetadata): string {
-  const head = `# neq6-logger raw · rate=${rate}Hz · I(A)=adc*${AMP_PER_RAW.toFixed(9)}\n${metadataHeader(metadata)}ts_us,adc_raw,tb_ms\n`;
+export function buildRawCsv(samples: Sample[], rate: number, metadata?: CaptureMetadata, calibration: AdcCalibration = DEFAULT_ADC_CALIBRATION): string {
+  const head = `# neq6-logger raw · rate=${rate}Hz · I(A)=adc*${ampsPerRaw(calibration).toFixed(9)}\n${metadataHeader(metadata, calibration)}ts_us,adc_raw,tb_ms\n`;
   const rows = samples.map((s) => `${s.ts},${s.adc},${s.tb}`);
   return head + rows.join("\n") + "\n";
 }
@@ -528,10 +639,11 @@ export function buildProcCsv(
   rate: number,
   statsTxt: string[],
   metadata?: CaptureMetadata,
+  calibration: AdcCalibration = DEFAULT_ADC_CALIBRATION,
 ): string {
   const head =
     `# neq6-logger procesado · rate=${rate}Hz\n` +
-    metadataHeader(metadata) +
+    metadataHeader(metadata, calibration) +
     statsTxt.map((s) => `# ${s}\n`).join("") +
     "ts_us,adc_raw,amps,amps_sem,angle_unwrapped_deg,angle_sem_deg,rev,tb_ms,n_group\n";
   const body = rows.map(
@@ -541,15 +653,20 @@ export function buildProcCsv(
   return head + body.join("\n") + "\n";
 }
 
-export function parseCsv(text: string): { samples: Sample[]; angles: AnglePoint[]; processed: boolean; metadata: CaptureMetadata } | null {
+export function parseCsv(text: string): { samples: Sample[]; angles: AnglePoint[]; processed: boolean; metadata: CaptureMetadata; calibration: AdcCalibration } | null {
   const metadata: CaptureMetadata = { ...EMPTY_CAPTURE_METADATA };
+  const calibration: AdcCalibration = { ...DEFAULT_ADC_CALIBRATION };
   for (const line of text.split(/\r?\n/)) {
     const axis = line.match(/^#\s*axis=(AR|DEC)/i)?.[1]?.toUpperCase();
     const direction = line.match(/^#\s*direction=(CW|CCW)/i)?.[1]?.toLowerCase();
     const origin = line.match(/^#\s*origin_steps=(-?\d+)/i)?.[1];
+    const shunt = line.match(/^#\s*shunt_ohm=([\d.eE+-]+)/i)?.[1];
+    const k = line.match(/^#\s*calibration_k=([\d.eE+-]+)/i)?.[1];
     if (axis) metadata.axis = axis === "AR" ? 1 : 2;
     if (direction) metadata.direction = direction as "cw" | "ccw";
     if (origin) metadata.originSteps = Number(origin);
+    if (shunt && Number(shunt) > 0) calibration.shuntOhm = Number(shunt);
+    if (k && Number(k) > 0) calibration.k = Number(k);
   }
   const lines = text.split(/\r?\n/).filter((l) => l.length && !l.startsWith("#"));
   if (!lines.length) return null;
@@ -570,7 +687,7 @@ export function parseCsv(text: string): { samples: Sample[]; angles: AnglePoint[
     if (processed && !Number.isInteger(adc)) {
       /* el procesado conserva adc_raw entero; si viniera en amps, revertir */
       const amps = Number(c[head.indexOf("amps")]);
-      if (isFinite(amps)) adc = Math.round(amps / AMP_PER_RAW);
+      if (isFinite(amps)) adc = Math.round(amps / ampsPerRaw(calibration));
     }
     const tb = iTb >= 0 ? Number(c[iTb]) || 0 : 0;
     samples.push({ ts, adc: Math.round(adc), tb });
@@ -581,7 +698,7 @@ export function parseCsv(text: string): { samples: Sample[]; angles: AnglePoint[
       }
     }
   }
-  return samples.length ? { samples, angles, processed, metadata } : null;
+  return samples.length ? { samples, angles, processed, metadata, calibration } : null;
 }
 
 /* ── IndexedDB (sesiones) ─────────────────────────────── */

@@ -231,7 +231,7 @@ export default function DrivePanel({
               title="Parada inmediata :L — solo emergencias"
               className="flex items-center justify-center gap-1 rounded bg-alert px-2.5 py-2 font-display text-[10.5px] font-bold tracking-[0.1em] text-[#2b0707] transition-all hover:bg-[#ff7b7b] hover:shadow-[0_0_16px_rgba(255,93,93,0.4)] active:translate-y-px disabled:cursor-not-allowed disabled:opacity-30 disabled:hover:shadow-none"
             >
-              <IconAlert className="h-3.5 w-3.5" /> ¡YA!
+              <IconAlert className="h-3.5 w-3.5" /> HALT
             </button>
             <button
               onClick={onInitHome}

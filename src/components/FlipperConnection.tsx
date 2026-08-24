@@ -154,7 +154,7 @@ export default function FlipperConnection({ flip }: { flip: FlipperApi }) {
       <div className="mt-3 border-t border-line pt-2.5">
         <p className="text-[9.5px] uppercase tracking-[0.14em] text-dim">Firmware (SDK oficial / Momentum)</p>
         <p className="mt-1.5 font-mono text-[9.5px] leading-relaxed text-dim">
-          FAP completa: PA7 (pin 2) · shunt 0.323 Ω · K=1.0025189 · BLE + USB CDC1 · timestamp DWT
+          FAP completa: ADC crudo en PA7 (pin 2) · BLE + USB CDC1 · timestamp DWT
           extendido · ring buffer 2048 · tasa 10–1000 Hz. Descomprime y compila con{" "}
           <span className="text-fog">ufbt</span>.
         </p>

@@ -130,6 +130,14 @@ export const IconBluetooth = (p: P) => (
   </svg>
 );
 
+export const IconTelescope = (p: P) => (
+  <svg {...base(p)}>
+    <path d="m4 8 11-4 2 5-11 4Z" />
+    <path d="m15 4 3-1 2 6-3 1M9 12l3 4M12 16l-4 6M12 16l5 6" />
+    <circle cx="11.5" cy="15.5" r="1.5" />
+  </svg>
+);
+
 export const IconSettings = (p: P) => (
   <svg {...base(p)}>
     <circle cx="12" cy="12" r="3" />

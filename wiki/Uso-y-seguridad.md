@@ -5,7 +5,7 @@
 - **Movimiento:** GOTO hasta unos grados concretos, con frenado en destino.
 - **Jog:** velocidad continua mientras se mantiene pulsada una flecha.
 - **STOP:** parada suave.
-- **¡YA!:** parada inmediata.
+- **HALT:** parada inmediata.
 - **HOME:** referencia de la controladora; no es un home mecánico.
 
 ## Test de ejes
