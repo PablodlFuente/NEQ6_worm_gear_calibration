@@ -4,6 +4,7 @@ import {
   AMP_PER_RAW,
   StreamParser,
   adcToAmps,
+  alignAngleTimeline,
   averageAngleSeries,
   angleAt,
   buildProcCsv,
@@ -60,6 +61,19 @@ test("desenvuelve e interpola ángulos a través de 0 grados", () => {
   ]);
   assert.deepEqual(points.map((point) => point.deg), [350, 370, 390]);
   assert.equal(angleAt(points, 50), 360);
+});
+
+test("recupera el ángulo si el reloj ADC quedó en otra vuelta u32", () => {
+  const angles = [
+    { tb: 1_000, deg: 0 },
+    { tb: 2_000, deg: 10 },
+  ];
+  const shifted = alignAngleTimeline(angles, [4_295_968_296, 4_295_969_296]);
+  assert.equal(shifted[0].tb, 4_295_968_296);
+  assert.equal(angleAt(shifted, 4_295_968_796), 5);
+
+  const alreadySynced = alignAngleTimeline(angles, [1_200, 1_800]);
+  assert.equal(alreadySynced, angles);
 });
 
 test("CSV crudo conserva timestamp, ADC y tiempo sincronizado", () => {

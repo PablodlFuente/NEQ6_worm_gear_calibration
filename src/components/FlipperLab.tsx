@@ -662,7 +662,7 @@ export default function FlipperLab({
       {/* zona de gráfico / estadísticas */}
       <div className="min-h-0 flex-1 overflow-y-auto p-3">
         {view !== "stats" ? (
-          <div className="flex h-full min-h-[300px] flex-col gap-2">
+          <div className="flex min-h-[300px] flex-col gap-2">
             {chartFor}
             {zoomMode && (
               <p className="font-mono text-[9.5px] text-ion">Modo zoom: rueda para ampliar/reducir · arrastra para desplazar · Restaurar vuelve al encuadre completo.</p>

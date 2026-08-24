@@ -3,6 +3,7 @@ import { useBle } from "./useBle";
 import { useFlipperSerial } from "./useFlipperSerial";
 import {
   adcToAmps,
+  alignAngleTimeline,
   averageAngleSeries,
   angleAt,
   buildProcCsv,
@@ -273,7 +274,10 @@ export function useFlipper({ cpr1 }: Props) {
   }, [capturing]);
 
   const recordAngle = (deg: number, tb = Date.now()) => {
-    if (!capturingRef.current || !angleOn) return;
+    /* startAxisTest limpia la serie antes de cada prueba. No descartamos un
+     * feedback :j válido por una transición asíncrona de React/START: ese era
+     * precisamente el caso que dejaba corriente sin ángulo en plena captura. */
+    if (!angleOn) return;
     angleRef.current.push({ tb, deg: ((deg % 360) + 360) % 360 });
   };
 
@@ -288,7 +292,8 @@ export function useFlipper({ cpr1 }: Props) {
     const amps = new Float64Array(n);
     for (let i = 0; i < n; i++) amps[i] = adcToAmps(adcRef.current[i]);
 
-    const unwrapped = unwrapDegrees(angleRef.current);
+    const unwrappedRaw = unwrapDegrees(angleRef.current);
+    const unwrapped = alignAngleTimeline(unwrappedRaw, tbRef.current);
     let perUnw: Float64Array | null = null;
     let revOf: Int32Array | null = null;
     const revTimes: number[] = [];
@@ -336,8 +341,8 @@ export function useFlipper({ cpr1 }: Props) {
     const plot = perUnw
       ? averageAngleSeries(tsRef.current, tbRef.current, adcRef.current, amps, perUnw, m)
       : null;
-    const angleSpanDeg = unwrapped.length >= 2
-      ? Math.abs(unwrapped[unwrapped.length - 1].deg - unwrapped[0].deg)
+    const angleSpanDeg = unwrappedRaw.length >= 2
+      ? Math.abs(unwrappedRaw[unwrappedRaw.length - 1].deg - unwrappedRaw[0].deg)
       : 0;
     const ellipse = plot && angleSpanDeg >= 330 ? fitPolarEllipse(plot.angles, plot.amps) : null;
 
