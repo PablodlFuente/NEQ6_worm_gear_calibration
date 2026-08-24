@@ -17,8 +17,9 @@ ambos exponen exactamente el mismo protocolo.
 
 1. Se comprueban conexión de montura, CPR detectado, conexión del Flipper y
    sincronización válida.
-2. La web retrocede 2°, arranca un único GOTO relativo `:H` hacia delante y
-   espera a que el feedback `:j` confirme que se han recuperado esos 2°.
+2. La web retrocede 2° mediante un destino absoluto corto `:S`, arranca después
+   un único GOTO relativo `:H` en el sentido de medida y espera a que el feedback
+   `:j` confirme que se han recuperado esos 2°.
 3. En ese cruce por 0° configura `RATE` y confirma `START`. La vuelta completa
    continúa sin parada intermedia: unas 9,02 M cuentas caben en el campo relativo
    sin signo de 24 bits de `:H` (`0xFFFFFF`).

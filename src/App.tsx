@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState, type CSSProperties, type ReactNode } from "react";
 import { useSerial, type SerialSettings } from "./hooks/useSerial";
 import { useFlipper } from "./hooks/useFlipper";
-import { asciiOf, fmtBytes, fmtDuration, TERMINATIONS, timeNow } from "./lib/serial";
+import { asciiOf, fmtBytes, fmtDuration, portLabel, TERMINATIONS, timeNow } from "./lib/serial";
 import {
   cmdParts,
   calculateMotionTiming,
@@ -65,6 +65,40 @@ function Starfield() {
   );
 }
 
+function ActivityMeter({ data }: { data: number[] }) {
+  const max = Math.max(4, ...data);
+  return (
+    <div className="hidden h-6 items-end gap-[3px] xl:flex" title="Actividad RX">
+      {data.map((v, i) => (
+        <span
+          key={i}
+          className="w-[3px] rounded-[1px] transition-[height,background-color] duration-300"
+          style={{
+            height: `${Math.max(10, Math.round((v / max) * 100))}%`,
+            backgroundColor: v > 0 ? "rgba(245,165,36,0.85)" : "#1c2f4f",
+          }}
+        />
+      ))}
+    </div>
+  );
+}
+
+function StatusPill({ status, label }: { status: string; label: string }) {
+  const conf =
+    status === "open"
+      ? { text: "EN LÍNEA", dot: "led led-mint led-breathe", cls: "border-mint/50 bg-mint/5 text-mint" }
+      : status === "connecting"
+        ? { text: "ABRIENDO…", dot: "led led-ember led-breathe", cls: "border-ember/50 text-ember" }
+        : { text: "DESCONECTADO", dot: "led led-off", cls: "border-line text-dim" };
+  return (
+    <div className={`hidden items-center gap-2 rounded border px-2.5 py-1.5 font-mono text-[10.5px] tracking-wider transition-colors md:flex ${conf.cls}`}>
+      <span className={conf.dot} />
+      <span>{conf.text}</span>
+      {status === "open" && <span className="max-w-[180px] truncate text-mint/60">· {label}</span>}
+    </div>
+  );
+}
+
 function ToolBtn({
   title,
   onClick,
@@ -107,6 +141,9 @@ export default function App() {
   const [termination, setTermination] = useState("cr");
   const [history, setHistory] = useState<string[]>([]);
   const [counters, setCounters] = useState({ rx: 0, tx: 0 });
+  const [activity, setActivity] = useState<number[]>(() => Array(24).fill(0));
+  const [rxPulse, setRxPulse] = useState(0);
+  const [txPulse, setTxPulse] = useState(0);
   const [elapsed, setElapsed] = useState(0);
   const [utc, setUtc] = useState(() => new Date().toISOString().slice(11, 19));
 
@@ -153,6 +190,7 @@ export default function App() {
   const pendingRef = useRef<number | undefined>(undefined);
   const rxBytesRef = useRef(0);
   const txBytesRef = useRef(0);
+  const lastTickRef = useRef(0);
   const encoderRef = useRef<TextEncoder | null>(null);
   const sessionStartRef = useRef(0);
   const lastCmdKeyRef = useRef<string | null>(null);
@@ -242,6 +280,7 @@ export default function App() {
   /* ── datos recibidos del puerto ───────────────────────── */
   const handleData = (chunk: Uint8Array) => {
     rxBytesRef.current += chunk.length;
+    setRxPulse((pulse) => pulse + 1);
 
     const buf = bufRef.current;
     for (let i = 0; i < chunk.length; i++) buf.push(chunk[i]);
@@ -321,9 +360,12 @@ export default function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  /* ── contadores de tráfico ────────────────────────────── */
+  /* ── contadores + actividad de tráfico ────────────────── */
   useEffect(() => {
     const iv = window.setInterval(() => {
+      const now = rxBytesRef.current;
+      setActivity((values) => [...values.slice(-23), Math.max(0, now - lastTickRef.current)]);
+      lastTickRef.current = now;
       setCounters({ rx: rxBytesRef.current, tx: txBytesRef.current });
     }, 400);
     return () => window.clearInterval(iv);
@@ -393,6 +435,7 @@ export default function App() {
       lastCmdTextRef.current = raw;
       await serial.write(bytes);
       txBytesRef.current += bytes.length;
+      setTxPulse((pulse) => pulse + 1);
       addEntries([entry("tx", { text: raw })]);
       if (toHistory) setHistory((h) => (h[h.length - 1] === raw ? h : [...h.slice(-49), raw]));
       return true;
@@ -889,7 +932,10 @@ export default function App() {
       actualDurationSec: null,
     });
 
-    const preRollOk = await runMove({ axis, speed, deg: -2, maxDeg: 5, relativeGoto: true });
+    /* El retroceso corto usa un destino absoluto :S. En este controlador se ha
+     * observado que :H puede conservar el sentido del GOTO anterior pese a
+     * cambiar el bit de :G. :S fuerza aquí una posición realmente opuesta. */
+    const preRollOk = await runMove({ axis, speed, deg: -2, maxDeg: 5 });
     if (!preRollOk || axisTestCancelRef.current) {
       setAxisTest((state) => ({
         ...state,
@@ -1110,13 +1156,32 @@ export default function App() {
         <IconCrosshair className="spin-slow h-7 w-7 shrink-0 text-ember" />
         <div className="min-w-0">
           <h1 className="font-display text-[15px] font-bold leading-none tracking-[0.16em] text-[#e8f0ff]">
-            NEQ6<span className="mx-1.5 text-ember">//</span>SERIAL LINK
+            NEQ6 <span className="text-ember">-</span> AJUSTE SINFÍN-CORONA
           </h1>
-          <p className="mt-1 hidden font-mono text-[10px] tracking-[0.14em] text-dim sm:block">
-            CONSOLA UART · SKYWATCHER MC · EQDIRECT
-          </p>
         </div>
 
+        <div className="ml-auto flex items-center gap-5">
+          <ActivityMeter data={activity} />
+          <div className="hidden items-center gap-4 font-mono text-[11px] lg:flex">
+            <div className="flex items-center gap-1.5" title="Bytes recibidos">
+              <span key={`rx${rxPulse}`} className={rxPulse ? "led led-mint led-flash" : "led led-off"} />
+              <span className="text-dim">RX</span>
+              <span className="w-16 text-right tabular-nums text-mint">{fmtBytes(counters.rx)}</span>
+            </div>
+            <div className="flex items-center gap-1.5" title="Bytes enviados">
+              <span key={`tx${txPulse}`} className={txPulse ? "led led-ember led-flash" : "led led-off"} />
+              <span className="text-dim">TX</span>
+              <span className="w-16 text-right tabular-nums text-ember">{fmtBytes(counters.tx)}</span>
+            </div>
+          </div>
+          <StatusPill status={status} label={portLabel(portInfo)} />
+          <button
+            onClick={() => setHelpOpen(true)}
+            className="rounded border border-line bg-[#0c1930] px-3.5 py-2 font-display text-[11px] font-bold tracking-[0.16em] text-fog transition-colors hover:border-ember/50 hover:text-ember"
+          >
+            ? AYUDA
+          </button>
+        </div>
       </header>
 
       {/* aviso de compatibilidad */}
@@ -1272,7 +1337,6 @@ export default function App() {
           sesión {fmtDuration(elapsed)} · RX {fmtBytes(counters.rx)} · TX {fmtBytes(counters.tx)}
         </span>
         <span className="hidden text-[#42567a] md:inline">9600 · 8N1 · SkyWatcher MC</span>
-        <button onClick={() => setHelpOpen(true)} className="text-fog hover:text-ember">? AYUDA</button>
       </footer>
       <HelpModal open={helpOpen} onClose={() => setHelpOpen(false)} />
     </div>

@@ -171,12 +171,6 @@ export default function AxisTestPanel({
         {timing?.limited && (
           <p className="col-span-2 mt-1 text-alert">Límite de esta montura: {timing.maxDegPerSec.toFixed(4)} °/s (T1=6).</p>
         )}
-        {effectiveRate !== null && effectiveRate < inputs.sampleRate * 0.9 && (
-          <p className="col-span-2 mt-1 text-alert">
-            La diferencia muestras/° se debe a que llegan {effectiveRate.toFixed(1)} Hz de {inputs.sampleRate} Hz solicitados
-            {flip.deviceInfo?.overflow ? ` · OVF=${flip.deviceInfo.overflow}` : ""}. Actualiza el firmware v3.1 o reduce la tasa.
-          </p>
-        )}
       </div>
 
       <div className="mt-3 rounded border border-line bg-[#081120] p-2.5 font-mono text-[9.5px]">
