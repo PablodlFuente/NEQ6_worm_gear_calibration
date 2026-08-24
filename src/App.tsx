@@ -1,0 +1,1098 @@
+import { useEffect, useRef, useState, type CSSProperties, type ReactNode } from "react";
+import { useSerial, type SerialSettings } from "./hooks/useSerial";
+import { useFlipper } from "./hooks/useFlipper";
+import { asciiOf, fmtBytes, fmtDuration, portLabel, TERMINATIONS, timeNow } from "./lib/serial";
+import {
+  cmdParts,
+  decodeResponse,
+  DIAG_SEQUENCE,
+  hexLE,
+  le24,
+  MAX_INC,
+  POS_OFFSET,
+  posField,
+  statusFromChars,
+  type MountProfile,
+  type QuickCmd,
+} from "./lib/protocol";
+import TerminalLog, { type DisplayMode, type EntryKind, type LogEntry } from "./components/TerminalLog";
+import CommandBar, { type CommandBarHandle } from "./components/CommandBar";
+import RightPanel, { type Tab } from "./components/RightPanel";
+import FlipperLab from "./components/FlipperLab";
+import { type AutoState } from "./components/SidePanel";
+import { IDLE_MOVE, type MoveInputs, type MoveState } from "./components/DrivePanel";
+import type { DecodedState } from "./components/DecoderPanel";
+import {
+  IconActivity,
+  IconAlert,
+  IconCrosshair,
+  IconDownload,
+  IconPlug,
+  IconScroll,
+  IconTerminal,
+  IconTrash,
+  IconUnplug,
+} from "./components/icons";
+
+const MAX_ENTRIES = 700;
+const RX_TIMEOUT_MS = 900;
+
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+function Starfield() {
+  return (
+    <div aria-hidden className="pointer-events-none fixed inset-0 z-0 overflow-hidden">
+      <div className="stars-a" />
+      <div className="stars-b" />
+    </div>
+  );
+}
+
+function ActivityMeter({ data }: { data: number[] }) {
+  const max = Math.max(4, ...data);
+  return (
+    <div className="hidden h-6 items-end gap-[3px] xl:flex" title="Tráfico RX (bytes por intervalo)">
+      {data.map((v, i) => (
+        <span
+          key={i}
+          className="w-[3px] rounded-[1px] transition-[height,background-color] duration-300"
+          style={{
+            height: `${Math.max(10, Math.round((v / max) * 100))}%`,
+            backgroundColor: v > 0 ? "rgba(245,165,36,0.85)" : "#1c2f4f",
+          }}
+        />
+      ))}
+    </div>
+  );
+}
+
+function StatusPill({ status, label }: { status: string; label: string }) {
+  const conf =
+    status === "open"
+      ? { text: "EN LÍNEA", dot: "led led-mint led-breathe", cls: "border-mint/50 bg-mint/5 text-mint" }
+      : status === "connecting"
+        ? { text: "ABRIENDO…", dot: "led led-ember led-breathe", cls: "border-ember/50 text-ember" }
+        : { text: "DESCONECTADO", dot: "led led-off", cls: "border-line text-dim" };
+  return (
+    <div className={`hidden items-center gap-2 rounded border px-2.5 py-1.5 font-mono text-[10.5px] tracking-wider transition-colors md:flex ${conf.cls}`}>
+      <span className={conf.dot} />
+      <span>{conf.text}</span>
+      {status === "open" && <span className="max-w-[180px] truncate text-mint/60">· {label}</span>}
+    </div>
+  );
+}
+
+function ToolBtn({
+  title,
+  onClick,
+  active,
+  children,
+}: {
+  title: string;
+  onClick: () => void;
+  active?: boolean;
+  children: ReactNode;
+}) {
+  return (
+    <button
+      title={title}
+      onClick={onClick}
+      className={`rounded border p-1.5 transition-colors ${
+        active
+          ? "border-ember/60 bg-ember/10 text-ember"
+          : "border-line text-dim hover:border-ember/40 hover:text-fog"
+      }`}
+    >
+      {children}
+    </button>
+  );
+}
+
+export default function App() {
+  const supported = typeof navigator !== "undefined" && "serial" in navigator;
+  const secure = typeof window !== "undefined" && window.isSecureContext;
+
+  const [settings, setSettings] = useState<SerialSettings>({
+    baudRate: 9600,
+    dataBits: 8,
+    stopBits: 1,
+    parity: "none",
+  });
+  const [entries, setEntries] = useState<LogEntry[]>([]);
+  const [displayMode, setDisplayMode] = useState<DisplayMode>("ascii");
+  const [autoscroll, setAutoscroll] = useState(true);
+  const [termination, setTermination] = useState("cr");
+  const [history, setHistory] = useState<string[]>([]);
+  const [counters, setCounters] = useState({ rx: 0, tx: 0 });
+  const [activity, setActivity] = useState<number[]>(() => Array(24).fill(0));
+  const [rxPulse, setRxPulse] = useState(0);
+  const [txPulse, setTxPulse] = useState(0);
+  const [elapsed, setElapsed] = useState(0);
+  const [utc, setUtc] = useState(() => new Date().toISOString().slice(11, 19));
+
+  /* barra de comandos + decodificador + autodiagnóstico */
+  const [cmd, setCmd] = useState("");
+  const [decoded, setDecoded] = useState<DecodedState | null>(null);
+  const [profile, setProfile] = useState<MountProfile>({});
+  const [auto, setAuto] = useState<AutoState>({
+    running: false,
+    step: 0,
+    total: DIAG_SEQUENCE.length,
+    cmd: "",
+  });
+  const [mvInputs, setMvInputs] = useState<MoveInputs>({ axis: 1, speed: "0.5", deg: "10" });
+  const [move, setMove] = useState<MoveState>(IDLE_MOVE);
+  const [jogAxis, setJogAxis] = useState<0 | 1 | 2>(0);
+
+  /* pestaña activa + ancho del panel lateral */
+  const [tab, setTab] = useState<Tab>("mov");
+  const [sideW, setSideW] = useState<number>(() => {
+    const v = Number(localStorage.getItem("neq6-sidew"));
+    return v >= 300 && v <= 760 ? v : 380;
+  });
+  const dragRef = useRef<{ x0: number; w0: number } | null>(null);
+
+  const idRef = useRef(0);
+  const bufRef = useRef<number[]>([]);
+  const pendingRef = useRef<number | undefined>(undefined);
+  const rxBytesRef = useRef(0);
+  const txBytesRef = useRef(0);
+  const lastTickRef = useRef(0);
+  const encoderRef = useRef<TextEncoder | null>(null);
+  const sessionStartRef = useRef(0);
+  const lastCmdKeyRef = useRef<string | null>(null);
+  const lastCmdTextRef = useRef<string | null>(null);
+  const rxWaitersRef = useRef<Array<(line: string) => void>>([]);
+  const autoCancelRef = useRef(false);
+  const moveCancelRef = useRef(false);
+  const jogRef = useRef<{ axis: 1 | 2 } | null>(null);
+  const barRef = useRef<CommandBarHandle>(null);
+  const encoder = (encoderRef.current ??= new TextEncoder());
+
+  const baudString = `${settings.baudRate} ${settings.dataBits}${
+    settings.parity === "none" ? "N" : settings.parity[0].toUpperCase()
+  }${settings.stopBits}`;
+
+  /* ── registro ─────────────────────────────────────────── */
+  const entry = (kind: EntryKind, data: { text?: string; bytes?: Uint8Array }): LogEntry => ({
+    id: ++idRef.current,
+    time: timeNow(),
+    kind,
+    ...data,
+  });
+
+  const addEntries = (list: LogEntry[]) =>
+    setEntries((prev) => {
+      const next = [...prev, ...list];
+      return next.length > MAX_ENTRIES ? next.slice(next.length - MAX_ENTRIES) : next;
+    });
+
+  const logSys = (text: string) => addEntries([entry("sys", { text })]);
+  const logFault = (text: string) => addEntries([entry("fault", { text })]);
+
+  const makeRxEntry = (line: number[]): LogEntry => {
+    const kind: EntryKind = line[0] === 0x3d ? "ok" : line[0] === 0x21 ? "err" : "rx";
+    return entry(kind, { bytes: Uint8Array.from(line) });
+  };
+
+  /* ── decodificación + perfil + waiters por línea RX ───── */
+  const handleRxLine = (bytes: number[]) => {
+    const text = String.fromCharCode(...bytes);
+
+    if (rxWaitersRef.current.length) {
+      const ws = rxWaitersRef.current;
+      rxWaitersRef.current = [];
+      ws.forEach((w) => w(text));
+    }
+
+    const d = decodeResponse(lastCmdKeyRef.current, text);
+    if (d) setDecoded({ cmd: lastCmdTextRef.current, line: text, d });
+
+    const key = lastCmdKeyRef.current;
+    if (d && (d.kind === "value" || d.kind === "status" || d.kind === "version") && key) {
+      const letter = key[0];
+      const ch = key[1];
+      if (letter === "e") {
+        setProfile((p) => ({ ...p, fw: d.raw.toUpperCase() }));
+      } else if (letter === "a") {
+        setProfile((p) => (ch === "2" ? { ...p, cpr2: d.value } : { ...p, cpr1: d.value }));
+      } else if (letter === "b") {
+        setProfile((p) => ({ ...p, timer: d.value }));
+      } else if (letter === "g") {
+        setProfile((p) => (ch === "2" ? { ...p, ratio2: d.value } : { ...p, ratio1: d.value }));
+      }
+    }
+  };
+
+  const waitForRx = (ms: number) =>
+    new Promise<string | null>((resolve) => {
+      let done = false;
+      const fn = (line: string) => {
+        if (done) return;
+        done = true;
+        window.clearTimeout(timer);
+        rxWaitersRef.current = rxWaitersRef.current.filter((f) => f !== fn);
+        resolve(line);
+      };
+      const timer = window.setTimeout(() => {
+        if (done) return;
+        done = true;
+        rxWaitersRef.current = rxWaitersRef.current.filter((f) => f !== fn);
+        resolve(null);
+      }, ms);
+      rxWaitersRef.current.push(fn);
+    });
+
+  /* ── datos recibidos del puerto ───────────────────────── */
+  const handleData = (chunk: Uint8Array) => {
+    rxBytesRef.current += chunk.length;
+    setRxPulse((p) => p + 1);
+
+    const buf = bufRef.current;
+    for (let i = 0; i < chunk.length; i++) buf.push(chunk[i]);
+
+    const lines: number[][] = [];
+    let start = 0;
+    for (let i = 0; i < buf.length; i++) {
+      const c = buf[i];
+      if (c === 0x0d || c === 0x0a) {
+        lines.push(buf.slice(start, i));
+        if (c === 0x0d && buf[i + 1] === 0x0a) i++;
+        start = i + 1;
+      }
+    }
+    bufRef.current = buf.slice(start);
+
+    const fresh = lines.filter((l) => l.length > 0);
+    if (fresh.length) {
+      addEntries(fresh.map(makeRxEntry));
+      fresh.forEach(handleRxLine);
+    }
+
+    window.clearTimeout(pendingRef.current);
+    if (bufRef.current.length) {
+      pendingRef.current = window.setTimeout(() => {
+        if (bufRef.current.length) {
+          const leftover = bufRef.current;
+          bufRef.current = [];
+          addEntries([makeRxEntry(leftover)]);
+          handleRxLine(leftover);
+        }
+      }, 300);
+    }
+  };
+
+  const handleUnplugged = () => {
+    autoCancelRef.current = true;
+    moveCancelRef.current = true;
+    jogRef.current = null;
+    setJogAxis(0);
+    logFault("Dispositivo desconectado — revisa el cable USB.");
+  };
+
+  const serial = useSerial({ onData: handleData, onDisconnect: handleUnplugged });
+  const { status, portInfo, supported: apiOk } = serial;
+
+  /* posición para la pestaña Test ejes (get_position) */
+  const parsePosLine = (line: string | null): number | null => {
+    if (!line || !line.startsWith("=")) return null;
+    const hex = line.slice(1).trim();
+    if (!/^[0-9A-Fa-f]{6}$/.test(hex)) return null;
+    const logical = hexLE(hex) - POS_OFFSET;
+    return logical > 0x7fffff ? logical - 0x1000000 : logical;
+  };
+
+  const parseStopped = (line: string | null): boolean | null => {
+    if (!line || !line.startsWith("=")) return null;
+    const st = statusFromChars(line.slice(1));
+    if (!st) return null;
+    return (st[1] & 1) === 0; /* byte1·B0: 1=en marcha · 0=parado */
+  };
+
+  const getPosition = async (): Promise<{ steps: number; deg: number } | null> => {
+    if (status !== "open" || move.running || auto.running || jogRef.current) return null;
+    if (!(await sendRaw(":j1", false))) return null;
+    const line = await waitForRx(RX_TIMEOUT_MS);
+    const pos = parsePosLine(line);
+    if (pos === null) return null;
+    const cpr = profile.cpr1 ?? 8990208;
+    return { steps: pos, deg: (pos * 360) / cpr };
+  };
+
+  const flip = useFlipper({
+    getPosition,
+    serialOpen: status === "open",
+    cpr1: profile.cpr1,
+  });
+
+  /* ── mensajes de arranque ─────────────────────────────── */
+  useEffect(() => {
+    if (!supported) {
+      logFault("Este navegador no soporta la Web Serial API. Usa Chrome o Edge de escritorio (HTTPS o localhost).");
+    } else if (!secure) {
+      logFault("Web Serial necesita un contexto seguro: sirve esta página por HTTPS o localhost.");
+    } else {
+      logSys("Web Serial disponible · NEQ6: 9600 8N1, protocolo MC (el de EQDIRect/EQASCOM).");
+      logSys("Pulsa «Conectar», elige tu conversor UART-USB y luego «Escanear montura» (pestaña Montura).");
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  /* ── contadores + medidor de tráfico ──────────────────── */
+  useEffect(() => {
+    const iv = window.setInterval(() => {
+      const now = rxBytesRef.current;
+      setActivity((a) => [...a.slice(-23), Math.max(0, now - lastTickRef.current)]);
+      lastTickRef.current = now;
+      setCounters({ rx: rxBytesRef.current, tx: txBytesRef.current });
+    }, 400);
+    return () => window.clearInterval(iv);
+  }, []);
+
+  /* ── cronómetro de sesión + reloj UT ──────────────────── */
+  useEffect(() => {
+    if (status !== "open") {
+      setElapsed(0);
+      return;
+    }
+    sessionStartRef.current = Date.now();
+    const iv = window.setInterval(
+      () => setElapsed(Math.floor((Date.now() - sessionStartRef.current) / 1000)),
+      1000,
+    );
+    return () => window.clearInterval(iv);
+  }, [status]);
+
+  useEffect(() => {
+    const iv = window.setInterval(() => setUtc(new Date().toISOString().slice(11, 19)), 1000);
+    return () => window.clearInterval(iv);
+  }, []);
+
+  /* ── acciones de puerto ───────────────────────────────── */
+  const handleConnect = async () => {
+    try {
+      await serial.requestAndOpen(settings);
+      logSys(`Puerto abierto · ${baudString}`);
+      logSys("Listo: lanza «Escanear montura» (pestaña Montura) o envía :e1.");
+    } catch (e) {
+      const err = e as { name?: string; message?: string };
+      if (err.name === "NotFoundError") logSys("Selección de puerto cancelada.");
+      else logFault(`No se pudo abrir el puerto: ${err.message ?? String(e)}`);
+    }
+  };
+
+  const handleOpenAuthorized = async (p: SerialPort) => {
+    try {
+      await serial.openAuthorized(p, settings);
+      logSys(`Puerto abierto · ${baudString}`);
+    } catch (e) {
+      logFault(`No se pudo abrir el puerto: ${(e as Error).message ?? String(e)}`);
+    }
+  };
+
+  const handleClose = async () => {
+    autoCancelRef.current = true;
+    moveCancelRef.current = true;
+    jogRef.current = null;
+    setJogAxis(0);
+    await serial.close();
+    logSys("Puerto cerrado.");
+  };
+
+  /* ── envío de comandos ────────────────────────────────── */
+  const sendRaw = async (raw: string, toHistory = true): Promise<boolean> => {
+    if (status !== "open") {
+      logFault("No hay puerto abierto: pulsa «Conectar» primero.");
+      return false;
+    }
+    const term = TERMINATIONS.find((t) => t.id === termination)?.value ?? "\r";
+    const bytes = encoder.encode(raw + term);
+    const parts = cmdParts(raw);
+    try {
+      lastCmdKeyRef.current = parts ? parts.letter + parts.ch : null;
+      lastCmdTextRef.current = raw;
+      await serial.write(bytes);
+      txBytesRef.current += bytes.length;
+      setTxPulse((p) => p + 1);
+      addEntries([entry("tx", { text: raw })]);
+      if (toHistory) setHistory((h) => (h[h.length - 1] === raw ? h : [...h.slice(-49), raw]));
+      return true;
+    } catch (e) {
+      logFault(`Error al enviar: ${(e as Error).message ?? String(e)}`);
+      return false;
+    }
+  };
+
+  /* ── autodiagnóstico (doc §13) ────────────────────────── */
+  const runDiag = async () => {
+    if (status !== "open") {
+      logFault("No hay puerto abierto: pulsa «Conectar» primero.");
+      return;
+    }
+    if (auto.running) return;
+    if (move.running) {
+      logFault("Espera a que termine el giro (o pulsa STOP) antes de escanear.");
+      return;
+    }
+    autoCancelRef.current = false;
+    setAuto({ running: true, step: 0, total: DIAG_SEQUENCE.length, cmd: "" });
+    logSys(`Autodiagnóstico: ${DIAG_SEQUENCE.length} consultas de solo lectura, una a una (timeout ${RX_TIMEOUT_MS} ms).`);
+    for (let i = 0; i < DIAG_SEQUENCE.length; i++) {
+      if (autoCancelRef.current) {
+        logSys("Autodiagnóstico cancelado.");
+        break;
+      }
+      const c = DIAG_SEQUENCE[i];
+      setAuto({ running: true, step: i + 1, total: DIAG_SEQUENCE.length, cmd: c });
+      const sent = await sendRaw(c, false);
+      if (!sent) break;
+      const line = await waitForRx(RX_TIMEOUT_MS);
+      if (autoCancelRef.current) break;
+      logSys(
+        line !== null
+          ? `· ${c} → ${asciiOf(Uint8Array.from([...line].map((ch) => ch.charCodeAt(0))))}`
+          : `· ${c} → sin respuesta (timeout). ¿Montura alimentada a 12 V? ¿GND común?`,
+      );
+      await sleep(120);
+    }
+    if (!autoCancelRef.current) logSys("Autodiagnóstico completado — revisa Ajustes → Montura detectada.");
+    setAuto((a) => ({ ...a, running: false, cmd: "" }));
+  };
+
+  const cancelDiag = () => {
+    autoCancelRef.current = true;
+  };
+
+  /* ── parada / home ────────────────────────────────────── */
+  const stopMove = (hard: boolean) => {
+    if (status !== "open") return;
+    const axis = move.running ? move.axis : mvInputs.axis;
+    moveCancelRef.current = true;
+    const c = hard ? "L" : "K";
+    if (axis === 3) {
+      void sendRaw(`:${c}1`, false);
+      void sendRaw(`:${c}2`, false);
+    } else {
+      void sendRaw(`:${c}${axis}`, false);
+    }
+    logSys(hard ? "Parada inmediata enviada (:L) — solo para emergencias." : "Parada suave enviada (:K).");
+  };
+
+  const initHome = async () => {
+    if (status !== "open") {
+      logFault("No hay puerto abierto: pulsa «Conectar» primero.");
+      return;
+    }
+    if (move.running) {
+      logFault("Espera a que termine el giro (o pulsa STOP) antes de marcar home.");
+      return;
+    }
+    for (const c of [":F1", ":F2"]) {
+      if (!(await sendRaw(c, false))) return;
+      const line = await waitForRx(RX_TIMEOUT_MS);
+      if (!line || !line.startsWith("=")) {
+        logFault(`${c} rechazado (${line ?? "sin respuesta"}).`);
+        return;
+      }
+    }
+    logSys("Home marcado en AR y DEC (:F1 :F2). El controlador ya aceptará :J.");
+  };
+
+  /* ── jog manual ───────────────────────────────────────── */
+  const failJog = () => {
+    jogRef.current = null;
+    setJogAxis(0);
+  };
+
+  const startJog = async (axis: 1 | 2, dir: 1 | -1) => {
+    if (status !== "open" || move.running || auto.running || jogRef.current) return;
+    const cpr = axis === 2 ? profile.cpr2 : profile.cpr1;
+    const timer = profile.timer;
+    if (!cpr || !timer) {
+      logFault("Faltan CPR/timer: ejecuta antes «Escanear montura» (pestaña Montura).");
+      return;
+    }
+    const speed = parseFloat(mvInputs.speed.replace(",", ".")) || 0.5;
+    const t1 = Math.min(0xffffff, Math.max(1, Math.round((timer * 360) / (speed * cpr))));
+    const real = (timer * 360) / (t1 * cpr);
+    const ratio = (axis === 2 ? profile.ratio2 : profile.ratio1) || 16;
+    jogRef.current = { axis };
+    setJogAxis(axis);
+
+    if (!(await sendRaw(`:K${axis}`, false))) return failJog();
+    await waitForRx(RX_TIMEOUT_MS);
+    if (!(await sendRaw(`:j${axis}`, false))) return failJog();
+    const pos = parsePosLine(await waitForRx(RX_TIMEOUT_MS));
+    if (pos === null) {
+      logFault(`:j${axis} sin posición válida — jog cancelado.`);
+      return failJog();
+    }
+    if (!jogRef.current) return;
+    let target = pos + dir * Math.round((90 * cpr) / 360); /* objetivo a 90° */
+    target = Math.max(-POS_OFFSET, Math.min(0x7fffff, target));
+
+    /* periodo: :I (tracking) y :T (GOTO) con reintento si !3 */
+    const tHigh = Math.min(0xffffff, Math.round(t1 * ratio));
+    if (!(await sendRaw(`:I${axis}${le24(t1)}`, false))) return failJog();
+    const rI = await waitForRx(RX_TIMEOUT_MS);
+    if (!jogRef.current) return;
+    if (!rI || !rI.startsWith("="))
+      logSys(`:I${axis}${le24(t1)} → ${rI ?? "sin respuesta"} (aviso: sigo igualmente).`);
+
+    if (!(await sendRaw(`:T${axis}${le24(tHigh)}`, false))) return failJog();
+    let rT = await waitForRx(RX_TIMEOUT_MS);
+    if (!jogRef.current) return;
+    if (rT && rT.startsWith("!3")) {
+      logSys(`:T con ×ratio rechazado (!3) — reintento con T1=${t1}.`);
+      if (!(await sendRaw(`:T${axis}${le24(t1)}`, false))) return failJog();
+      rT = await waitForRx(RX_TIMEOUT_MS);
+      if (!jogRef.current) return;
+    }
+    if (!rT || !rT.startsWith("="))
+      logSys(`:T${axis} → ${rT ?? "sin respuesta"} (aviso: sigo igualmente).`);
+
+    for (const c of [`:G${axis}00`, `:S${axis}${posField(target)}`]) {
+      if (!(await sendRaw(c, false))) return failJog();
+      const r = await waitForRx(RX_TIMEOUT_MS);
+      if (!jogRef.current) return;
+      if (!r || !r.startsWith("=")) {
+        logFault(`${c} rechazado (${r ?? "sin respuesta"}) — jog cancelado.`);
+        return failJog();
+      }
+    }
+    if (!(await sendRaw(`:J${axis}`, false))) return failJog();
+    const rJ = await waitForRx(RX_TIMEOUT_MS);
+    if (!rJ || !rJ.startsWith("=")) {
+      const code = rJ ? rJ.slice(1).trim() : "";
+      if (code.startsWith("4")) {
+        logSys(":J rechazado con !4 — marco home (:F) y reintento.");
+        if (!(await sendRaw(`:F${axis}`, false))) return failJog();
+        await waitForRx(RX_TIMEOUT_MS);
+        if (!(await sendRaw(`:J${axis}`, false))) return failJog();
+        const r2 = await waitForRx(RX_TIMEOUT_MS);
+        if (!r2 || !r2.startsWith("=")) {
+          logFault(`:J${axis} sigue rechazado (${r2}) — jog cancelado.`);
+          return failJog();
+        }
+      } else {
+        logFault(`:J${axis} rechazado (${rJ ?? "sin respuesta"}) — jog cancelado.`);
+        return failJog();
+      }
+    }
+    logSys(`Jog ${axis === 1 ? "AR" : "DEC"} ${dir > 0 ? "+" : "−"} · ≈${real.toFixed(2)}°/s — suelta la flecha o pulsa STOP para parar.`);
+  };
+
+  const stopJog = () => {
+    const j = jogRef.current;
+    jogRef.current = null;
+    setJogAxis(0);
+    if (j && status === "open") {
+      void sendRaw(`:K${j.axis}`, false);
+      logSys(`Jog parado (:K${j.axis}).`);
+    }
+  };
+
+  /* ── giro de alto nivel ───────────────────────────────── */
+  const runMove = async () => {
+    if (status !== "open") {
+      logFault("No hay puerto abierto: pulsa «Conectar» primero.");
+      return;
+    }
+    if (move.running || auto.running) return;
+
+    const axis = mvInputs.axis;
+    const speed = parseFloat(mvInputs.speed.replace(",", "."));
+    const deg = parseFloat(mvInputs.deg.replace(",", "."));
+    if (!isFinite(speed) || speed <= 0) {
+      logFault("Velocidad no válida: usa un valor mayor que 0 (p. ej. 0,5).");
+      return;
+    }
+    if (!isFinite(deg) || deg === 0 || Math.abs(deg) > 720) {
+      logFault("Grados no válidos: usa un valor distinto de 0 (máx. ±720). Negativo = sentido contrario.");
+      return;
+    }
+
+    const cpr = axis === 2 ? profile.cpr2 : profile.cpr1;
+    const timer = profile.timer;
+    if (!cpr || !timer) {
+      logFault("Faltan CPR/timer: ejecuta «Escanear montura» (pestaña Montura) con el puerto abierto.");
+      return;
+    }
+
+    const sign = deg > 0 ? 1 : -1;
+    const t1 = Math.min(0xffffff, Math.max(1, Math.round((timer * 360) / (speed * cpr))));
+    const real = (timer * 360) / (t1 * cpr);
+    const stepsPerDeg = cpr / 360;
+    const totalSteps = Math.max(1, Math.round(Math.abs(deg) * stepsPerDeg));
+    const chunks = Math.max(1, Math.ceil(totalSteps / MAX_INC));
+    const axes: (1 | 2)[] = axis === 3 ? [1, 2] : [axis as 1 | 2];
+
+    moveCancelRef.current = false;
+    setMove({
+      running: true,
+      axis,
+      total: Math.abs(deg),
+      done: 0,
+      speed,
+      real,
+      t1,
+      chunks,
+      chunk: 0,
+      phase: "iniciando",
+    });
+    logSys(
+      `Giro de ${Math.abs(deg)}° (${axis === 3 ? "AR+DEC" : axis === 1 ? "AR" : "DEC"}) a ${speed}°/s · ` +
+        `${totalSteps.toLocaleString("es-ES")} pasos · T1=${t1} (real ≈ ${real.toFixed(3)}°/s)` +
+        (chunks > 1 ? ` · ${chunks} tramos` : ""),
+    );
+    if (t1 === 1 && real < speed - 1e-9)
+      logSys(`Velocidad limitada a ${real.toFixed(2)}°/s: es el máximo del modo lento (T1=1).`);
+
+    let aborted = false;
+    let doneDeg = 0;
+    let inited = false;
+
+    for (let ci = 0; ci < chunks; ci++) {
+      if (aborted || moveCancelRef.current) break;
+
+      /* 1) leer posición actual de cada eje */
+      setMove((m) => ({ ...m, chunk: ci + 1, phase: "leyendo posición (:j)" }));
+      const chunkSteps = Math.min(MAX_INC, totalSteps - ci * MAX_INC);
+      const target: Record<number, number> = {};
+      for (const ax of axes) {
+        if (!(await sendRaw(`:j${ax}`, false))) {
+          aborted = true;
+          break;
+        }
+        const pos = parsePosLine(await waitForRx(RX_TIMEOUT_MS));
+        if (moveCancelRef.current) break;
+        if (pos === null) {
+          logFault(`:j${ax} no devolvió una posición válida — giro cancelado.`);
+          aborted = true;
+          break;
+        }
+        let t = pos + sign * chunkSteps;
+        if (t > 0x7fffff || t < -POS_OFFSET) {
+          t = Math.max(-POS_OFFSET, Math.min(0x7fffff, t));
+          logSys(`Objetivo limitado al rango de 24 bits en el eje ${ax}.`);
+        }
+        target[ax] = t;
+      }
+      if (aborted || moveCancelRef.current) break;
+
+      /* 2) fijar periodo: :I (tracking) y :T (GOTO, ×ratio; reintento con T1 si !3) */
+      setMove((m) => ({ ...m, phase: "fijando periodo (:I → :T)" }));
+      for (const ax of axes) {
+        const ratio = (ax === 2 ? profile.ratio2 : profile.ratio1) || 16;
+        const tHigh = Math.min(0xffffff, Math.round(t1 * ratio));
+        if (!(await sendRaw(`:I${ax}${le24(t1)}`, false))) {
+          aborted = true;
+          break;
+        }
+        const rI = await waitForRx(RX_TIMEOUT_MS);
+        if (moveCancelRef.current) break;
+        if (!rI || !rI.startsWith("="))
+          logSys(`:I${ax}${le24(t1)} → ${rI ?? "sin respuesta"} (aviso: este firmware quizá no lo usa).`);
+
+        if (!(await sendRaw(`:T${ax}${le24(tHigh)}`, false))) {
+          aborted = true;
+          break;
+        }
+        let rT = await waitForRx(RX_TIMEOUT_MS);
+        if (moveCancelRef.current) break;
+        if (rT && rT.startsWith("!3")) {
+          logSys(`:T${ax} con ×ratio rechazado (!3) — reintento con T1=${t1}.`);
+          if (!(await sendRaw(`:T${ax}${le24(t1)}`, false))) {
+            aborted = true;
+            break;
+          }
+          rT = await waitForRx(RX_TIMEOUT_MS);
+          if (moveCancelRef.current) break;
+        }
+        if (!rT || !rT.startsWith("="))
+          logSys(`:T${ax} → ${rT ?? "sin respuesta"} (aviso: pruebo el GOTO igualmente).`);
+      }
+      if (aborted || moveCancelRef.current) break;
+
+      /* 3) armar el GOTO: modo → destino → arranque */
+      setMove((m) => ({ ...m, phase: "armando GOTO (:G → :S)" }));
+      for (const ax of axes) {
+        if (!(await sendRaw(`:G${ax}00`, false))) {
+          aborted = true;
+          break;
+        }
+        const rG = await waitForRx(RX_TIMEOUT_MS);
+        if (moveCancelRef.current) break;
+        if (!rG || !rG.startsWith("=")) {
+          logFault(`:G${ax}00 rechazado (${rG ?? "sin respuesta"}). Prueba a mano :G${ax}01.`);
+          aborted = true;
+          break;
+        }
+      }
+      if (aborted || moveCancelRef.current) break;
+
+      setMove((m) => ({ ...m, phase: "fijando destino (:S)" }));
+      for (const ax of axes) {
+        if (!(await sendRaw(`:S${ax}${posField(target[ax])}`, false))) {
+          aborted = true;
+          break;
+        }
+        const rS = await waitForRx(RX_TIMEOUT_MS);
+        if (moveCancelRef.current) break;
+        if (!rS || !rS.startsWith("=")) {
+          logFault(`:S${ax} rechazado (${rS ?? "sin respuesta"}) — giro cancelado.`);
+          aborted = true;
+          break;
+        }
+      }
+      if (aborted || moveCancelRef.current) break;
+
+      setMove((m) => ({ ...m, phase: "arrancando motor (:J)" }));
+      let retryChunk = false;
+      for (const ax of axes) {
+        if (!(await sendRaw(`:J${ax}`, false))) {
+          aborted = true;
+          break;
+        }
+        const rJ = await waitForRx(RX_TIMEOUT_MS);
+        if (moveCancelRef.current) break;
+        if (!rJ || !rJ.startsWith("=")) {
+          const code = rJ ? rJ.slice(1).trim() : "";
+          if (code.startsWith("4") && !inited) {
+            inited = true;
+            logSys(":J rechazado con !4 — el encoder no tiene referencia. Marco home (:F) y reintento el tramo.");
+            let okF = true;
+            for (const fax of axes) {
+              if (moveCancelRef.current) {
+                okF = false;
+                break;
+              }
+              if (!(await sendRaw(`:F${fax}`, false))) {
+                okF = false;
+                break;
+              }
+              const rF = await waitForRx(RX_TIMEOUT_MS);
+              if (!rF || !rF.startsWith("=")) {
+                logFault(`:F${fax} rechazado (${rF ?? "sin respuesta"}) — no se pudo marcar home. Cancelado.`);
+                okF = false;
+                break;
+              }
+            }
+            if (!okF) {
+              aborted = true;
+              break;
+            }
+            ci--; /* se reintenta el mismo tramo */
+            retryChunk = true;
+            break;
+          }
+          logFault(`:J${ax} rechazado (${rJ ?? "sin respuesta"}) — giro cancelado.`);
+          aborted = true;
+          break;
+        }
+      }
+      if (aborted || moveCancelRef.current) break;
+      if (retryChunk) continue;
+
+      /* 4) vigilar :f hasta que el eje pare (2 lecturas seguidas) */
+      setMove((m) => ({ ...m, phase: "moviendo" }));
+      await sleep(600);
+      const chunkDeg = chunkSteps / stepsPerDeg;
+      const deadline = Date.now() + (chunkDeg / real) * 1000 * 1.8 + 20000;
+      let streak = 0;
+      while (Date.now() < deadline) {
+        if (moveCancelRef.current) break;
+        let allStopped = true;
+        let ok = true;
+        for (const ax of axes) {
+          if (!(await sendRaw(`:f${ax}`, false))) {
+            ok = false;
+            break;
+          }
+          const stopped = parseStopped(await waitForRx(RX_TIMEOUT_MS));
+          if (stopped === null) {
+            ok = false;
+            break;
+          }
+          if (!stopped) {
+            allStopped = false;
+            break;
+          }
+        }
+        if (!ok) {
+          logFault("Se perdió la comunicación durante el giro.");
+          aborted = true;
+          break;
+        }
+        streak = allStopped ? streak + 1 : 0;
+        if (streak >= 2) break;
+        await sleep(400);
+      }
+      if (aborted) break;
+
+      doneDeg = Math.min(Math.abs(deg), doneDeg + chunkDeg);
+      setMove((m) => ({ ...m, done: doneDeg }));
+    }
+
+    if (moveCancelRef.current) logSys("Giro detenido por el usuario.");
+    else if (!aborted) logSys(`Giro de ${Math.abs(deg)}° completado (≈${(Math.abs(deg) / real).toFixed(1)} s teóricos).`);
+    setMove(IDLE_MOVE);
+  };
+
+  /* ── comandos rápidos / inserción en barra ────────────── */
+  const handleQuick = (item: QuickCmd) => {
+    if (item.insert) {
+      setCmd(item.cmd);
+      barRef.current?.focus();
+      if (status !== "open") logSys("Puerto cerrado: el comando quedó en la barra, listo para completar.");
+    } else {
+      void sendRaw(item.cmd);
+    }
+  };
+
+  const clearLog = () => {
+    bufRef.current = [];
+    window.clearTimeout(pendingRef.current);
+    setEntries([]);
+  };
+
+  const exportLog = () => {
+    if (!entries.length) {
+      logSys("Nada que exportar todavía.");
+      return;
+    }
+    const tagOf: Record<EntryKind, string> = { tx: "TX ", rx: "RX ", ok: "OK ", err: "ERR", sys: "SYS", fault: "FAL" };
+    const lines = entries.map((e) => `${e.time}  ${tagOf[e.kind]}  ${e.text ?? (e.bytes ? asciiOf(e.bytes) : "")}`);
+    const blob = new Blob([lines.join("\n")], { type: "text/plain;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `neq6-log-${new Date().toISOString().slice(0, 19).replace(/[:T]/g, "-")}.txt`;
+    a.click();
+    URL.revokeObjectURL(url);
+    logSys(`Registro exportado (${entries.length} líneas).`);
+  };
+
+  /* ── redimensionado del panel lateral ─────────────────── */
+  const onDividerDown = (e: React.PointerEvent) => {
+    e.preventDefault();
+    dragRef.current = { x0: e.clientX, w0: sideW };
+    (e.target as HTMLElement).setPointerCapture(e.pointerId);
+    document.body.style.cursor = "col-resize";
+    document.body.style.userSelect = "none";
+  };
+  const onDividerMove = (e: React.PointerEvent) => {
+    const d = dragRef.current;
+    if (!d) return;
+    const w = Math.min(760, Math.max(300, d.w0 + (d.x0 - e.clientX)));
+    setSideW(w);
+    localStorage.setItem("neq6-sidew", String(w));
+  };
+  const onDividerUp = () => {
+    dragRef.current = null;
+    document.body.style.cursor = "";
+    document.body.style.userSelect = "";
+  };
+
+  /* ── UI ───────────────────────────────────────────────── */
+  const sideStyle = { "--side-w": `${sideW}px` } as CSSProperties;
+
+  return (
+    <div className="relative z-10 flex min-h-dvh flex-col lg:h-dvh lg:overflow-hidden">
+      <Starfield />
+      {/* cabecera */}
+      <header className="rise flex h-14 shrink-0 items-center gap-3 border-b border-line bg-[#0a1424]/90 px-4 backdrop-blur">
+        <IconCrosshair className="spin-slow h-7 w-7 shrink-0 text-ember" />
+        <div className="min-w-0">
+          <h1 className="font-display text-[15px] font-bold leading-none tracking-[0.16em] text-[#e8f0ff]">
+            NEQ6<span className="mx-1.5 text-ember">//</span>SERIAL LINK
+          </h1>
+          <p className="mt-1 hidden font-mono text-[10px] tracking-[0.14em] text-dim sm:block">
+            CONSOLA UART · SKYWATCHER MC · EQDIRECT
+          </p>
+        </div>
+
+        <div className="ml-auto flex items-center gap-5">
+          <ActivityMeter data={activity} />
+
+          <div className="hidden items-center gap-4 font-mono text-[11px] lg:flex">
+            <div className="flex items-center gap-1.5" title="Bytes recibidos">
+              <span key={`rx${rxPulse}`} className={rxPulse ? "led led-mint led-flash" : "led led-off"} />
+              <span className="text-dim">RX</span>
+              <span className="w-16 text-right tabular-nums text-mint">{fmtBytes(counters.rx)}</span>
+            </div>
+            <div className="flex items-center gap-1.5" title="Bytes enviados">
+              <span key={`tx${txPulse}`} className={txPulse ? "led led-ember led-flash" : "led led-off"} />
+              <span className="text-dim">TX</span>
+              <span className="w-16 text-right tabular-nums text-ember">{fmtBytes(counters.tx)}</span>
+            </div>
+          </div>
+
+          <StatusPill status={status} label={portLabel(portInfo)} />
+
+          <button
+            onClick={status === "open" ? handleClose : handleConnect}
+            disabled={!supported || !secure || status === "connecting"}
+            className={`flex items-center gap-2 rounded px-3.5 py-2 font-display text-[11px] font-bold tracking-[0.16em] transition-all active:translate-y-px disabled:cursor-not-allowed disabled:opacity-35 ${
+              status === "open"
+                ? "border border-alert/50 bg-alert/10 text-alert hover:bg-alert/20"
+                : "bg-ember text-[#1c1204] hover:bg-[#ffc04d] hover:shadow-[0_0_18px_rgba(245,165,36,0.35)]"
+            }`}
+          >
+            {status === "connecting" ? (
+              <>
+                <span className="h-3.5 w-3.5 animate-spin rounded-full border-2 border-[#1c1204]/30 border-t-[#1c1204]" />
+                ABRIENDO
+              </>
+            ) : status === "open" ? (
+              <>
+                <IconUnplug className="h-4 w-4" /> CERRAR
+              </>
+            ) : (
+              <>
+                <IconPlug className="h-4 w-4" /> CONECTAR
+              </>
+            )}
+          </button>
+        </div>
+      </header>
+
+      {/* aviso de compatibilidad */}
+      {(!supported || !secure) && (
+        <div className="flex items-center gap-2 border-b border-alert/30 bg-alert/10 px-4 py-1.5 font-mono text-[11px] text-[#ffb3b3]">
+          <IconAlert className="h-3.5 w-3.5 shrink-0" />
+          {!supported
+            ? "Web Serial no disponible: necesitas Chrome o Edge de escritorio para hablar con el puerto COM."
+            : "Contexto no seguro: la Web Serial API solo funciona por HTTPS o localhost (npm run dev / npm run preview)."}
+        </div>
+      )}
+
+      {/* cuerpo */}
+      <main className="flex min-h-0 flex-1 flex-col gap-3 p-3 lg:flex-row">
+        {/* zona principal */}
+        <div className="flex min-h-0 min-w-0 flex-1 flex-col">
+          {tab === "test" ? (
+            <FlipperLab flip={flip} serialOpen={status === "open"} />
+          ) : (
+            <section
+              className="brackets rise relative flex h-[56dvh] min-h-0 flex-1 flex-col overflow-hidden rounded-md border border-line bg-panel shadow-[inset_0_1px_0_rgba(255,255,255,0.04),0_10px_34px_rgba(0,0,0,0.4)] lg:h-auto"
+              style={{ animationDelay: "30ms" }}
+            >
+              <div className="flex shrink-0 items-center gap-2 border-b border-line bg-[#0a1424] px-3 py-2">
+                <IconTerminal className="h-4 w-4 shrink-0 text-ember" />
+                <span className="font-display text-[11px] font-bold tracking-[0.24em] text-fog">MONITOR SERIE</span>
+                <span className="rounded border border-line px-1.5 py-px font-mono text-[10px] text-dim">
+                  {entries.length} lín
+                </span>
+                <div className="ml-auto flex items-center gap-1.5">
+                  <div className="flex overflow-hidden rounded border border-line">
+                    {(["ascii", "hex", "mix"] as DisplayMode[]).map((m) => (
+                      <button
+                        key={m}
+                        onClick={() => setDisplayMode(m)}
+                        className={`px-2 py-1 font-mono text-[10px] uppercase tracking-wider transition-colors ${
+                          displayMode === m ? "bg-ember/15 text-ember" : "text-dim hover:bg-white/[0.03] hover:text-fog"
+                        }`}
+                      >
+                        {m === "mix" ? "ambos" : m}
+                      </button>
+                    ))}
+                  </div>
+                  <ToolBtn
+                    title={autoscroll ? "Desactivar autoscroll" : "Activar autoscroll"}
+                    onClick={() => setAutoscroll((a) => !a)}
+                    active={autoscroll}
+                  >
+                    <IconScroll className="h-3.5 w-3.5" />
+                  </ToolBtn>
+                  <ToolBtn title="Limpiar monitor" onClick={clearLog}>
+                    <IconTrash className="h-3.5 w-3.5" />
+                  </ToolBtn>
+                  <ToolBtn title="Exportar registro (.txt)" onClick={exportLog}>
+                    <IconDownload className="h-3.5 w-3.5" />
+                  </ToolBtn>
+                </div>
+              </div>
+
+              <TerminalLog entries={entries} mode={displayMode} autoscroll={autoscroll} ready={apiOk && secure} />
+
+              <CommandBar
+                ref={barRef}
+                value={cmd}
+                onChange={setCmd}
+                disabled={status !== "open"}
+                onSend={(c) => void sendRaw(c)}
+                termination={termination}
+                onTermination={setTermination}
+                history={history}
+              />
+            </section>
+          )}
+        </div>
+
+        {/* divisor redimensionable */}
+        <div
+          onPointerDown={onDividerDown}
+          onPointerMove={onDividerMove}
+          onPointerUp={onDividerUp}
+          onPointerCancel={onDividerUp}
+          title="Arrastra para ajustar el ancho del panel"
+          className="group hidden w-2 shrink-0 cursor-col-resize items-center justify-center lg:flex"
+        >
+          <div className="h-full w-[3px] rounded-full bg-line transition-colors group-hover:bg-ember/60 group-active:bg-ember" />
+        </div>
+
+        {/* panel lateral con pestañas */}
+        <div className="side-col flex min-h-0 shrink-0 flex-col" style={sideStyle}>
+          <RightPanel
+            tab={tab}
+            onTab={setTab}
+            supported={supported && secure}
+            status={status}
+            settings={settings}
+            onSettings={setSettings}
+            portInfo={portInfo}
+            authorized={serial.authorized}
+            onOpenAuthorized={(p) => void handleOpenAuthorized(p)}
+            onConnect={() => void handleConnect()}
+            onDisconnect={() => void handleClose()}
+            onQuick={handleQuick}
+            decoded={decoded}
+            profile={profile}
+            auto={auto}
+            onRunDiag={() => void runDiag()}
+            onCancelDiag={cancelDiag}
+            inputs={mvInputs}
+            onInputs={(patch) => setMvInputs((v) => ({ ...v, ...patch }))}
+            move={move}
+            onStartMove={() => void runMove()}
+            onStopMove={stopMove}
+            onInitHome={() => void initHome()}
+            jogAxis={jogAxis}
+            onStartJog={(axis, dir) => void startJog(axis, dir)}
+            onStopJog={stopJog}
+            flip={flip}
+          />
+        </div>
+      </main>
+
+      {/* barra de estado */}
+      <footer className="flex h-8 shrink-0 items-center gap-4 border-t border-line bg-[#0a1424] px-4 font-mono text-[10.5px] text-dim">
+        <span className="flex items-center gap-1.5">
+          <span className={`led ${supported ? "led-mint" : "led-alert"}`} />
+          WEB SERIAL {supported ? "OK" : "NO"}
+        </span>
+        <span className="hidden sm:inline">{secure ? "contexto seguro" : "contexto inseguro"}</span>
+        <span className="hidden items-center gap-1.5 md:flex">
+          <IconActivity className="h-3 w-3 text-dim" />
+          {status === "open" ? "enlace activo" : "enlace inactivo"}
+        </span>
+        <span className="tabular-nums text-ion/80">UT {utc}</span>
+        <span className="ml-auto tabular-nums">
+          sesión {fmtDuration(elapsed)} · RX {fmtBytes(counters.rx)} · TX {fmtBytes(counters.tx)}
+        </span>
+        <span className="hidden text-[#42567a] md:inline">9600 · 8N1 · SkyWatcher MC</span>
+      </footer>
+    </div>
+  );
+}

@@ -1,0 +1,8 @@
+App(
+    appid="neq6_adc_test",
+    name="NEQ6 ADC Test",
+    apptype=FlipperAppType.EXTERNAL,
+    entry_point="neq6_adc_test_app",
+    stack_size=2 * 1024,
+    order=10,
+)

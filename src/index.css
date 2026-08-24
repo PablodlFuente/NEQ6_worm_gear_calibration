@@ -1,0 +1,299 @@
+@import "tailwindcss";
+
+@theme {
+  --font-display: "Chakra Petch", "IBM Plex Mono", monospace;
+  --font-mono: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+
+  --color-ink: #060b14;
+  --color-panel: #0b1526;
+  --color-panel2: #0e1a30;
+  --color-line: #182a48;
+  --color-fog: #aebfdc;
+  --color-dim: #5f7396;
+  --color-ember: #f5a524;
+  --color-mint: #45e08b;
+  --color-ion: #4cc9f0;
+  --color-alert: #ff5d5d;
+}
+
+html {
+  color-scheme: dark;
+}
+
+body {
+  font-family: var(--font-mono);
+  color: var(--color-fog);
+  background-color: var(--color-ink);
+  background-image:
+    radial-gradient(1100px 480px at 88% -12%, rgba(76, 201, 240, 0.06), transparent 62%),
+    radial-gradient(900px 480px at -8% 112%, rgba(245, 165, 36, 0.055), transparent 62%),
+    linear-gradient(rgba(148, 163, 184, 0.035) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(148, 163, 184, 0.035) 1px, transparent 1px);
+  background-size:
+    auto,
+    auto,
+    44px 44px,
+    44px 44px;
+  background-attachment: fixed;
+}
+
+::selection {
+  background: rgba(245, 165, 36, 0.32);
+  color: #fff7ea;
+}
+
+:focus-visible {
+  outline: 1px solid rgba(245, 165, 36, 0.7);
+  outline-offset: 1px;
+}
+
+button {
+  cursor: pointer;
+}
+button:disabled {
+  cursor: not-allowed;
+}
+
+* {
+  scrollbar-width: thin;
+  scrollbar-color: #1d3050 transparent;
+}
+::-webkit-scrollbar {
+  width: 9px;
+  height: 9px;
+}
+::-webkit-scrollbar-thumb {
+  background: #1d3050;
+  border-radius: 8px;
+  border: 2px solid var(--color-ink);
+}
+::-webkit-scrollbar-thumb:hover {
+  background: #2b4470;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+/* ── columna lateral redimensionable ───────────────────── */
+@media (min-width: 1024px) {
+  .side-col {
+    width: var(--side-w, 380px);
+    flex: none;
+  }
+}
+
+/* ── campo estelar ambiental ───────────────────────────── */
+.stars-a,
+.stars-b {
+  position: absolute;
+  inset: -60%;
+  background-repeat: repeat;
+  will-change: transform;
+}
+.stars-a {
+  background-image:
+    radial-gradient(1px 1px at 12px 34px, rgba(174, 191, 220, 0.45), transparent 55%),
+    radial-gradient(1px 1px at 78px 92px, rgba(174, 191, 220, 0.3), transparent 55%),
+    radial-gradient(1.4px 1.4px at 150px 20px, rgba(245, 165, 36, 0.35), transparent 55%),
+    radial-gradient(1px 1px at 196px 130px, rgba(174, 191, 220, 0.38), transparent 55%),
+    radial-gradient(1px 1px at 44px 148px, rgba(126, 150, 195, 0.3), transparent 55%),
+    radial-gradient(1.3px 1.3px at 210px 70px, rgba(76, 201, 240, 0.28), transparent 55%);
+  background-size: 230px 170px;
+  animation: starsDrift 260s linear infinite;
+}
+.stars-b {
+  background-image:
+    radial-gradient(1.6px 1.6px at 60px 60px, rgba(220, 230, 250, 0.22), transparent 55%),
+    radial-gradient(1px 1px at 260px 200px, rgba(174, 191, 220, 0.2), transparent 55%),
+    radial-gradient(1.8px 1.8px at 340px 90px, rgba(174, 191, 220, 0.14), transparent 55%),
+    radial-gradient(1.2px 1.2px at 130px 300px, rgba(245, 165, 36, 0.16), transparent 55%);
+  background-size: 420px 340px;
+  animation: starsDrift 420s linear infinite reverse;
+}
+@keyframes starsDrift {
+  to {
+    transform: translate3d(-230px, -170px, 0);
+  }
+}
+
+/* ── overlay CRT del monitor ───────────────────────────── */
+.crt::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background:
+    repeating-linear-gradient(0deg, rgba(255, 255, 255, 0.013) 0 1px, transparent 1px 3px),
+    radial-gradient(120% 90% at 50% 0%, transparent 55%, rgba(3, 8, 16, 0.4));
+}
+
+/* ── esquinas de instrumento ───────────────────────────── */
+.brackets::before,
+.brackets::after {
+  content: "";
+  position: absolute;
+  width: 14px;
+  height: 14px;
+  pointer-events: none;
+  z-index: 10;
+}
+.brackets::before {
+  top: -1px;
+  left: -1px;
+  border-top: 2px solid rgba(245, 165, 36, 0.55);
+  border-left: 2px solid rgba(245, 165, 36, 0.55);
+}
+.brackets::after {
+  bottom: -1px;
+  right: -1px;
+  border-bottom: 2px solid rgba(245, 165, 36, 0.55);
+  border-right: 2px solid rgba(245, 165, 36, 0.55);
+}
+
+/* ── LEDs ──────────────────────────────────────────────── */
+.led {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  flex: none;
+  border-radius: 999px;
+  background: #26385a;
+}
+.led-off {
+  box-shadow: inset 0 0 2px rgba(0, 0, 0, 0.6);
+}
+.led-mint {
+  background: var(--color-mint);
+  color: var(--color-mint);
+  box-shadow: 0 0 7px currentColor;
+}
+.led-ember {
+  background: var(--color-ember);
+  color: var(--color-ember);
+  box-shadow: 0 0 7px currentColor;
+}
+.led-ion {
+  background: var(--color-ion);
+  color: var(--color-ion);
+  box-shadow: 0 0 7px currentColor;
+}
+.led-alert {
+  background: var(--color-alert);
+  color: var(--color-alert);
+  box-shadow: 0 0 7px currentColor;
+}
+.led-breathe {
+  animation: breathe 2.4s ease-in-out infinite;
+}
+.led-flash {
+  animation: ledflash 0.5s ease-out;
+}
+
+@keyframes breathe {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.5;
+  }
+}
+@keyframes ledflash {
+  0% {
+    transform: scale(1.7);
+    filter: brightness(1.7);
+    box-shadow: 0 0 16px 4px currentColor;
+  }
+  100% {
+    transform: scale(1);
+  }
+}
+
+/* ── animaciones de entrada ────────────────────────────── */
+.log-line {
+  animation: login 0.16s ease-out both;
+}
+@keyframes login {
+  from {
+    opacity: 0;
+    transform: translateY(3px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+.rise {
+  animation: rise 0.5s cubic-bezier(0.2, 0.7, 0.3, 1) both;
+}
+@keyframes rise {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+.spin-slow {
+  animation: spinslow 18s linear infinite;
+}
+@keyframes spinslow {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+/* ── divisor redimensionable ───────────────────────────── */
+.side-resizer {
+  cursor: col-resize;
+  touch-action: none;
+}
+.side-resizer:hover .resizer-line,
+.side-resizer.active .resizer-line {
+  background: var(--color-ember);
+  box-shadow: 0 0 10px rgba(245, 165, 36, 0.5);
+}
+
+/* ── chips de bytes de control y protocolo ─────────────── */
+.ctl-chip {
+  font-size: 9.5px;
+  line-height: 1;
+  padding: 1.5px 3px;
+  margin: 0 1px;
+  border: 1px solid #2a3f63;
+  border-radius: 3px;
+  color: #6d82a8;
+  background: #101d33;
+  vertical-align: 1px;
+}
+
+.chip-ok,
+.chip-err {
+  display: inline-block;
+  min-width: 17px;
+  text-align: center;
+  border-radius: 3px;
+  padding: 0 4px;
+  margin-right: 7px;
+  font-weight: 600;
+}
+.chip-ok {
+  color: var(--color-mint);
+  background: rgba(69, 224, 139, 0.12);
+  border: 1px solid rgba(69, 224, 139, 0.35);
+}
+.chip-err {
+  color: var(--color-alert);
+  background: rgba(255, 93, 93, 0.1);
+  border: 1px solid rgba(255, 93, 93, 0.35);
+}
+
+/* inputs numéricos */
+input[type="number"]::-webkit-outer-spin-button,
+input[type="number"]::-webkit-inner-spin-button {
+  opacity: 0.4;
+}
