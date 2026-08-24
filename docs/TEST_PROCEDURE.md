@@ -32,8 +32,9 @@ el sentido y la holgura. Para la primera captura automática usa:
 
 En **Test ejes**, el panel derecho contiene únicamente eje, vueltas, muestreo,
 velocidad, velocidad programada/medida, muestras por grado, progreso, inicio y parada. Al pulsar inicio se borra la vista actual,
-se inicia el ADC y después el movimiento. La gráfica de la izquierda crece
-durante la adquisición.
+el eje retrocede 2° y vuelve hacia delante para alcanzar su régimen. La captura
+ADC comienza únicamente cuando el feedback `:j` confirma el cruce por 0°; el
+motor no se detiene allí. La gráfica de la izquierda crece durante la adquisición.
 
 La velocidad programada puede diferir de la solicitada por el redondeo entero
 de T1 y por el límite T1≥6. La velocidad medida usa el desplazamiento devuelto
@@ -47,9 +48,12 @@ de error estándar tanto horizontales (ángulo) como verticales (corriente). El
 CSV procesado exporta esas mismas medias, errores y el tamaño de cada bloque.
 La tabla FFT añade «cada (montura)»: periodo × velocidad medida, expresado en
 grados, para localizar la separación angular de cada repetición dominante.
-El eje FFT muestra el espectro completo hasta Nyquist. Pulsa sobre un pico para
-añadirlo a la tabla y usa × para quitarlo. Todas las gráficas disponen de modo
-Zoom/Pan y botón Restaurar.
+El eje FFT muestra el espectro completo hasta Nyquist. La tabla conserva los
+cinco picos principales automáticos (`A1`–`A5`); pulsa sobre el espectro para
+añadir selecciones manuales (`M1`…) y usa × para quitar sólo estas últimas.
+Todas las gráficas disponen de modo Zoom/Pan y botón Restaurar. Al pulsar un
+punto Polar o Cartesiano se puede ordenar un reposicionado al ángulo elegido.
+`I RMS₅₀` es el valor eficaz móvil de las 50 muestras más recientes.
 
 Al terminar, Polar dibuja el ajuste elíptico y sus dos ejes; sus parámetros
 también aparecen en Estadísticas. **Exportar todo** descarga un ZIP con las

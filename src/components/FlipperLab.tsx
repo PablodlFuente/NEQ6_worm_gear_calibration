@@ -43,7 +43,7 @@ function ChartCanvas({
   zoomMode: boolean;
   transform: ChartTransform;
   onTransform: (next: ChartTransform) => void;
-  onPick?: (x: number, y: number) => void;
+  onPick?: (x: number, y: number, clientX: number, clientY: number) => void;
 }) {
   const ref = useRef<HTMLCanvasElement>(null);
   const drag = useRef<{ x: number; y: number; tx: number; ty: number; moved: boolean } | null>(null);
@@ -53,16 +53,17 @@ function ChartCanvas({
     const parent = cv.parentElement;
     const render = () => {
       const dpr = window.devicePixelRatio || 1;
+      const renderScale = Math.min(4, Math.max(1, transform.scale));
       const w = parent.clientWidth;
       const h = parent.clientHeight;
       if (!w || !h) return;
-      cv.width = Math.round(w * dpr);
-      cv.height = Math.round(h * dpr);
+      cv.width = Math.round(w * dpr * renderScale);
+      cv.height = Math.round(h * dpr * renderScale);
       cv.style.width = `${w}px`;
       cv.style.height = `${h}px`;
       const ctx = cv.getContext("2d");
       if (!ctx) return;
-      ctx.scale(dpr, dpr);
+      ctx.scale(dpr * renderScale, dpr * renderScale);
       draw(ctx, w, h);
     };
     render();
@@ -86,7 +87,12 @@ function ChartCanvas({
     drag.current = null;
     if (!state?.moved && onPick) {
       const rect = event.currentTarget.getBoundingClientRect();
-      onPick((event.clientX - rect.left) / rect.width, (event.clientY - rect.top) / rect.height);
+      onPick(
+        (event.clientX - rect.left) / rect.width,
+        (event.clientY - rect.top) / rect.height,
+        event.clientX,
+        event.clientY,
+      );
     }
   };
   const wheel = (event: React.WheelEvent<HTMLCanvasElement>) => {
@@ -95,7 +101,7 @@ function ChartCanvas({
     const parentRect = event.currentTarget.parentElement!.getBoundingClientRect();
     const px = event.clientX - parentRect.left;
     const py = event.clientY - parentRect.top;
-    const scale = Math.min(12, Math.max(1, transform.scale * (event.deltaY < 0 ? 1.18 : 1 / 1.18)));
+    const scale = Math.min(4, Math.max(1, transform.scale * (event.deltaY < 0 ? 1.18 : 1 / 1.18)));
     onTransform({
       scale,
       x: px - ((px - transform.x) * scale) / transform.scale,
@@ -127,7 +133,17 @@ function StatCell({ k, v, tone }: { k: string; v: ReactNode; tone?: string }) {
   );
 }
 
-export default function FlipperLab({ flip, serialOpen }: { flip: FlipperApi; serialOpen: boolean }) {
+export default function FlipperLab({
+  flip,
+  serialOpen,
+  canMoveToAngle,
+  onMoveToAngle,
+}: {
+  flip: FlipperApi;
+  serialOpen: boolean;
+  canMoveToAngle: boolean;
+  onMoveToAngle: (angle: number) => void;
+}) {
   const [view, setView] = useState<View>("vivo");
   const [zoomMode, setZoomMode] = useState(false);
   const [transforms, setTransforms] = useState<Record<View, ChartTransform>>({
@@ -138,6 +154,7 @@ export default function FlipperLab({ flip, serialOpen }: { flip: FlipperApi; ser
     stats: RESET_TRANSFORM,
   });
   const [selectedPeaks, setSelectedPeaks] = useState<Peak[]>([]);
+  const [movePrompt, setMovePrompt] = useState<{ angle: number; x: number; y: number } | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
 
   const { derived, stats } = flip;
@@ -452,6 +469,18 @@ export default function FlipperLab({ flip, serialOpen }: { flip: FlipperApi; ser
     );
   };
 
+  const pickMountPosition = (kind: "polar" | "cartesiano", x: number, y: number, clientX: number, clientY: number) => {
+    if (!derived?.plot?.length) return;
+    const angle = kind === "polar"
+      ? ((Math.atan2(x - 0.5, -(y - 0.5)) * 180) / Math.PI + 360) % 360
+      : Math.min(360, Math.max(0, ((x - 0.04) / 0.95) * 360));
+    setMovePrompt({
+      angle,
+      x: Math.min(clientX + 10, window.innerWidth - 270),
+      y: Math.min(clientY + 10, window.innerHeight - 105),
+    });
+  };
+
   const renderPng = async (draw: (ctx: CanvasRenderingContext2D, w: number, h: number) => void) => {
     const canvas = document.createElement("canvas");
     canvas.width = 1400;
@@ -477,9 +506,12 @@ export default function FlipperLab({ flip, serialOpen }: { flip: FlipperApi; ser
       renderPng(drawCart),
       renderPng(drawFft),
     ]);
-    let selectedCsv = "frequency_hz,period_s,period_mount_deg,magnitude\n";
-    for (const peak of selectedPeaks) {
-      selectedCsv += `${peak.freq.toFixed(9)},${peak.period.toFixed(9)},${
+    let peaksCsv = "source,frequency_hz,period_s,period_mount_deg,magnitude\n";
+    for (const [source, peak] of [
+      ...derived.peaks.map((peak, index) => [`automatic_A${index + 1}`, peak] as const),
+      ...selectedPeaks.map((peak, index) => [`manual_M${index + 1}`, peak] as const),
+    ]) {
+      peaksCsv += `${source},${peak.freq.toFixed(9)},${peak.period.toFixed(9)},${
         derived.st.feedbackSpeedDegS ? (peak.period * derived.st.feedbackSpeedDegS).toFixed(9) : ""
       },${peak.mag.toExponential(9)}\n`;
     }
@@ -488,7 +520,7 @@ export default function FlipperLab({ flip, serialOpen }: { flip: FlipperApi; ser
       { name: "graficas/polar-elipse.png", data: polar },
       { name: "graficas/cartesiana.png", data: cart },
       { name: "graficas/fft.png", data: fft },
-      { name: "datos/fft-picos-seleccionados.csv", data: selectedCsv },
+      { name: "datos/fft-picos.csv", data: peaksCsv },
     ]);
   };
 
@@ -500,9 +532,9 @@ export default function FlipperLab({ flip, serialOpen }: { flip: FlipperApi; ser
     };
     switch (view) {
       case "polar":
-        return <ChartCanvas draw={drawPolar} className="h-[46dvh] min-h-[300px]" {...interaction} />;
+        return <ChartCanvas draw={drawPolar} className="h-[46dvh] min-h-[300px]" onPick={(x, y, cx, cy) => pickMountPosition("polar", x, y, cx, cy)} {...interaction} />;
       case "cartesiano":
-        return <ChartCanvas draw={drawCart} className="h-[46dvh] min-h-[300px]" {...interaction} />;
+        return <ChartCanvas draw={drawCart} className="h-[46dvh] min-h-[300px]" onPick={(x, y, cx, cy) => pickMountPosition("cartesiano", x, y, cx, cy)} {...interaction} />;
       case "fft":
         return <ChartCanvas draw={drawFft} className="h-[46dvh] min-h-[300px]" onPick={(x) => pickFft(x)} {...interaction} />;
       default:
@@ -603,6 +635,10 @@ export default function FlipperLab({ flip, serialOpen }: { flip: FlipperApi; ser
           <span className="text-dim">I </span>
           <span className="tabular-nums text-ember">{stats.lastA.toFixed(3)} A</span>
         </span>
+        <span className="rounded border border-line bg-[#0c1930] px-1.5 py-px" title="Valor eficaz de las últimas 50 muestras">
+          <span className="text-dim">I RMS₅₀ </span>
+          <span className="tabular-nums text-ion">{stats.rms50.toFixed(3)} A</span>
+        </span>
         <span className="rounded border border-line bg-[#0c1930] px-1.5 py-px">
           <span className="text-dim">revs </span>
           <span className="tabular-nums text-mint">{stats.revs}</span>
@@ -640,7 +676,7 @@ export default function FlipperLab({ flip, serialOpen }: { flip: FlipperApi; ser
             {view === "fft" && derived && (
               <div className="overflow-hidden rounded border border-line">
                 <p className="border-b border-line bg-[#0c1930] px-2 py-1.5 font-mono text-[9px] text-dim">
-                  Picos seleccionados · pulsa sobre el espectro para añadir
+                  5 picos principales automáticos + selecciones manuales · pulsa sobre el espectro para añadir
                 </p>
                 <table className="w-full font-mono text-[10px]">
                   <thead>
@@ -654,9 +690,25 @@ export default function FlipperLab({ flip, serialOpen }: { flip: FlipperApi; ser
                     </tr>
                   </thead>
                   <tbody>
+                    {derived.peaks.map((p, i) => (
+                      <tr key={`auto-${p.bin}`} className="border-t border-line/60 text-fog">
+                        <td className="px-2 py-1 text-ember">A{i + 1}</td>
+                        <td className="px-2 py-1 tabular-nums">{p.freq.toFixed(3)} Hz</td>
+                        <td className="px-2 py-1 tabular-nums">
+                          {p.period >= 1 ? `${p.period.toFixed(3)} s` : `${(p.period * 1000).toFixed(1)} ms`}
+                        </td>
+                        <td className="px-2 py-1 tabular-nums text-ion">
+                          {derived.st.feedbackSpeedDegS
+                            ? `${(p.period * derived.st.feedbackSpeedDegS).toFixed(3)}°`
+                            : "—"}
+                        </td>
+                        <td className="px-2 py-1 text-right tabular-nums text-dim">{p.mag.toExponential(2)}</td>
+                        <td className="px-2 py-1 text-center text-dim" title="Pico automático">auto</td>
+                      </tr>
+                    ))}
                     {selectedPeaks.map((p, i) => (
-                      <tr key={p.bin} className="border-t border-line/60 text-fog">
-                        <td className="px-2 py-1 text-ember">{i + 1}</td>
+                      <tr key={`manual-${p.bin}`} className="border-t border-line/60 text-fog">
+                        <td className="px-2 py-1 text-alert">M{i + 1}</td>
                         <td className="px-2 py-1 tabular-nums">{p.freq.toFixed(3)} Hz</td>
                         <td className="px-2 py-1 tabular-nums">
                           {p.period >= 1 ? `${p.period.toFixed(3)} s` : `${(p.period * 1000).toFixed(1)} ms`}
@@ -681,9 +733,7 @@ export default function FlipperLab({ flip, serialOpen }: { flip: FlipperApi; ser
                         </td>
                       </tr>
                     ))}
-                    {!selectedPeaks.length && (
-                      <tr><td colSpan={6} className="px-2 py-3 text-center text-dim">Ningún pico seleccionado.</td></tr>
-                    )}
+                    {!selectedPeaks.length && <tr><td colSpan={6} className="px-2 py-2 text-center text-dim">Sin selecciones manuales.</td></tr>}
                   </tbody>
                 </table>
               </div>
@@ -829,6 +879,31 @@ export default function FlipperLab({ flip, serialOpen }: { flip: FlipperApi; ser
           </button>
         </div>
       </div>
+
+      {movePrompt && (
+        <div
+          role="dialog"
+          aria-label="Mover montura a la posición seleccionada"
+          className="fixed z-50 w-64 rounded border border-ion/60 bg-[#0a1424] p-3 font-mono text-[10px] shadow-2xl"
+          style={{ left: movePrompt.x, top: movePrompt.y }}
+        >
+          <p className="text-fog">Mover montura a esta posición: <span className="text-ion">{movePrompt.angle.toFixed(2)}°</span></p>
+          {!canMoveToAngle && <p className="mt-1 text-alert">La montura no está disponible.</p>}
+          <div className="mt-2 flex justify-end gap-2">
+            <button onClick={() => setMovePrompt(null)} className="rounded border border-line px-3 py-1 text-dim hover:text-fog">NO</button>
+            <button
+              disabled={!canMoveToAngle}
+              onClick={() => {
+                onMoveToAngle(movePrompt.angle);
+                setMovePrompt(null);
+              }}
+              className="rounded border border-ion/60 bg-ion/10 px-3 py-1 text-ion disabled:cursor-not-allowed disabled:opacity-40"
+            >
+              SÍ
+            </button>
+          </div>
+        </div>
+      )}
     </section>
   );
 }

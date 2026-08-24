@@ -17,6 +17,7 @@ const TERMS = [
   ["FFT", "Transformada rápida de Fourier: separa las repeticiones periódicas de la corriente."],
   ["Hz", "Ciclos por segundo. En la FFT, 1 Hz significa una repetición cada segundo."],
   ["SEM", "Error estándar de la media (σ/√N); barras X/Y cuando se promedian bloques."],
+  ["RMS", "Root Mean Square o valor eficaz. I RMS₅₀ se calcula sobre las últimas 50 muestras."],
   ["RTT / jitter", "Tiempo de ida y vuelta / variación temporal usados al sincronizar navegador y Flipper."],
   ["CSV", "Archivo tabular exportable; el crudo conserva las muestras y el procesado conserva medias y errores."],
   ["IDLE / REC", "Adquisición parada / adquisición activa."],
@@ -54,8 +55,8 @@ export default function HelpModal({ open, onClose }: Props) {
           <div className="grid gap-3 md:grid-cols-2">
             <HelpBlock title="Flujo recomendado">
               En Ajustes conecta la montura y ejecuta «Escanear montura». Conecta el Flipper por BLE o USB-COM,
-              sincroniza su reloj y abre «Test ejes». El test inicia el ADC, mueve el eje, consulta <Code>:j</Code>
-              durante el recorrido y detiene la adquisición al confirmar la parada.
+              sincroniza su reloj y abre «Test ejes». El test retrocede 2°, arranca hacia delante y sólo inicia el
+              ADC cuando <Code>:j</Code> confirma el cruce por 0°, ya con el motor en régimen.
             </HelpBlock>
             <HelpBlock title="Tres velocidades distintas">
               <b className="text-fog">Solicitada</b>: la que escribes. <b className="text-fog">Programada real</b>:
@@ -89,8 +90,9 @@ export default function HelpModal({ open, onClose }: Props) {
               2 s a 0,4 °/s equivalen a una repetición cada 0,8°. Sin feedback angular no se muestra esa conversión.
             </HelpBlock>
             <HelpBlock title="Zoom, picos, elipse y exportación">
-              Activa Zoom/Pan, usa la rueda y arrastra; Restaurar recupera el encuadre. En FFT, pulsa un pico para
-              añadirlo a la lista y × para quitarlo. Al terminar, Polar muestra la elipse ajustada, sus ejes e inclinación.
+              Activa Zoom/Pan, usa la rueda y arrastra; Restaurar recupera el encuadre. FFT conserva cinco picos
+              automáticos y permite añadir/quitar otros manuales. Pulsa un punto Polar/Cartesiano para reposicionar.
+              I RMS₅₀ es el valor eficaz móvil de las últimas 50 muestras. Al terminar, Polar muestra la elipse y sus ejes.
               «Exportar todo» crea un ZIP con PNG, CSV crudo/procesado, espectro FFT, picos y resumen JSON.
             </HelpBlock>
           </div>

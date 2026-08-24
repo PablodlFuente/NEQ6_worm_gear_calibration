@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState, type CSSProperties, type ReactNode } from "react";
 import { useSerial, type SerialSettings } from "./hooks/useSerial";
 import { useFlipper } from "./hooks/useFlipper";
-import { asciiOf, fmtBytes, fmtDuration, portLabel, TERMINATIONS, timeNow } from "./lib/serial";
+import { asciiOf, fmtBytes, fmtDuration, TERMINATIONS, timeNow } from "./lib/serial";
 import {
   cmdParts,
   calculateMotionTiming,
@@ -9,6 +9,7 @@ import {
   DIAG_SEQUENCE,
   hexLE,
   le24,
+  MAX_GOTO_STEPS,
   MAX_SAFE_ABSOLUTE_GOTO_DELTA,
   MAX_POSITION_DELTA,
   POS_OFFSET,
@@ -46,7 +47,8 @@ interface MoveRequest {
   speed: number;
   deg: number;
   maxDeg?: number;
-  onPosition?: (axis: 1 | 2, steps: number, tb: number) => void;
+  relativeGoto?: boolean;
+  onPosition?: (axis: 1 | 2, steps: number, tb: number) => void | Promise<void>;
 }
 
 const wrapPosition24 = (value: number) => {
@@ -59,40 +61,6 @@ function Starfield() {
     <div aria-hidden className="pointer-events-none fixed inset-0 z-0 overflow-hidden">
       <div className="stars-a" />
       <div className="stars-b" />
-    </div>
-  );
-}
-
-function ActivityMeter({ data }: { data: number[] }) {
-  const max = Math.max(4, ...data);
-  return (
-    <div className="hidden h-6 items-end gap-[3px] xl:flex" title="Tráfico RX (bytes por intervalo)">
-      {data.map((v, i) => (
-        <span
-          key={i}
-          className="w-[3px] rounded-[1px] transition-[height,background-color] duration-300"
-          style={{
-            height: `${Math.max(10, Math.round((v / max) * 100))}%`,
-            backgroundColor: v > 0 ? "rgba(245,165,36,0.85)" : "#1c2f4f",
-          }}
-        />
-      ))}
-    </div>
-  );
-}
-
-function StatusPill({ status, label }: { status: string; label: string }) {
-  const conf =
-    status === "open"
-      ? { text: "EN LÍNEA", dot: "led led-mint led-breathe", cls: "border-mint/50 bg-mint/5 text-mint" }
-      : status === "connecting"
-        ? { text: "ABRIENDO…", dot: "led led-ember led-breathe", cls: "border-ember/50 text-ember" }
-        : { text: "DESCONECTADO", dot: "led led-off", cls: "border-line text-dim" };
-  return (
-    <div className={`hidden items-center gap-2 rounded border px-2.5 py-1.5 font-mono text-[10.5px] tracking-wider transition-colors md:flex ${conf.cls}`}>
-      <span className={conf.dot} />
-      <span>{conf.text}</span>
-      {status === "open" && <span className="max-w-[180px] truncate text-mint/60">· {label}</span>}
     </div>
   );
 }
@@ -139,9 +107,6 @@ export default function App() {
   const [termination, setTermination] = useState("cr");
   const [history, setHistory] = useState<string[]>([]);
   const [counters, setCounters] = useState({ rx: 0, tx: 0 });
-  const [activity, setActivity] = useState<number[]>(() => Array(24).fill(0));
-  const [rxPulse, setRxPulse] = useState(0);
-  const [txPulse, setTxPulse] = useState(0);
   const [elapsed, setElapsed] = useState(0);
   const [utc, setUtc] = useState(() => new Date().toISOString().slice(11, 19));
 
@@ -188,7 +153,6 @@ export default function App() {
   const pendingRef = useRef<number | undefined>(undefined);
   const rxBytesRef = useRef(0);
   const txBytesRef = useRef(0);
-  const lastTickRef = useRef(0);
   const encoderRef = useRef<TextEncoder | null>(null);
   const sessionStartRef = useRef(0);
   const lastCmdKeyRef = useRef<string | null>(null);
@@ -278,7 +242,6 @@ export default function App() {
   /* ── datos recibidos del puerto ───────────────────────── */
   const handleData = (chunk: Uint8Array) => {
     rxBytesRef.current += chunk.length;
-    setRxPulse((p) => p + 1);
 
     const buf = bufRef.current;
     for (let i = 0; i < chunk.length; i++) buf.push(chunk[i]);
@@ -358,12 +321,9 @@ export default function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  /* ── contadores + medidor de tráfico ──────────────────── */
+  /* ── contadores de tráfico ────────────────────────────── */
   useEffect(() => {
     const iv = window.setInterval(() => {
-      const now = rxBytesRef.current;
-      setActivity((a) => [...a.slice(-23), Math.max(0, now - lastTickRef.current)]);
-      lastTickRef.current = now;
       setCounters({ rx: rxBytesRef.current, tx: txBytesRef.current });
     }, 400);
     return () => window.clearInterval(iv);
@@ -433,7 +393,6 @@ export default function App() {
       lastCmdTextRef.current = raw;
       await serial.write(bytes);
       txBytesRef.current += bytes.length;
-      setTxPulse((p) => p + 1);
       addEntries([entry("tx", { text: raw })]);
       if (toHistory) setHistory((h) => (h[h.length - 1] === raw ? h : [...h.slice(-49), raw]));
       return true;
@@ -645,7 +604,8 @@ export default function App() {
     const { t1, realDegPerSec: real } = timing;
     const stepsPerDeg = cpr / 360;
     const totalSteps = Math.max(1, Math.round(Math.abs(deg) * stepsPerDeg));
-    const chunks = Math.max(1, Math.ceil(totalSteps / MAX_SAFE_ABSOLUTE_GOTO_DELTA));
+    const chunkLimit = request?.relativeGoto ? MAX_GOTO_STEPS : MAX_SAFE_ABSOLUTE_GOTO_DELTA;
+    const chunks = Math.max(1, Math.ceil(totalSteps / chunkLimit));
     const axes: (1 | 2)[] = axis === 3 ? [1, 2] : [axis as 1 | 2];
 
     moveCancelRef.current = false;
@@ -678,10 +638,7 @@ export default function App() {
 
       /* 1) leer posición actual de cada eje */
       setMove((m) => ({ ...m, chunk: ci + 1, phase: "leyendo posición (:j)" }));
-      const chunkSteps = Math.min(
-        MAX_SAFE_ABSOLUTE_GOTO_DELTA,
-        totalSteps - ci * MAX_SAFE_ABSOLUTE_GOTO_DELTA,
-      );
+      const chunkSteps = Math.min(chunkLimit, totalSteps - ci * chunkLimit);
       const target: Record<number, number> = {};
       for (const ax of axes) {
         if (!(await sendRaw(`:j${ax}`, false))) {
@@ -696,8 +653,8 @@ export default function App() {
           aborted = true;
           break;
         }
-        request?.onPosition?.(ax, pos, (positionRequestAt + Date.now()) / 2);
-        target[ax] = wrapPosition24(pos + sign * chunkSteps);
+        await request?.onPosition?.(ax, pos, (positionRequestAt + Date.now()) / 2);
+        if (!request?.relativeGoto) target[ax] = wrapPosition24(pos + sign * chunkSteps);
       }
       if (aborted || moveCancelRef.current) break;
 
@@ -736,7 +693,8 @@ export default function App() {
       if (aborted || moveCancelRef.current) break;
 
       /* 3) armar el GOTO: modo → destino → arranque */
-      setMove((m) => ({ ...m, phase: "armando GOTO (:G → :S)" }));
+      const gotoCommand = request?.relativeGoto ? ":H" : ":S";
+      setMove((m) => ({ ...m, phase: `armando GOTO (:G → ${gotoCommand})` }));
       for (const ax of axes) {
         if (!(await sendRaw(`:G${ax}0${sign < 0 ? "1" : "0"}`, false))) {
           aborted = true;
@@ -752,16 +710,19 @@ export default function App() {
       }
       if (aborted || moveCancelRef.current) break;
 
-      setMove((m) => ({ ...m, phase: "fijando destino (:S)" }));
+      setMove((m) => ({ ...m, phase: `fijando destino (${gotoCommand})` }));
       for (const ax of axes) {
-        if (!(await sendRaw(`:S${ax}${posField(target[ax])}`, false))) {
+        const targetCommand = request?.relativeGoto
+          ? `:H${ax}${le24(chunkSteps)}`
+          : `:S${ax}${posField(target[ax])}`;
+        if (!(await sendRaw(targetCommand, false))) {
           aborted = true;
           break;
         }
         const rS = await waitForRx(RX_TIMEOUT_MS);
         if (moveCancelRef.current) break;
         if (!rS || !rS.startsWith("=")) {
-          logFault(`:S${ax} rechazado (${rS ?? "sin respuesta"}) — giro cancelado.`);
+          logFault(`${gotoCommand}${ax} rechazado (${rS ?? "sin respuesta"}) — giro cancelado.`);
           aborted = true;
           break;
         }
@@ -838,7 +799,7 @@ export default function App() {
               ok = false;
               break;
             }
-            request.onPosition(ax, position, (positionRequestAt + Date.now()) / 2);
+            await request.onPosition(ax, position, (positionRequestAt + Date.now()) / 2);
           }
           if (!(await sendRaw(`:f${ax}`, false))) {
             ok = false;
@@ -879,7 +840,7 @@ export default function App() {
           const positionRequestAt = Date.now();
           if (!(await sendRaw(`:j${ax}`, false))) continue;
           const position = parsePosLine(await waitForRx(RX_TIMEOUT_MS));
-          if (position !== null) request.onPosition(ax, position, (positionRequestAt + Date.now()) / 2);
+          if (position !== null) await request.onPosition(ax, position, (positionRequestAt + Date.now()) / 2);
         }
       }
 
@@ -923,67 +884,98 @@ export default function App() {
       progress: 0,
       currentDeg: 0,
       targetDeg,
-      message: "Preparando ADC y sincronización…",
+      message: "Retrocediendo 2° para tomar impulso…",
       elapsedSec: 0,
       actualDurationSec: null,
     });
 
-    const captureStarted = await flip.startCapture(axisTestInputs.sampleRate);
-    if (!captureStarted) {
-      setAxisTest((state) => ({ ...state, running: false, message: "El ADC no confirmó START." }));
-      return;
-    }
-
-    await sleep(150);
-    if (axisTestCancelRef.current) {
-      await flip.stopCapture();
+    const preRollOk = await runMove({ axis, speed, deg: -2, maxDeg: 5, relativeGoto: true });
+    if (!preRollOk || axisTestCancelRef.current) {
       setAxisTest((state) => ({
         ...state,
         running: false,
-        message: "Test cancelado antes de arrancar; el motor no se ha movido.",
+        message: axisTestCancelRef.current
+          ? "Test cancelado durante la toma de impulso; no se adquirieron datos."
+          : "No se pudo completar la toma de impulso de 2°.",
       }));
       return;
     }
-    let previousPosition: number | null = null;
+
+    setAxisTest((state) => ({ ...state, message: "Motor en marcha; esperando el cruce por 0°…" }));
+    let motionPreviousPosition: number | null = null;
+    let acquisitionPreviousPosition: number | null = null;
+    let preRollTravelledSteps = 0;
     let travelledSteps = 0;
     const totalSteps = revolutions * cpr;
+    const preRollSteps = (2 * cpr) / 360;
     let moveSuccess = false;
-    const testStartedAt = performance.now();
+    let captureStarted = false;
+    let captureFailed = false;
+    let testStartedAt: number | null = null;
     try {
       moveSuccess = await runMove({
         axis,
         speed,
-        deg: targetDeg,
-        maxDeg: 3600,
-        onPosition: (reportedAxis, steps, tb) => {
+        deg: targetDeg + 2,
+        maxDeg: 3602,
+        relativeGoto: true,
+        onPosition: async (reportedAxis, steps, tb) => {
           if (reportedAxis !== axis) return;
+          if (motionPreviousPosition !== null) {
+            let delta = steps - motionPreviousPosition;
+            if (delta > MAX_POSITION_DELTA) delta -= 0x1000000;
+            else if (delta < -MAX_POSITION_DELTA) delta += 0x1000000;
+            preRollTravelledSteps += delta;
+          }
+          motionPreviousPosition = steps;
+
+          if (!captureStarted) {
+            const impulseDeg = (Math.abs(preRollTravelledSteps) * 360) / cpr;
+            setAxisTest((state) => ({
+              ...state,
+              message: `Tomando impulso hasta 0° (${Math.min(2, impulseDeg).toFixed(2)}° / 2,00°)…`,
+            }));
+            if (Math.abs(preRollTravelledSteps) < preRollSteps) return;
+            captureStarted = await flip.startCapture(axisTestInputs.sampleRate);
+            if (!captureStarted) {
+              captureFailed = true;
+              moveCancelRef.current = true;
+              return;
+            }
+            testStartedAt = performance.now();
+            acquisitionPreviousPosition = steps;
+            flip.recordAngle((steps * 360) / cpr, tb);
+            setAxisTest((state) => ({ ...state, message: "Cruce por 0° confirmado por :j; adquiriendo…" }));
+            return;
+          }
+
           flip.recordAngle((steps * 360) / cpr, tb);
-          if (previousPosition !== null) {
-            let delta = steps - previousPosition;
+          if (acquisitionPreviousPosition !== null) {
+            let delta = steps - acquisitionPreviousPosition;
             if (delta > MAX_POSITION_DELTA) delta -= 0x1000000;
             else if (delta < -MAX_POSITION_DELTA) delta += 0x1000000;
             travelledSteps += delta;
           }
-          previousPosition = steps;
+          acquisitionPreviousPosition = steps;
           const currentDeg = Math.min(targetDeg, (Math.abs(travelledSteps) * 360) / cpr);
           setAxisTest((state) => ({
             ...state,
             currentDeg,
             progress: totalSteps ? Math.min(1, Math.abs(travelledSteps) / totalSteps) : 0,
             message: "Adquiriendo corriente y posición…",
-            elapsedSec: (performance.now() - testStartedAt) / 1000,
+            elapsedSec: testStartedAt ? (performance.now() - testStartedAt) / 1000 : 0,
           }));
         },
       });
     } finally {
-      await flip.stopCapture();
+      if (captureStarted) await flip.stopCapture();
     }
 
     const cancelled = axisTestCancelRef.current;
-    const actualDurationSec = (performance.now() - testStartedAt) / 1000;
+    const actualDurationSec = testStartedAt ? (performance.now() - testStartedAt) / 1000 : 0;
     const measuredDeg = (Math.abs(travelledSteps) * 360) / cpr;
     const feedbackComplete = measuredDeg >= targetDeg * 0.995;
-    const success = moveSuccess && feedbackComplete;
+    const success = moveSuccess && captureStarted && feedbackComplete;
     if (moveSuccess && !feedbackComplete) {
       logFault(
         `Movimiento detenido en ${measuredDeg.toFixed(2)}° de ${targetDeg.toFixed(2)}° según :j. ` +
@@ -999,6 +991,8 @@ export default function App() {
       actualDurationSec,
       message: cancelled
         ? "Test detenido por el usuario; los datos parciales se conservan."
+        : captureFailed
+          ? "El ADC no confirmó START al cruzar 0°; motor detenido."
         : success
           ? "Test completado; datos listos para revisar o exportar."
           : moveSuccess
@@ -1012,6 +1006,42 @@ export default function App() {
     setAxisTest((state) => ({ ...state, message: "Enviando parada inmediata…" }));
     stopMove(true);
     void flip.stopCapture();
+  };
+
+  const moveToCapturedAngle = async (angle: number) => {
+    if (status !== "open" || move.running || axisTest.running || auto.running) {
+      logFault("No se puede reposicionar mientras la montura está desconectada u ocupada.");
+      return;
+    }
+    const axis = axisTestInputs.axis;
+    const cpr = axis === 1 ? profile.cpr1 : profile.cpr2;
+    if (!cpr) {
+      logFault("Falta el CPR del eje: ejecuta «Escanear montura».");
+      return;
+    }
+    if (!(await sendRaw(`:j${axis}`, false))) return;
+    const current = parsePosLine(await waitForRx(RX_TIMEOUT_MS));
+    if (current === null) {
+      logFault("No se pudo leer la posición actual con :j.");
+      return;
+    }
+    const normalized = ((angle % 360) + 360) % 360;
+    const base = (normalized * cpr) / 360;
+    const nearest = base + Math.round((current - base) / cpr) * cpr;
+    const deltaDeg = ((nearest - current) * 360) / cpr;
+    if (Math.abs(deltaDeg) < 0.002) {
+      logSys(`La montura ya está en ${normalized.toFixed(2)}°.`);
+      return;
+    }
+    const configuredSpeed = Number(axisTestInputs.speed.replace(",", "."));
+    logSys(`Reposicionando ${axis === 1 ? "AR" : "DEC"} al punto ${normalized.toFixed(2)}° por el camino más corto.`);
+    await runMove({
+      axis,
+      speed: Number.isFinite(configuredSpeed) && configuredSpeed > 0 ? configuredSpeed : 0.5,
+      deg: deltaDeg,
+      maxDeg: 181,
+      relativeGoto: true,
+    });
   };
 
   /* ── comandos rápidos / inserción en barra ────────────── */
@@ -1087,31 +1117,6 @@ export default function App() {
           </p>
         </div>
 
-        <div className="ml-auto flex items-center gap-5">
-          <ActivityMeter data={activity} />
-
-          <div className="hidden items-center gap-4 font-mono text-[11px] lg:flex">
-            <div className="flex items-center gap-1.5" title="Bytes recibidos">
-              <span key={`rx${rxPulse}`} className={rxPulse ? "led led-mint led-flash" : "led led-off"} />
-              <span className="text-dim">RX</span>
-              <span className="w-16 text-right tabular-nums text-mint">{fmtBytes(counters.rx)}</span>
-            </div>
-            <div className="flex items-center gap-1.5" title="Bytes enviados">
-              <span key={`tx${txPulse}`} className={txPulse ? "led led-ember led-flash" : "led led-off"} />
-              <span className="text-dim">TX</span>
-              <span className="w-16 text-right tabular-nums text-ember">{fmtBytes(counters.tx)}</span>
-            </div>
-          </div>
-
-          <StatusPill status={status} label={portLabel(portInfo)} />
-
-          <button
-            onClick={() => setHelpOpen(true)}
-            className="rounded border border-line bg-[#0c1930] px-3.5 py-2 font-display text-[11px] font-bold tracking-[0.16em] text-fog transition-colors hover:border-ember/50 hover:text-ember"
-          >
-            ? AYUDA
-          </button>
-        </div>
       </header>
 
       {/* aviso de compatibilidad */}
@@ -1129,7 +1134,12 @@ export default function App() {
         {/* zona principal */}
         <div className="flex min-h-0 min-w-0 flex-1 flex-col">
           {tab === "test" ? (
-            <FlipperLab flip={flip} serialOpen={status === "open"} />
+            <FlipperLab
+              flip={flip}
+              serialOpen={status === "open"}
+              canMoveToAngle={status === "open" && !move.running && !axisTest.running && !auto.running}
+              onMoveToAngle={(angle) => void moveToCapturedAngle(angle)}
+            />
           ) : (
             <section
               className="brackets rise relative flex h-[56dvh] min-h-0 flex-1 flex-col overflow-hidden rounded-md border border-line bg-panel shadow-[inset_0_1px_0_rgba(255,255,255,0.04),0_10px_34px_rgba(0,0,0,0.4)] lg:h-auto"
@@ -1262,6 +1272,7 @@ export default function App() {
           sesión {fmtDuration(elapsed)} · RX {fmtBytes(counters.rx)} · TX {fmtBytes(counters.tx)}
         </span>
         <span className="hidden text-[#42567a] md:inline">9600 · 8N1 · SkyWatcher MC</span>
+        <button onClick={() => setHelpOpen(true)} className="text-fog hover:text-ember">? AYUDA</button>
       </footer>
       <HelpModal open={helpOpen} onClose={() => setHelpOpen(false)} />
     </div>

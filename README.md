@@ -17,8 +17,9 @@ worm-gear sin perder el registro crudo.
 - Gráficas temporal, por ángulo, polar y espectral con zoom/pan, picos FFT
   seleccionables y ajuste elíptico final. Exportación ZIP de PNG, CSV, FFT y
   resumen; sesiones locales en IndexedDB.
-- Verificación de recorrido exclusivamente por feedback `:j`, GOTO absolutos
-  divididos para evitar la ambigüedad modular de 24 bits y firmware v3.1 con
+- Verificación de recorrido exclusivamente por feedback `:j`; el test usa un
+  GOTO relativo continuo con 2° de toma de impulso, y el movimiento manual divide
+  los GOTO absolutos para evitar la ambigüedad modular de 24 bits. Firmware v3.1 con
   medición visible de la tasa ADC efectiva.
 
 ## Puesta en marcha rápida

@@ -559,6 +559,16 @@ export function useFlipper({ cpr1 }: Props) {
 
   const n = adcRef.current.length;
   const lastA = n ? adcToAmps(adcRef.current[n - 1]) : 0;
+  let rms50 = 0;
+  if (n) {
+    const start = Math.max(0, n - 50);
+    let sumSquares = 0;
+    for (let i = start; i < n; i++) {
+      const amps = adcToAmps(adcRef.current[i]);
+      sumSquares += amps * amps;
+    }
+    rms50 = Math.sqrt(sumSquares / (n - start));
+  }
 
   return {
     ble,
@@ -575,7 +585,7 @@ export function useFlipper({ cpr1 }: Props) {
     stopCapture,
     angleOn,
     setAngleOn,
-    stats: { n, lastA, revs: derived?.nRevs ?? 0 },
+    stats: { n, lastA, rms50, revs: derived?.nRevs ?? 0 },
     buffers: { tbRef, tsRef, adcRef, angleRef },
     derived,
     avgFactor,

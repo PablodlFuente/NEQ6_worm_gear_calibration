@@ -17,11 +17,11 @@ ambos exponen exactamente el mismo protocolo.
 
 1. Se comprueban conexión de montura, CPR detectado, conexión del Flipper y
    sincronización válida.
-2. La web limpia la captura, configura `RATE` y confirma `START`.
-3. El motor se mueve por destinos absolutos de 24 bits. El recorrido modular
-   admite hasta `0xFFFFFF` pasos por GOTO, separado del umbral firmado
-   `0x7FFFFF` usado únicamente para desenvolver posición. Así una vuelta EQ6
-   cabe en un solo movimiento; recorridos mayores sí se dividen en tramos.
+2. La web retrocede 2°, arranca un único GOTO relativo `:H` hacia delante y
+   espera a que el feedback `:j` confirme que se han recuperado esos 2°.
+3. En ese cruce por 0° configura `RATE` y confirma `START`. La vuelta completa
+   continúa sin parada intermedia: unas 9,02 M cuentas caben en el campo relativo
+   sin signo de 24 bits de `:H` (`0xFFFFFF`).
 4. Mientras el eje se mueve, la web intercala consultas `:j` de posición y `:f`
    de estado en la misma cola serie. No hay dos comandos de montura en vuelo.
 5. Los timestamps del Flipper se trasladan al reloj del navegador mediante seis
@@ -71,10 +71,12 @@ velocidad medida por `:j`; sin feedback válido esa celda queda vacía.
 El objetivo absoluto `:S` es modular de 24 bits. Los incrementos mayores de
 `0x7fffff` son ambiguos: una vuelta EQ6 de unas 9,02 M cuentas puede resolverse
 como el complemento de unas 7,76 M cuentas (~309°). Por eso cada GOTO absoluto
-se divide en tramos de media escala como máximo y el test sólo se declara
-completo cuando el recorrido acumulado de `:j` alcanza al menos el 99,5 %.
+normal se divide en tramos de media escala como máximo. El test de ejes evita
+esa discontinuidad usando la magnitud relativa `:H`; sólo se declara completo
+cuando el recorrido acumulado de `:j` alcanza al menos el 99,5 %.
 
 Al terminar la captura, la nube Polar se convierte a coordenadas cartesianas y
 se ajusta por PCA una elipse. Se guardan centro, semiejes, inclinación,
-excentricidad y residuo RMS. La exportación única genera un ZIP con las cuatro
-gráficas PNG, ambos CSV, espectro FFT, picos seleccionados y resumen JSON.
+excentricidad y residuo RMS. La interfaz muestra además la corriente RMS móvil
+de las últimas 50 muestras. La exportación única genera un ZIP con las cuatro
+gráficas PNG, ambos CSV, espectro FFT, picos y resumen JSON.
