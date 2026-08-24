@@ -256,21 +256,17 @@ export function angleAt(unw: AnglePoint[], tb: number): number | null {
  * entre SYNC y una captura posterior. Si ya existe solape no se toca nada:
  * se conserva la sincronización medida y, por tanto, la fase real.
  */
-export function alignAngleTimeline(unw: AnglePoint[], sampleTb: ArrayLike<number>): AnglePoint[] {
-  if (unw.length < 2 || !sampleTb.length) return unw;
-  const sampleFirst = sampleTb[0];
-  const sampleLast = sampleTb[sampleTb.length - 1];
-  const angleFirst = unw[0].tb;
-  const angleLast = unw[unw.length - 1].tb;
-  if (Math.max(sampleFirst, angleFirst) <= Math.min(sampleLast, angleLast)) return unw;
-  const separation = sampleLast < angleFirst ? angleFirst - sampleLast : sampleFirst - angleLast;
-  /* Un desfase breve es normal mientras BLE vacía sus primeros paquetes. */
-  if (separation < 5_000) return unw;
-
-  /* Ambos comienzan al cruzar 0°. Alinear los inicios recupera la serie aun
-   * cuando sus épocas difieren; la escala temporal permanece inalterada. */
-  const shift = sampleFirst - angleFirst;
-  return unw.map((point) => ({ ...point, tb: point.tb + shift }));
+export function chooseSampleClockOffset(
+  syncOffsetMs: number | null,
+  sampleTsUs: number,
+  receivedTbMs: number,
+): number {
+  const receivedOffset = sampleTsUs / 1000 - receivedTbMs;
+  if (syncOffsetMs === null) return receivedOffset;
+  const projectedTb = sampleTsUs / 1000 - syncOffsetMs;
+  /* Una discrepancia tan grande no es latencia BLE: es otra vuelta del u32.
+   * La elección se hace una vez con el primer lote y queda fija. */
+  return Math.abs(projectedTb - receivedTbMs) > 5_000 ? receivedOffset : syncOffsetMs;
 }
 
 export function resampleUniform(ts: number[], vals: Float64Array, n: number): Float64Array {

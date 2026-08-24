@@ -1183,12 +1183,13 @@ export default function App() {
             }
             testStartedAt = performance.now();
             acquisitionPreviousPosition = steps;
-            flip.recordAngle((steps * 360) / cpr, tb);
+            /* El origen de la prueba es el cruce de adquisición, no el cero
+             * interno arbitrario del contador :j de la controladora. */
+            flip.recordAngle(0, tb);
             setAxisTest((state) => ({ ...state, message: "Cruce por 0° confirmado por :j; adquiriendo…" }));
             return;
           }
 
-          flip.recordAngle((steps * 360) / cpr, tb);
           if (acquisitionPreviousPosition !== null) {
             let delta = steps - acquisitionPreviousPosition;
             if (delta > MAX_POSITION_DELTA) delta -= 0x1000000;
@@ -1196,6 +1197,7 @@ export default function App() {
             travelledSteps += delta;
           }
           acquisitionPreviousPosition = steps;
+          flip.recordAngle((travelledSteps * 360) / cpr, tb);
           const currentDeg = Math.min(targetDeg, (Math.abs(travelledSteps) * 360) / cpr);
           setAxisTest((state) => ({
             ...state,

@@ -3,7 +3,7 @@ import { useBle } from "./useBle";
 import { useFlipperSerial } from "./useFlipperSerial";
 import {
   adcToAmps,
-  alignAngleTimeline,
+  chooseSampleClockOffset,
   averageAngleSeries,
   angleAt,
   buildProcCsv,
@@ -62,17 +62,28 @@ export function useFlipper({ cpr1 }: Props) {
   const commandQueueRef = useRef<Promise<unknown>>(Promise.resolve());
   const captureGenerationRef = useRef(0);
   const capturingRef = useRef(false);
+  const sampleClockOffsetRef = useRef<number | null>(null);
   const syncRef = useRef(sync);
   syncRef.current = sync;
 
   const onSamples = (batch: Sample[]) => {
+    if (!batch.length) return;
     const tb = tbRef.current;
     const ts = tsRef.current;
     const adc = adcRef.current;
     const clock = syncRef.current;
+    if (sampleClockOffsetRef.current === null) {
+      const anchor = batch[batch.length - 1];
+      sampleClockOffsetRef.current = chooseSampleClockOffset(
+        clock?.offsetMs ?? null,
+        anchor.ts,
+        anchor.tb,
+      );
+    }
+    const clockOffset = sampleClockOffsetRef.current;
     for (const s of batch) {
       /* Fecha real de adquisición, no fecha de llegada del paquete BLE/USB. */
-      tb.push(clock ? s.ts / 1000 - clock.offsetMs : s.tb);
+      tb.push(s.ts / 1000 - clockOffset);
       ts.push(s.ts);
       adc.push(s.adc);
     }
@@ -222,6 +233,7 @@ export function useFlipper({ cpr1 }: Props) {
     }
     const requestedRate = rateOverride ?? rate;
     const generation = ++captureGenerationRef.current;
+    sampleClockOffsetRef.current = null;
     setRate(requestedRate);
     setDeviceInfo(null);
     setNotice(null);
@@ -292,8 +304,7 @@ export function useFlipper({ cpr1 }: Props) {
     const amps = new Float64Array(n);
     for (let i = 0; i < n; i++) amps[i] = adcToAmps(adcRef.current[i]);
 
-    const unwrappedRaw = unwrapDegrees(angleRef.current);
-    const unwrapped = alignAngleTimeline(unwrappedRaw, tbRef.current);
+    const unwrapped = unwrapDegrees(angleRef.current);
     let perUnw: Float64Array | null = null;
     let revOf: Int32Array | null = null;
     const revTimes: number[] = [];
@@ -341,8 +352,8 @@ export function useFlipper({ cpr1 }: Props) {
     const plot = perUnw
       ? averageAngleSeries(tsRef.current, tbRef.current, adcRef.current, amps, perUnw, m)
       : null;
-    const angleSpanDeg = unwrappedRaw.length >= 2
-      ? Math.abs(unwrappedRaw[unwrappedRaw.length - 1].deg - unwrappedRaw[0].deg)
+    const angleSpanDeg = unwrapped.length >= 2
+      ? Math.abs(unwrapped[unwrapped.length - 1].deg - unwrapped[0].deg)
       : 0;
     const ellipse = plot && angleSpanDeg >= 330 ? fitPolarEllipse(plot.angles, plot.amps) : null;
 
@@ -558,6 +569,7 @@ export function useFlipper({ cpr1 }: Props) {
     tsRef.current = [];
     adcRef.current = [];
     angleRef.current = [];
+    sampleClockOffsetRef.current = null;
     setVersion((v) => v + 1);
     setNotice(null);
   };

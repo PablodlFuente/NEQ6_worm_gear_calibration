@@ -4,7 +4,7 @@ import {
   AMP_PER_RAW,
   StreamParser,
   adcToAmps,
-  alignAngleTimeline,
+  chooseSampleClockOffset,
   averageAngleSeries,
   angleAt,
   buildProcCsv,
@@ -63,17 +63,12 @@ test("desenvuelve e interpola ángulos a través de 0 grados", () => {
   assert.equal(angleAt(points, 50), 360);
 });
 
-test("recupera el ángulo si el reloj ADC quedó en otra vuelta u32", () => {
-  const angles = [
-    { tb: 1_000, deg: 0 },
-    { tb: 2_000, deg: 10 },
-  ];
-  const shifted = alignAngleTimeline(angles, [4_295_968_296, 4_295_969_296]);
-  assert.equal(shifted[0].tb, 4_295_968_296);
-  assert.equal(angleAt(shifted, 4_295_968_796), 5);
-
-  const alreadySynced = alignAngleTimeline(angles, [1_200, 1_800]);
-  assert.equal(alreadySynced, angles);
+test("fija el reloj ADC a la vuelta u32 correcta al comenzar", () => {
+  const receivedAt = 1_700_000_000_000;
+  const sampleUs = 12_000_000;
+  const correct = sampleUs / 1000 - receivedAt;
+  assert.equal(chooseSampleClockOffset(correct, sampleUs, receivedAt), correct);
+  assert.equal(chooseSampleClockOffset(correct + 0x100000000 / 1000, sampleUs, receivedAt), correct);
 });
 
 test("CSV crudo conserva timestamp, ADC y tiempo sincronizado", () => {
