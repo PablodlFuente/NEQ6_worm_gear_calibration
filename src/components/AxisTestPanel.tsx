@@ -55,7 +55,8 @@ export default function AxisTestPanel({
   const ready = mountOpen && flip.connected && Boolean(flip.sync) && !flip.syncing && !mountBusy && valuesOk;
   const progress = Math.max(0, Math.min(1, state.progress));
   const cpr = inputs.axis === 1 ? profile.cpr1 : profile.cpr2;
-  const timing = cpr && profile.timer && speed > 0 ? calculateMotionTiming(profile.timer, cpr, speed) : null;
+  const ratio = (inputs.axis === 1 ? profile.ratio1 : profile.ratio2) || 16;
+  const timing = cpr && profile.timer && speed > 0 ? calculateMotionTiming(profile.timer, cpr, speed, ratio) : null;
   const estimatedSamplesPerDeg = timing ? inputs.sampleRate / timing.realDegPerSec : null;
   const measuredSpeed = flip.derived?.st.feedbackSpeedDegS ?? null;
   const measuredSamplesPerDeg = flip.derived?.st.samplesPerDeg ?? null;
@@ -160,7 +161,7 @@ export default function AxisTestPanel({
       <div className="mt-2 grid grid-cols-2 gap-1.5 rounded border border-line bg-[#081120] p-2.5 font-mono text-[9.5px]">
         <span className="text-dim">vel. programada</span>
         <span className={`text-right tabular-nums ${timing?.limited ? "text-alert" : "text-mint"}`}>
-          {timing ? `${timing.realDegPerSec.toFixed(4)} °/s` : "—"}
+          {timing ? `${timing.realDegPerSec.toFixed(4)} °/s · ${timing.highSpeed ? "rápida" : "lenta"}` : "—"}
         </span>
         <span className="text-dim">vel. medida (:j)</span>
         <span className="text-right tabular-nums text-ion">{measuredSpeed ? `${measuredSpeed.toFixed(4)} °/s` : "—"}</span>
@@ -183,7 +184,7 @@ export default function AxisTestPanel({
               : "—"}
         </span>
         {timing?.limited && (
-          <p className="col-span-2 mt-1 text-alert">Límite de esta montura: {timing.maxDegPerSec.toFixed(4)} °/s (T1=6).</p>
+          <p className="col-span-2 mt-1 text-alert">Límite nominal NEQ6: {timing.maxDegPerSec.toFixed(4)} °/s (800× sideral).</p>
         )}
       </div>
 

@@ -2,8 +2,8 @@
 
 ## Movimiento
 
-- **Movimiento:** GOTO por grados con velocidad programada y medida.
-- **Jog:** movimiento mientras se mantiene pulsada una flecha.
+- **Movimiento:** GOTO hasta unos grados concretos, con frenado en destino.
+- **Jog:** velocidad continua mientras se mantiene pulsada una flecha.
 - **STOP:** parada suave.
 - **¡YA!:** parada inmediata.
 - **HOME:** referencia de la controladora; no es un home mecánico.
@@ -16,8 +16,10 @@
 4. Verifica que montura y ADC estén en verde.
 5. Inicia el test.
 
-La carrerilla siempre usa el signo contrario. Para 2° se emplea GOTO lento
-(modo 2, `:M=200`); para la vuelta, GOTO rápido (modo 0, `:M=3200`).
+La carrerilla siempre usa el signo contrario y un GOTO corto. La vuelta medida
+usa velocidad continua y se detiene mediante feedback `:j`: modo 1 a baja
+velocidad y modo 3 únicamente cuando hace falta el ratio rápido. Así T1=13 a
+0,199°/s permanece en lento y no cambia a ráfagas de 16 micropasos.
 
 ## Comandos peligrosos
 

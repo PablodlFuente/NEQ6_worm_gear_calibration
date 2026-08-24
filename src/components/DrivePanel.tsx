@@ -72,12 +72,15 @@ export default function DrivePanel({
   let secs = 0;
   let maxSpeed = 0;
   let limited = false;
+  let highSpeed = false;
   if (cpr && timer && speedOk) {
-    const timing = calculateMotionTiming(timer, cpr, speed);
+    const ratio = (inputs.axis === 2 ? profile.ratio2 : profile.ratio1) || 16;
+    const timing = calculateMotionTiming(timer, cpr, speed, ratio);
     t1 = timing.t1;
     real = timing.realDegPerSec;
     maxSpeed = timing.maxDegPerSec;
     limited = timing.limited;
+    highSpeed = timing.highSpeed;
     if (degOk) {
       steps = Math.max(1, Math.round(Math.abs(deg) * (cpr / 360)));
       chunks = Math.max(1, Math.ceil(steps / MAX_SAFE_ABSOLUTE_GOTO_DELTA));
@@ -103,7 +106,7 @@ export default function DrivePanel({
           CONTROL DE GIRO
         </span>
         <span className="hidden font-mono text-[9.5px] text-dim xl:inline">
-          :j→:I→:T→:G→:S→:J
+          :j→:G→:I/:T→:S→:M→:J
         </span>
         <span
           className={`ml-auto rounded border px-2 py-0.5 font-mono text-[9.5px] tracking-[0.14em] transition-colors ${
@@ -184,7 +187,8 @@ export default function DrivePanel({
             <>
               solicitada <span className="text-fog">{speed.toFixed(3)}°/s</span> · T1=<span className="text-ion">{int(t1)}</span> · programada{" "}
               <span className={limited ? "text-alert" : "text-mint"}>{real.toFixed(3)}°/s</span>
-              {limited ? <span className="text-alert"> (límite {maxSpeed.toFixed(3)}°/s)</span> : null} ·{" "}
+              <span className="text-ion"> ({highSpeed ? "rápida" : "lenta"})</span>
+              {limited ? <span className="text-alert"> (límite 800×: {maxSpeed.toFixed(3)}°/s)</span> : null} ·{" "}
               <span className="text-fog">{int(steps)}</span> pasos
               {chunks > 1 ? <span className="text-ember"> · {chunks} tramos</span> : null} · ~
               <span className="text-fog">

@@ -64,15 +64,21 @@ export default function HelpModal({ open, onClose }: Props) {
               angular dividido por el tiempo entre lecturas reales del controlador; es la referencia experimental.
             </HelpBlock>
             <HelpBlock title="Modo de motor y frenado">
-              Los recorridos cortos usan el modo GOTO lento; los largos, el modo rápido y su ratio detectado. Antes
-              de arrancar se programa también <Code>:M</Code> (200 pasos en lento, 3200 en rápido), evitando reutilizar
-              una distancia de frenado antigua que puede causar una aceleración inicial seguida de avance muy lento.
+              Jog y Test usan velocidad continua: modo lento a velocidades como 0,199°/s y rápido sólo cuando T1 lento
+              ya no alcanza. GOTO se reserva para llegar a una posición concreta; programa destino y frenado <Code>:M</Code>.
+              El modo <Code>:G</Code> se selecciona siempre antes de T1 y con el motor completamente parado.
+            </HelpBlock>
+            <HelpBlock title="Jog, GOTO y 800×">
+              <b className="text-fog">Jog</b> mueve mientras mantienes una flecha y se para al soltar. <b className="text-fog">GOTO</b>
+              conoce un destino y frena allí. En EQMOD, 800 significa 800 veces la velocidad sideral: unos 3,34°/s en
+              la NEQ6; su preset 4 suele ser 800× y la velocidad 9 de SynScan es la máxima.
             </HelpBlock>
             <HelpBlock title="De dónde sale el ángulo">
               Cada punto de posición ancla procede de la respuesta <Code>:j</Code> de la montura, con el offset
               0x800000 retirado y el contador de 24 bits desenvuelto. Como el ADC muestrea mucho más rápido, el
               ángulo de cada muestra se interpola en el tiempo entre dos anclas <Code>:j</Code>. No se integra la
-              velocidad solicitada ni se inventa el final de la captura.
+              velocidad solicitada ni se inventa el final. En la NEQ6 paso a paso, <Code>:j</Code> es el contador
+              interno de pasos, no un encoder mecánico: no puede detectar una pérdida física de pasos.
             </HelpBlock>
             <HelpBlock title="Muestras por grado">
               Antes del test se muestra la estimación <Code>Hz ADC / °·s⁻¹ programados</Code>. Durante y después se

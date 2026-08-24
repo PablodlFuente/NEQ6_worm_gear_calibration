@@ -37,15 +37,21 @@ el eje recorre 2° en sentido contrario al seleccionado y después invierte el g
 ADC comienza únicamente cuando el feedback `:j` confirma el cruce por 0°; el
 motor no se detiene allí. La gráfica de la izquierda crece durante la adquisición.
 
-La aplicación selecciona GOTO lento para recorridos cortos y GOTO rápido para
-recorridos largos. Antes de arrancar programa también la distancia de frenado
-`:M` (200 pasos en lento y 3200 en rápido); así no se reutiliza un ajuste antiguo
-del controlador que provoque una aceleración inicial seguida de avance lento.
+La carrerilla usa un GOTO corto. La medición usa movimiento continuo, sin destino
+interno: configura primero el modo `:G`, después el periodo `:I`, arranca con
+`:J` y vigila `:j` hasta completar los grados reales antes de enviar `:K`.
+0,199°/s utiliza modo lento y T1≈13 en esta NEQ6; el modo rápido sólo se activa
+cuando el periodo lento ya no puede producir la velocidad solicitada.
 
 La velocidad programada puede diferir de la solicitada por el redondeo entero
 de T1 y por el límite T1≥6. La velocidad medida usa el desplazamiento devuelto
 por `:j` y el tiempo entre consultas. Los ángulos de las muestras ADC son una
-interpolación temporal entre estas posiciones reales de la montura.
+interpolación temporal entre estas anclas devueltas por la controladora.
+
+En la NEQ6 con motores paso a paso, `:j` devuelve el contador interno ordenado
+por la placa; no existe un encoder absoluto en la salida del eje. Por tanto
+detecta correctamente cuánto recorrido ha contabilizado la controladora, pero
+no demuestra que el rotor no haya perdido pasos durante un bloqueo mecánico.
 
 Las vistas Polar y Cartesiano se actualizan durante la captura. `bloque ×1`
 representa todas las muestras que ya tienen ángulo; `bloque ×50`, por ejemplo,

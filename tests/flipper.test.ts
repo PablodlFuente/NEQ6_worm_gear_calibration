@@ -12,7 +12,7 @@ import {
   parseCsv,
   unwrapDegrees,
 } from "../src/lib/flipper.ts";
-import { calculateMotionTiming, lowSpeedGotoMarginSteps, MAX_GOTO_STEPS, MAX_POSITION_DELTA, MAX_SAFE_ABSOLUTE_GOTO_DELTA, MIN_T1_TICKS, requiresDangerConfirmation } from "../src/lib/protocol.ts";
+import { calculateMotionTiming, lowSpeedGotoMarginSteps, MAX_GOTO_STEPS, MAX_POSITION_DELTA, MAX_SAFE_ABSOLUTE_GOTO_DELTA, MIN_T1_TICKS, NEQ6_MAX_SLEW_RATE, requiresDangerConfirmation, SIDEREAL_DEG_PER_SEC } from "../src/lib/protocol.ts";
 import { buildZip } from "../src/lib/zip.ts";
 
 function frame(timestamp: number, adc: number): Uint8Array {
@@ -108,7 +108,7 @@ test("una vuelta EQ6 cabe en un único desplazamiento relativo :H", () => {
   assert.equal(Math.ceil(9_020_208 / MAX_GOTO_STEPS), 1);
 });
 
-test("la carrerilla de 2° usa GOTO lento y la vuelta usa GOTO rápido", () => {
+test("el umbral posicional de INDI separa un GOTO corto de una vuelta", () => {
   const cpr = 9_020_208;
   const margin = lowSpeedGotoMarginSteps(cpr);
   assert.ok((2 * cpr) / 360 < margin);
@@ -136,6 +136,24 @@ test("la velocidad respeta la cuantización y el mínimo T1=6", () => {
   assert.ok(normal.t1 > MIN_T1_TICKS);
   assert.equal(normal.limited, false);
   assert.ok(Math.abs(normal.realDegPerSec - 0.2) < 0.01);
+});
+
+test("T1=13 permanece en modo lento a unos 0,199 grados por segundo", () => {
+  const timing = calculateMotionTiming(64_935, 9_024_000, 0.199, 16);
+  assert.equal(timing.highSpeed, false);
+  assert.equal(timing.stepMultiplier, 1);
+  assert.equal(timing.t1, 13);
+  assert.ok(Math.abs(timing.realDegPerSec - 0.199) < 0.002);
+});
+
+test("800x usa el ratio rápido y respeta el límite nominal de la NEQ6", () => {
+  const requested = NEQ6_MAX_SLEW_RATE * SIDEREAL_DEG_PER_SEC;
+  const timing = calculateMotionTiming(64_935, 9_024_000, requested, 16);
+  assert.equal(timing.highSpeed, true);
+  assert.equal(timing.stepMultiplier, 16);
+  assert.equal(timing.t1, 13);
+  assert.ok(timing.realDegPerSec <= requested);
+  assert.ok(timing.maxDegPerSec <= 3.35);
 });
 
 test("ajusta los semiejes y la inclinación de una elipse polar", () => {

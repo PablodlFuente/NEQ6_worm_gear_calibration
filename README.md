@@ -2,7 +2,7 @@
 
 Aplicación web para controlar los ejes de una montura SkyWatcher NEQ6/EQ6 y
 medir la corriente del motor durante una o varias vueltas. Relaciona cada
-muestra del ADC con el feedback real `:j` de la controladora para localizar
+muestra del ADC con el contador de posición `:j` de la controladora para localizar
 excentricidad, rozamiento o zonas de carga irregular del conjunto sinfín-corona.
 
 ![Test de eje en ejecución](docs/images/test-en-ejecucion.png)
@@ -10,10 +10,10 @@ excentricidad, rozamiento o zonas de carga irregular del conjunto sinfín-corona
 ## Funciones principales
 
 - Control de AR/RA y DEC mediante EQDirect y Web Serial a 9600 8N1.
-- Movimiento manual, GOTO, jog y parada normal o inmediata.
+- Movimiento manual por GOTO, jog continuo y parada normal o inmediata.
 - Test automático de 1 a 10 vueltas en sentido CW o CCW.
 - Carrerilla de 2° en sentido contrario antes de registrar.
-- Posición y velocidad medidas exclusivamente mediante feedback `:j`.
+- Posición y velocidad calculadas exclusivamente desde respuestas `:j`, no integrando el tiempo.
 - Corriente instantánea e `I RMS₅₀` con el shunt calibrado de 0,323 Ω.
 - Flipper Zero por BLE o por su segundo puerto USB-COM.
 - Gráficas en vivo, Polar, Cartesiano, FFT y estadísticas.
@@ -66,10 +66,17 @@ npm run check
 5. Empieza con 1 vuelta, 100 Hz y 0,2–0,5 °/s.
 6. Pulsa **Iniciar test sincronizado**.
 
-El eje se mueve primero 2° en el sentido opuesto. Después inicia el recorrido
-seleccionado y la adquisición comienza cuando `:j` confirma el cruce por 0°.
-La vuelta larga programa explícitamente el punto de frenado `:M`, igual que la
-implementación de referencia de INDI/EQMOD.
+El eje se mueve primero 2° en el sentido opuesto mediante un GOTO corto. Después
+invierte el sentido y usa velocidad continua estable; la adquisición comienza
+cuando `:j` confirma el cruce por 0°. Al completar el recorrido observado se
+detiene con `:K`. Una velocidad como 0,199°/s permanece en modo lento; el modo
+rápido se reserva para velocidades que lo necesitan, hasta el límite nominal
+de 800× sideral (unos 3,34°/s en la NEQ6).
+
+La NEQ6 utiliza motores paso a paso sin encoder mecánico de salida: `:j` informa
+de los pasos contabilizados por la controladora. Es una medida mucho mejor que
+estimar ángulo por tiempo, pero no puede detectar por sí sola una pérdida física
+de pasos si el motor llega a bloquearse.
 
 ## Resultados
 

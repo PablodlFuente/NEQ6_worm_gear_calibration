@@ -37,10 +37,11 @@ enteras entre 1 y 10 y velocidad entre 0,01 y 5 °/s.
 
 - No compares directamente `800` de EQMOD con grados por segundo: normalmente
   representa un múltiplo de la velocidad sideral, no 800 °/s.
-- La aplicación elige GOTO lento o rápido según el recorrido, aplica el ratio de
-  alta velocidad detectado y programa `:M` antes de `:J`.
+- Jog y Test emplean velocidad continua. El modo rápido se elige por velocidad,
+  no por la longitud del recorrido; 0,199°/s debe mostrar «lenta» y T1≈13.
 - Ejecuta de nuevo **Escanear montura** y comprueba que timer, CPR y ratio no
-  sean cero. En el monitor serie deben aparecer `:G`, `:H`, `:M`, `:T` y `:J`.
+  sean cero. En un test deben aparecer `:K`, `:f`, `:G`, `:I`, `:J` y consultas
+  `:j`; durante la vuelta no deben aparecer `:S`, `:H`, `:M` ni `:T`.
 - Haz primero un recorrido corto y sin carga peligrosa. Si persiste, detén la
   montura y conserva `logs/AAAA-MM-DD.jsonl` para comparar órdenes y respuestas.
 

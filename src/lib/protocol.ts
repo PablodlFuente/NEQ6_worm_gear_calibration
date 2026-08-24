@@ -15,6 +15,9 @@ export const MAX_SAFE_ABSOLUTE_GOTO_DELTA = 0x7fffff;
 export const MIN_T1_TICKS = 6;
 /** Umbral de INDI: recorrido equivalente a 5 s a 128x velocidad sideral. */
 export const SIDEREAL_DAY_SECONDS = 86164.09065;
+export const SIDEREAL_DEG_PER_SEC = 360 / SIDEREAL_DAY_SECONDS;
+/** Límite nominal publicado para la NEQ6/EQ6: 800 veces la sideral. */
+export const NEQ6_MAX_SLEW_RATE = 800;
 
 export function lowSpeedGotoMarginSteps(cpr: number): number {
   return Math.round((640 * cpr) / SIDEREAL_DAY_SECONDS);
@@ -30,22 +33,45 @@ export interface MotionTiming {
   realDegPerSec: number;
   maxDegPerSec: number;
   limited: boolean;
+  highSpeed: boolean;
+  stepMultiplier: number;
 }
 
 /**
- * Cuantiza una velocidad solicitada al periodo entero T1 que acepta la montura.
- * La velocidad devuelta es la programada realmente, no una medida de feedback.
+ * Cuantiza una velocidad al periodo T1 real de la placa. En firmware 2.x el
+ * modo rápido avanza `highSpeedRatio` micropasos por interrupción; por eso T1
+ * debe calcularse con ese multiplicador, no calcularse en lento y reutilizarse.
  */
-export function calculateMotionTiming(timer: number, cpr: number, requestedDegPerSec: number): MotionTiming {
-  const maxDegPerSec = (timer * 360) / (MIN_T1_TICKS * cpr);
-  const rawT1 = (timer * 360) / (requestedDegPerSec * cpr);
-  const t1 = Math.min(0xffffff, Math.max(MIN_T1_TICKS, Math.round(rawT1)));
-  const realDegPerSec = (timer * 360) / (t1 * cpr);
+export function calculateMotionTiming(
+  timer: number,
+  cpr: number,
+  requestedDegPerSec: number,
+  highSpeedRatio = 1,
+): MotionTiming {
+  const ratio = Math.max(1, Math.round(highSpeedRatio));
+  const lowModeMax = (timer * 360) / (MIN_T1_TICKS * cpr);
+  const ratedMax = NEQ6_MAX_SLEW_RATE * SIDEREAL_DEG_PER_SEC;
+  const controllerMax = (ratio * timer * 360) / (MIN_T1_TICKS * cpr);
+  const maxDegPerSec = ratio > 1 ? Math.min(ratedMax, controllerMax) : lowModeMax;
+  const limited = requestedDegPerSec > maxDegPerSec + 1e-12;
+  const commanded = Math.min(requestedDegPerSec, maxDegPerSec);
+  const highSpeed = ratio > 1 && commanded > lowModeMax;
+  const stepMultiplier = highSpeed ? ratio : 1;
+  const rawT1 = (stepMultiplier * timer * 360) / (commanded * cpr);
+  let t1 = Math.min(0xffffff, Math.max(MIN_T1_TICKS, Math.round(rawT1)));
+  let realDegPerSec = (stepMultiplier * timer * 360) / (t1 * cpr);
+  /* El redondeo no debe superar el límite mecánico nominal de 800x. */
+  if (highSpeed && realDegPerSec > maxDegPerSec) {
+    t1 = Math.min(0xffffff, t1 + 1);
+    realDegPerSec = (stepMultiplier * timer * 360) / (t1 * cpr);
+  }
   return {
     t1,
     realDegPerSec,
     maxDegPerSec,
-    limited: requestedDegPerSec > maxDegPerSec + 1e-12,
+    limited,
+    highSpeed,
+    stepMultiplier,
   };
 }
 
@@ -289,8 +315,11 @@ export const QUICK: QuickGroup[] = [
     title: "GOTO / tracking",
     note: "Verificado en fw 2.04: «:G» lleva 1 byte de modo (:G100 ✓, :G10000 → !1).",
     items: [
-      { cmd: ":G100", desc: "modo GOTO · CW · normal (AR)" },
-      { cmd: ":G101", desc: "modo GOTO · CCW (AR)" },
+      { cmd: ":G100", desc: "GOTO rápido · CW (AR)" },
+      { cmd: ":G101", desc: "GOTO rápido · CCW (AR)" },
+      { cmd: ":G120", desc: "GOTO lento · CW (AR)" },
+      { cmd: ":G110", desc: "velocidad continua lenta · CW (AR)" },
+      { cmd: ":G130", desc: "velocidad continua rápida · CW (AR)" },
       { cmd: ":G200", desc: "modo GOTO (DEC)" },
       { cmd: ":S1", desc: "destino absoluto AR → completa 6 hex", insert: true },
       { cmd: ":S2", desc: "destino absoluto DEC → completa", insert: true },

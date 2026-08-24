@@ -54,6 +54,11 @@ interface MoveRequest {
   onPosition?: (axis: 1 | 2, steps: number, tb: number) => void | Promise<void>;
 }
 
+interface ContinuousMoveRequest extends Omit<MoveRequest, "axis"> {
+  axis: 1 | 2;
+  onTargetReached?: () => void | Promise<void>;
+}
+
 const wrapPosition24 = (value: number) => {
   const width = 0x1000000;
   return ((((value + POS_OFFSET) % width) + width) % width) - POS_OFFSET;
@@ -547,6 +552,80 @@ export default function App() {
   };
 
   /* ── jog manual ───────────────────────────────────────── */
+  const waitAxisStopped = async (axis: 1 | 2, timeoutMs = 8000): Promise<boolean> => {
+    const deadline = Date.now() + timeoutMs;
+    let stoppedStreak = 0;
+    while (Date.now() < deadline) {
+      if (!(await sendRaw(`:f${axis}`, false))) return false;
+      const stopped = parseStopped(await waitForRx(RX_TIMEOUT_MS));
+      if (stopped === null) return false;
+      stoppedStreak = stopped ? stoppedStreak + 1 : 0;
+      if (stoppedStreak >= 2) return true;
+      await sleep(100);
+    }
+    return false;
+  };
+
+  const startContinuousAxis = async (
+    axis: 1 | 2,
+    direction: 1 | -1,
+    speed: number,
+    allowInit = true,
+    isCancelled: () => boolean = () => false,
+  ) => {
+    const cpr = axis === 2 ? profile.cpr2 : profile.cpr1;
+    const timer = profile.timer;
+    const ratio = (axis === 2 ? profile.ratio2 : profile.ratio1) || 16;
+    if (!cpr || !timer) return null;
+    const timing = calculateMotionTiming(timer, cpr, speed, ratio);
+
+    if (!(await sendRaw(`:K${axis}`, false))) return null;
+    const rK = await waitForRx(RX_TIMEOUT_MS);
+    if (!rK?.startsWith("=")) return null;
+    if (isCancelled()) return null;
+    if (!(await waitAxisStopped(axis))) {
+      logFault(`El eje ${axis} no confirmó parada completa antes de cambiar el modo.`);
+      return null;
+    }
+    if (isCancelled()) return null;
+
+    const mode = timing.highSpeed ? "3" : "1"; /* velocidad rápida/lenta, sin destino */
+    if (!(await sendRaw(`:G${axis}${mode}${direction < 0 ? "1" : "0"}`, false))) return null;
+    const rG = await waitForRx(RX_TIMEOUT_MS);
+    if (isCancelled()) return null;
+    if (!rG?.startsWith("=")) {
+      logFault(`No se pudo seleccionar movimiento continuo ${timing.highSpeed ? "rápido" : "lento"} (${rG ?? "sin respuesta"}).`);
+      return null;
+    }
+    if (!(await sendRaw(`:I${axis}${le24(timing.t1)}`, false))) return null;
+    const rI = await waitForRx(RX_TIMEOUT_MS);
+    if (isCancelled()) return null;
+    if (!rI?.startsWith("=")) {
+      logFault(`La placa rechazó T1=${timing.t1} (${rI ?? "sin respuesta"}).`);
+      return null;
+    }
+    if (!(await sendRaw(`:J${axis}`, false))) return null;
+    const rJ = await waitForRx(RX_TIMEOUT_MS);
+    if (rJ?.startsWith("=")) {
+      if (isCancelled()) {
+        await sendRaw(`:K${axis}`, false);
+        await waitForRx(RX_TIMEOUT_MS);
+        return null;
+      }
+      return timing;
+    }
+
+    if (allowInit && rJ?.startsWith("!4")) {
+      logSys(":J rechazado con !4 — marco home (:F) y reconfiguro el movimiento continuo.");
+      if (!(await sendRaw(`:F${axis}`, false))) return null;
+      const rF = await waitForRx(RX_TIMEOUT_MS);
+      if (!rF?.startsWith("=")) return null;
+      return startContinuousAxis(axis, direction, speed, false, isCancelled);
+    }
+    logFault(`:J${axis} rechazado (${rJ ?? "sin respuesta"}) — movimiento cancelado.`);
+    return null;
+  };
+
   const failJog = () => {
     jogRef.current = null;
     setJogAxis(0);
@@ -561,73 +640,14 @@ export default function App() {
       return;
     }
     const speed = parseFloat(mvInputs.speed.replace(",", ".")) || 0.5;
-    const timing = calculateMotionTiming(timer, cpr, speed);
-    const { t1, realDegPerSec: real } = timing;
-    const ratio = (axis === 2 ? profile.ratio2 : profile.ratio1) || 16;
     jogRef.current = { axis };
     setJogAxis(axis);
-
-    if (!(await sendRaw(`:K${axis}`, false))) return failJog();
-    await waitForRx(RX_TIMEOUT_MS);
-    if (!(await sendRaw(`:j${axis}`, false))) return failJog();
-    const pos = parsePosLine(await waitForRx(RX_TIMEOUT_MS));
-    if (pos === null) {
-      logFault(`:j${axis} sin posición válida — jog cancelado.`);
-      return failJog();
-    }
-    if (!jogRef.current) return;
-    let target = pos + dir * Math.round((90 * cpr) / 360); /* objetivo a 90° */
-    target = Math.max(-POS_OFFSET, Math.min(0x7fffff, target));
-
-    /* periodo: :I (tracking) y :T (GOTO) con reintento si !3 */
-    const tHigh = Math.min(0xffffff, Math.round(t1 * ratio));
-    if (!(await sendRaw(`:I${axis}${le24(t1)}`, false))) return failJog();
-    const rI = await waitForRx(RX_TIMEOUT_MS);
-    if (!jogRef.current) return;
-    if (!rI || !rI.startsWith("="))
-      logSys(`:I${axis}${le24(t1)} → ${rI ?? "sin respuesta"} (aviso: sigo igualmente).`);
-
-    if (!(await sendRaw(`:T${axis}${le24(tHigh)}`, false))) return failJog();
-    let rT = await waitForRx(RX_TIMEOUT_MS);
-    if (!jogRef.current) return;
-    if (rT && rT.startsWith("!3")) {
-      logSys(`:T con ×ratio rechazado (!3) — reintento con T1=${t1}.`);
-      if (!(await sendRaw(`:T${axis}${le24(t1)}`, false))) return failJog();
-      rT = await waitForRx(RX_TIMEOUT_MS);
-      if (!jogRef.current) return;
-    }
-    if (!rT || !rT.startsWith("="))
-      logSys(`:T${axis} → ${rT ?? "sin respuesta"} (aviso: sigo igualmente).`);
-
-    for (const c of [`:G${axis}00`, `:S${axis}${posField(target)}`]) {
-      if (!(await sendRaw(c, false))) return failJog();
-      const r = await waitForRx(RX_TIMEOUT_MS);
-      if (!jogRef.current) return;
-      if (!r || !r.startsWith("=")) {
-        logFault(`${c} rechazado (${r ?? "sin respuesta"}) — jog cancelado.`);
-        return failJog();
-      }
-    }
-    if (!(await sendRaw(`:J${axis}`, false))) return failJog();
-    const rJ = await waitForRx(RX_TIMEOUT_MS);
-    if (!rJ || !rJ.startsWith("=")) {
-      const code = rJ ? rJ.slice(1).trim() : "";
-      if (code.startsWith("4")) {
-        logSys(":J rechazado con !4 — marco home (:F) y reintento.");
-        if (!(await sendRaw(`:F${axis}`, false))) return failJog();
-        await waitForRx(RX_TIMEOUT_MS);
-        if (!(await sendRaw(`:J${axis}`, false))) return failJog();
-        const r2 = await waitForRx(RX_TIMEOUT_MS);
-        if (!r2 || !r2.startsWith("=")) {
-          logFault(`:J${axis} sigue rechazado (${r2}) — jog cancelado.`);
-          return failJog();
-        }
-      } else {
-        logFault(`:J${axis} rechazado (${rJ ?? "sin respuesta"}) — jog cancelado.`);
-        return failJog();
-      }
-    }
-    logSys(`Jog ${axis === 1 ? "AR" : "DEC"} ${dir > 0 ? "+" : "−"} · ≈${real.toFixed(2)}°/s — suelta la flecha o pulsa STOP para parar.`);
+    const timing = await startContinuousAxis(axis, dir, speed, true, () => !jogRef.current);
+    if (!timing || !jogRef.current) return failJog();
+    logSys(
+      `Jog continuo ${axis === 1 ? "AR" : "DEC"} ${dir > 0 ? "+" : "−"} · ` +
+        `${timing.highSpeed ? "rápido" : "lento"} · T1=${timing.t1} · ≈${timing.realDegPerSec.toFixed(3)}°/s.`,
+    );
   };
 
   const stopJog = () => {
@@ -638,6 +658,107 @@ export default function App() {
       void sendRaw(`:K${j.axis}`, false);
       logSys(`Jog parado (:K${j.axis}).`);
     }
+  };
+
+  /* Movimiento a velocidad constante. No se programa un destino en la placa:
+   * el navegador vigila el contador :j y solicita :K al cruzar el recorrido. */
+  const runContinuousMove = async (request: ContinuousMoveRequest): Promise<boolean> => {
+    if (status !== "open" || move.running || auto.running) return false;
+    const { axis, speed, deg } = request;
+    const cpr = axis === 2 ? profile.cpr2 : profile.cpr1;
+    const timer = profile.timer;
+    const ratio = (axis === 2 ? profile.ratio2 : profile.ratio1) || 16;
+    if (!cpr || !timer || !isFinite(speed) || speed <= 0 || !isFinite(deg) || deg === 0) {
+      logFault("No se puede iniciar el movimiento continuo: revisa CPR, timer, velocidad y grados.");
+      return false;
+    }
+    const maxDeg = request.maxDeg ?? 3602;
+    if (Math.abs(deg) > maxDeg) {
+      logFault(`Recorrido continuo fuera de límite (máx. ±${maxDeg}°).`);
+      return false;
+    }
+
+    const timing = calculateMotionTiming(timer, cpr, speed, ratio);
+    const direction: 1 | -1 = deg > 0 ? 1 : -1;
+    const targetSteps = Math.max(1, Math.round((Math.abs(deg) * cpr) / 360));
+    moveCancelRef.current = false;
+    setMove({
+      running: true,
+      axis,
+      total: Math.abs(deg),
+      done: 0,
+      speed,
+      real: timing.realDegPerSec,
+      t1: timing.t1,
+      chunks: 1,
+      chunk: 1,
+      phase: "preparando movimiento continuo",
+    });
+    logSys(
+      `Movimiento continuo ${timing.highSpeed ? "rápido" : "lento"} · ${Math.abs(deg)}° · ` +
+        `T1=${timing.t1} · ${timing.realDegPerSec.toFixed(4)}°/s.`,
+    );
+
+    const startedTiming = await startContinuousAxis(axis, direction, speed, true, () => moveCancelRef.current);
+    if (!startedTiming || moveCancelRef.current) {
+      setMove(IDLE_MOVE);
+      return false;
+    }
+    setMove((state) => ({ ...state, phase: "velocidad estable · feedback :j" }));
+
+    let previousPosition: number | null = null;
+    let travelledSteps = 0;
+    let reached = false;
+    let communicationError = false;
+    let stopSent = false;
+    const deadline = Date.now() + (Math.abs(deg) / startedTiming.realDegPerSec) * 1000 * 1.5 + 20000;
+    while (!moveCancelRef.current && Date.now() < deadline) {
+      const requestedAt = Date.now();
+      if (!(await sendRaw(`:j${axis}`, false))) {
+        communicationError = true;
+        break;
+      }
+      const position = parsePosLine(await waitForRx(RX_TIMEOUT_MS));
+      if (position === null) {
+        communicationError = true;
+        break;
+      }
+      const tb = (requestedAt + Date.now()) / 2;
+      if (previousPosition !== null) {
+        let delta = position - previousPosition;
+        if (delta > MAX_POSITION_DELTA) delta -= 0x1000000;
+        else if (delta < -MAX_POSITION_DELTA) delta += 0x1000000;
+        travelledSteps += delta;
+      }
+      previousPosition = position;
+      await request.onPosition?.(axis, position, tb);
+      const doneSteps = Math.abs(travelledSteps);
+      const doneDeg = Math.min(Math.abs(deg), (doneSteps * 360) / cpr);
+      setMove((state) => ({ ...state, done: doneDeg }));
+      if (doneSteps >= targetSteps) {
+        reached = true;
+        if (status === "open") {
+          await sendRaw(`:K${axis}`, false);
+          await waitForRx(RX_TIMEOUT_MS);
+          stopSent = true;
+        }
+        await request.onTargetReached?.();
+        break;
+      }
+      await sleep(request.onPosition ? 120 : 180);
+    }
+
+    if (status === "open" && !stopSent) {
+      await sendRaw(`:K${axis}`, false);
+      await waitForRx(RX_TIMEOUT_MS);
+      stopSent = true;
+    }
+    if (status === "open" && stopSent) await waitAxisStopped(axis, 12000);
+    if (communicationError) logFault("Se perdió el feedback :j durante el movimiento continuo; se envió STOP.");
+    else if (!reached && !moveCancelRef.current) logFault("El movimiento continuo no alcanzó el recorrido antes del timeout; se envió STOP.");
+    else if (reached) logSys(`Recorrido continuo confirmado por :j: ${Math.abs(deg).toFixed(2)}°.`);
+    setMove(IDLE_MOVE);
+    return reached && !moveCancelRef.current && !communicationError;
   };
 
   /* ── giro de alto nivel ───────────────────────────────── */
@@ -669,7 +790,8 @@ export default function App() {
     }
 
     const sign = deg > 0 ? 1 : -1;
-    const timing = calculateMotionTiming(timer, cpr, speed);
+    const primaryRatio = (axis === 2 ? profile.ratio2 : profile.ratio1) || 16;
+    const timing = calculateMotionTiming(timer, cpr, speed, primaryRatio);
     const { t1, realDegPerSec: real } = timing;
     const stepsPerDeg = cpr / 360;
     const totalSteps = Math.max(1, Math.round(Math.abs(deg) * stepsPerDeg));
@@ -705,6 +827,21 @@ export default function App() {
     for (let ci = 0; ci < chunks; ci++) {
       if (aborted || moveCancelRef.current) break;
 
+      setMove((m) => ({ ...m, chunk: ci + 1, phase: "confirmando parada completa (:K → :f)" }));
+      for (const ax of axes) {
+        if (!(await sendRaw(`:K${ax}`, false))) {
+          aborted = true;
+          break;
+        }
+        const rK = await waitForRx(RX_TIMEOUT_MS);
+        if (!rK?.startsWith("=") || !(await waitAxisStopped(ax))) {
+          logFault(`El eje ${ax} no confirmó parada completa antes del GOTO.`);
+          aborted = true;
+          break;
+        }
+      }
+      if (aborted || moveCancelRef.current) break;
+
       /* 1) leer posición actual de cada eje */
       setMove((m) => ({ ...m, chunk: ci + 1, phase: "leyendo posición (:j)" }));
       const chunkSteps = Math.min(chunkLimit, totalSteps - ci * chunkLimit);
@@ -727,45 +864,17 @@ export default function App() {
       }
       if (aborted || moveCancelRef.current) break;
 
-      const highSpeedGoto = chunkSteps > lowSpeedGotoMarginSteps(cpr);
+      const highSpeedGoto = timing.highSpeed && chunkSteps > lowSpeedGotoMarginSteps(cpr);
+      const lowModeMax = (timer * 360) / (6 * cpr);
+      const gotoTiming = highSpeedGoto
+        ? timing
+        : calculateMotionTiming(timer, cpr, Math.min(speed, lowModeMax), 1);
 
-      /* 2) fijar periodo: :I (tracking) y :T (GOTO, ×ratio; reintento con T1 si !3) */
-      setMove((m) => ({ ...m, phase: "fijando periodo (:I → :T)" }));
-      for (const ax of axes) {
-        const ratio = (ax === 2 ? profile.ratio2 : profile.ratio1) || 16;
-        const tGoto = highSpeedGoto ? Math.min(0xffffff, Math.round(t1 * ratio)) : t1;
-        if (!(await sendRaw(`:I${ax}${le24(t1)}`, false))) {
-          aborted = true;
-          break;
-        }
-        const rI = await waitForRx(RX_TIMEOUT_MS);
-        if (moveCancelRef.current) break;
-        if (!rI || !rI.startsWith("="))
-          logSys(`:I${ax}${le24(t1)} → ${rI ?? "sin respuesta"} (aviso: este firmware quizá no lo usa).`);
-
-        if (!(await sendRaw(`:T${ax}${le24(tGoto)}`, false))) {
-          aborted = true;
-          break;
-        }
-        let rT = await waitForRx(RX_TIMEOUT_MS);
-        if (moveCancelRef.current) break;
-        if (rT && rT.startsWith("!3")) {
-          logSys(`:T${ax} con ×ratio rechazado (!3) — reintento con T1=${t1}.`);
-          if (!(await sendRaw(`:T${ax}${le24(t1)}`, false))) {
-            aborted = true;
-            break;
-          }
-          rT = await waitForRx(RX_TIMEOUT_MS);
-          if (moveCancelRef.current) break;
-        }
-        if (!rT || !rT.startsWith("="))
-          logSys(`:T${ax} → ${rT ?? "sin respuesta"} (aviso: pruebo el GOTO igualmente).`);
-      }
-      if (aborted || moveCancelRef.current) break;
-
-      /* 3) armar el GOTO: modo → destino → arranque */
+      /* El modo debe seleccionarse con el motor parado y antes de sus
+       * parámetros. GOTO rápido sólo se usa si lo exige la velocidad, nunca
+       * sólo porque el recorrido sea largo. */
       const gotoCommand = request?.relativeGoto ? ":H" : ":S";
-      setMove((m) => ({ ...m, phase: `armando GOTO (:G → ${gotoCommand})` }));
+      setMove((m) => ({ ...m, phase: `armando GOTO ${highSpeedGoto ? "rápido" : "lento"} (:G)` }));
       for (const ax of axes) {
         const gotoMode = highSpeedGoto ? "0" : "2";
         if (!(await sendRaw(`:G${ax}${gotoMode}${sign < 0 ? "1" : "0"}`, false))) {
@@ -775,7 +884,36 @@ export default function App() {
         const rG = await waitForRx(RX_TIMEOUT_MS);
         if (moveCancelRef.current) break;
         if (!rG || !rG.startsWith("=")) {
-          logFault(`:G${ax}00 rechazado (${rG ?? "sin respuesta"}). Prueba a mano :G${ax}01.`);
+          logFault(`:G${ax}${gotoMode} rechazado (${rG ?? "sin respuesta"}) — giro cancelado.`);
+          aborted = true;
+          break;
+        }
+      }
+      if (aborted || moveCancelRef.current) break;
+
+      /* 2) fijar el T1 correspondiente al modo ya seleccionado. */
+      setMove((m) => ({ ...m, phase: "fijando periodo (:I → :T)" }));
+      for (const ax of axes) {
+        if (!(await sendRaw(`:I${ax}${le24(gotoTiming.t1)}`, false))) {
+          aborted = true;
+          break;
+        }
+        const rI = await waitForRx(RX_TIMEOUT_MS);
+        if (moveCancelRef.current) break;
+        if (!rI || !rI.startsWith("=")) {
+          logFault(`:I${ax}${le24(gotoTiming.t1)} rechazado (${rI ?? "sin respuesta"}).`);
+          aborted = true;
+          break;
+        }
+
+        if (!(await sendRaw(`:T${ax}${le24(gotoTiming.t1)}`, false))) {
+          aborted = true;
+          break;
+        }
+        const rT = await waitForRx(RX_TIMEOUT_MS);
+        if (moveCancelRef.current) break;
+        if (!rT || !rT.startsWith("=")) {
+          logFault(`:T${ax}${le24(gotoTiming.t1)} rechazado (${rT ?? "sin respuesta"}) — giro cancelado.`);
           aborted = true;
           break;
         }
@@ -1005,15 +1143,21 @@ export default function App() {
     const preRollSteps = (2 * cpr) / 360;
     let moveSuccess = false;
     let captureStarted = false;
+    let captureStopped = false;
     let captureFailed = false;
     let testStartedAt: number | null = null;
     try {
-      moveSuccess = await runMove({
+      moveSuccess = await runContinuousMove({
         axis,
         speed,
         deg: (targetDeg + 2) * measurementSign,
         maxDeg: 3602,
-        relativeGoto: true,
+        onTargetReached: async () => {
+          if (captureStarted && !captureStopped) {
+            await flip.stopCapture();
+            captureStopped = true;
+          }
+        },
         onPosition: async (reportedAxis, steps, tb) => {
           if (reportedAxis !== axis) return;
           if (motionPreviousPosition !== null) {
@@ -1063,7 +1207,7 @@ export default function App() {
         },
       });
     } finally {
-      if (captureStarted) await flip.stopCapture();
+      if (captureStarted && !captureStopped) await flip.stopCapture();
     }
 
     const cancelled = axisTestCancelRef.current;
