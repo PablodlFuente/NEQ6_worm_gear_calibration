@@ -3,10 +3,11 @@ import { StreamParser, type Sample } from "../lib/flipper";
 
 export type BleState = "idle" | "scanning" | "connecting" | "connected";
 
-/* Perfil Bluetooth Serial del firmware de Flipper (Momentum/oficial) */
-export const FLIPPER_SERIAL_SERVICE = "19ed82ae-ed21-4c9d-4145-228e60fe0000";
-export const FLIPPER_RX_CHAR = "19ed82ae-ed21-4c9d-4145-228e61fe0000"; /* escribir al Flipper */
-export const FLIPPER_TX_CHAR = "19ed82ae-ed21-4c9d-4145-228e62fe0000"; /* notificaciones del Flipper */
+/* Perfil Bluetooth Serial del firmware de Flipper (oficial y Momentum).
+ * Nombres desde el punto de vista del Flipper: RX recibe del PC y TX notifica. */
+export const FLIPPER_SERIAL_SERVICE = "8fe5b3d5-2e7f-4a98-2a48-7acc60fe0000";
+export const FLIPPER_RX_CHAR = "19ed82ae-ed21-4c9d-4145-228e62fe0000"; /* PC -> Flipper */
+export const FLIPPER_TX_CHAR = "19ed82ae-ed21-4c9d-4145-228e61fe0000"; /* Flipper -> PC */
 /* Nordic UART Service (dispositivos compatibles) */
 const NUS_SERVICE = "6e400001-b5a3-f393-e0a9-e50e24dcca9e";
 const NUS_RX = "6e400002-b5a3-f393-e0a9-e50e24dcca9e";
@@ -36,7 +37,7 @@ export function useBle(cb: Callbacks) {
   const handleNotify = useCallback((e: Event) => {
     const ch = e.target as BluetoothRemoteGATTCharacteristic;
     if (!ch.value) return;
-    const bytes = new Uint8Array(ch.value.buffer);
+    const bytes = new Uint8Array(ch.value.buffer, ch.value.byteOffset, ch.value.byteLength);
     const { samples, lines } = parserRef.current.feed(bytes, Date.now());
     if (samples.length) cbRef.current.onSamples(samples);
     lines.forEach((l) => cbRef.current.onLine(l));
@@ -52,6 +53,7 @@ export function useBle(cb: Callbacks) {
     if (!navigator.bluetooth) throw new Error("Web Bluetooth no disponible");
     setError(null);
     setState("scanning");
+    parserRef.current.reset();
     let device: BluetoothDevice;
     try {
       device = await navigator.bluetooth.requestDevice({
@@ -73,7 +75,8 @@ export function useBle(cb: Callbacks) {
       cbRef.current.onDrop();
     });
     try {
-      const server = await device.gatt!.connect();
+      if (!device.gatt) throw new Error("El dispositivo seleccionado no expone GATT");
+      const server = await device.gatt.connect();
       const services = await server.getPrimaryServices();
 
       /* descubrimiento: buscar un servicio con notify + write
@@ -108,10 +111,17 @@ export function useBle(cb: Callbacks) {
         );
       txRef.current = tx;
       rxRef.current = rx;
-      await tx.startNotifications();
       tx.addEventListener("characteristicvaluechanged", handleNotify);
+      await tx.startNotifications();
       setState("connected");
     } catch (e) {
+      try {
+        device.gatt?.disconnect();
+      } catch {
+        /* ya desconectado */
+      }
+      txRef.current = null;
+      rxRef.current = null;
       setState("idle");
       throw e;
     }
@@ -132,8 +142,11 @@ export function useBle(cb: Callbacks) {
     const ch = rxRef.current;
     if (!ch) throw new Error("BLE no conectado");
     const bytes = new TextEncoder().encode(text.endsWith("\n") ? text : text + "\n");
-    if (ch.properties.writeWithoutResponse) await ch.writeValueWithoutResponse(bytes);
-    else await ch.writeValue(bytes);
+    /* Con respuesta se detectan errores de autenticación; algunos firmwares
+     * solo exponen writeWithoutResponse, por lo que se mantiene el fallback. */
+    if (ch.properties.write) await ch.writeValue(bytes);
+    else if (ch.properties.writeWithoutResponse) await ch.writeValueWithoutResponse(bytes);
+    else throw new Error("La característica BLE no admite escritura");
   }, []);
 
   useEffect(

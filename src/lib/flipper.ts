@@ -50,45 +50,59 @@ export class StreamParser {
   private lastRaw: number | null = null;
   private abs: number = 0;
 
+  reset() {
+    this.buf = [];
+    this.line = "";
+    this.lastRaw = null;
+    this.abs = 0;
+  }
+
   feed(bytes: Uint8Array, tb: number): { samples: Sample[]; lines: string[] } {
     const samples: Sample[] = [];
     const lines: string[] = [];
-    for (let i = 0; i < bytes.length; i++) {
-      const b = bytes[i];
-      this.buf.push(b);
-      /* texto (respuestas OK/ERR/SYNC/INFO) */
-      if (b >= 32 && b < 127) this.line += String.fromCharCode(b);
-      else if (b === 0x0a || b === 0x0d) {
+    this.buf.push(...bytes);
+
+    /*
+     * El flujo multiplexa líneas ASCII y tramas binarias. Es importante no
+     * interpretar el payload de una trama como texto: timestamps y ADC pueden
+     * contener por casualidad CR/LF o caracteres imprimibles y contaminar la
+     * siguiente respuesta OK/SYNC.
+     */
+    while (this.buf.length) {
+      if (this.buf[0] === 0xa5) {
+        if (this.buf.length === 1) break; /* cabecera partida entre paquetes */
+        if (this.buf[1] === 0x5a) {
+          if (this.buf.length < 8) break;
+          const frame = this.buf.splice(0, 8);
+          const tsRaw =
+            (frame[2] |
+              (frame[3] << 8) |
+              (frame[4] << 16) |
+              ((frame[5] << 24) >>> 0)) >>>
+          0;
+          const adc = frame[6] | (frame[7] << 8);
+          /* unwrap del timestamp u32 en microsegundos (~71,6 min) */
+          if (this.lastRaw === null) {
+            this.abs = tsRaw;
+          } else {
+            let d = tsRaw - this.lastRaw;
+            if (d < -0x80000000) d += 0x100000000;
+            else if (d > 0x80000000) d -= 0x100000000;
+            this.abs += d;
+          }
+          this.lastRaw = tsRaw;
+          samples.push({ tb, ts: this.abs, adc });
+          continue;
+        }
+      }
+
+      const b = this.buf.shift()!;
+      if (b === 0x0a || b === 0x0d) {
         if (this.line.trim()) lines.push(this.line.trim());
         this.line = "";
-      }
-      /* trama binaria */
-      if (this.buf.length >= 2 && this.buf[this.buf.length - 2] === 0xa5 && b === 0x5a) {
-        /* posible cabecera: esperamos 6 bytes más tras ella */
-      }
-      const n = this.buf.length;
-      if (n >= 8 && this.buf[n - 8] === 0xa5 && this.buf[n - 7] === 0x5a) {
-        const tsRaw =
-          (this.buf[n - 6] |
-            (this.buf[n - 5] << 8) |
-            (this.buf[n - 4] << 16) |
-            ((this.buf[n - 3] << 24) >>> 0)) >>>
-          0;
-        const adc = this.buf[n - 2] | (this.buf[n - 1] << 8);
-        /* unwrap del contador u32 (desborda cada ~67 s) */
-        if (this.lastRaw === null) {
-          this.abs = tsRaw;
-        } else {
-          let d = tsRaw - this.lastRaw;
-          if (d < -0x80000000) d += 0x100000000;
-          else if (d > 0x80000000) d -= 0x100000000;
-          this.abs += d;
-        }
-        this.lastRaw = tsRaw;
-        samples.push({ tb, ts: this.abs, adc });
-        this.buf.length = 0;
-      } else if (n > 16) {
-        this.buf.shift(); /* resincronizar si hay ruido */
+      } else if (b >= 32 && b < 127) {
+        this.line += String.fromCharCode(b);
+        if (this.line.length > 160) this.line = this.line.slice(-160);
       }
     }
     return { samples, lines };

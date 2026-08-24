@@ -8,9 +8,8 @@ import {
   ADC_CAL_K,
   type AngleBin,
 } from "../lib/flipper";
-import { IconAlert, IconDownload, IconTrash, IconZap } from "./icons";
+import { IconAlert, IconDownload, IconTrash } from "./icons";
 
-const RATES = [10, 50, 100, 250, 500, 1000];
 const AVGS = [1, 2, 5, 10, 20, 50, 100];
 const REV_COLORS = [
   "rgba(76,201,240,0.5)",
@@ -80,7 +79,7 @@ export default function FlipperLab({ flip, serialOpen }: { flip: FlipperApi; ser
   const [view, setView] = useState<View>("vivo");
   const fileRef = useRef<HTMLInputElement>(null);
 
-  const { ble, derived, revPolars, stats } = flip;
+  const { derived, revPolars, stats } = flip;
   const n = stats.n;
   void flip.tick;
 
@@ -321,51 +320,24 @@ export default function FlipperLab({ flip, serialOpen }: { flip: FlipperApi; ser
       className="brackets rise relative flex min-h-0 flex-1 flex-col overflow-hidden rounded-md border border-line bg-panel shadow-[inset_0_1px_0_rgba(255,255,255,0.04),0_10px_34px_rgba(0,0,0,0.4)]"
       style={{ animationDelay: "30ms" }}
     >
-      {/* cabecera: captura + subpestañas */}
+      {/* cabecera: estado; los parámetros y START viven solo en el panel derecho */}
       <div className="flex shrink-0 flex-wrap items-center gap-2 border-b border-line bg-[#0a1424] px-3 py-2">
         <span
           className={`led ${
-            ble.state === "connected" ? "led-mint led-breathe" : "led-off"
+            flip.connected ? "led-mint led-breathe" : "led-off"
           }`}
         />
         <span className="font-display text-[11px] font-bold tracking-[0.24em] text-fog">
           TEST EJES
         </span>
         <span className="hidden font-mono text-[9.5px] text-dim md:inline">
-          {ble.state === "connected" ? ble.deviceName : "Flipper sin conectar (Ajustes → Conexión Flipper)"}
+          {flip.connected
+            ? `ADC conectado por ${flip.transport?.toUpperCase()}`
+            : "Flipper sin conectar (Ajustes → Conexión Flipper)"}
         </span>
-
-        <div className="ml-auto flex flex-wrap items-center gap-1.5">
-          <select
-            value={flip.rate}
-            disabled={flip.capturing}
-            onChange={(e) => flip.setRate(Number(e.target.value))}
-            className={selCls}
-            title="Frecuencia de adquisición"
-          >
-            {RATES.map((r) => (
-              <option key={r} value={r}>
-                {r} Hz
-              </option>
-            ))}
-          </select>
-          {flip.capturing ? (
-            <button
-              onClick={() => void flip.stopCapture()}
-              className="flex items-center gap-1.5 rounded border border-alert/50 bg-alert/10 px-2.5 py-1 font-display text-[10px] font-bold tracking-[0.14em] text-alert transition-colors hover:bg-alert/20"
-            >
-              ■ STOP
-            </button>
-          ) : (
-            <button
-              onClick={() => void flip.startCapture()}
-              disabled={ble.state !== "connected"}
-              className="flex items-center gap-1.5 rounded bg-ember px-2.5 py-1 font-display text-[10px] font-bold tracking-[0.14em] text-[#1c1204] transition-all hover:bg-[#ffc04d] active:translate-y-px disabled:cursor-not-allowed disabled:opacity-35"
-            >
-              <IconZap className="h-3 w-3" /> START
-            </button>
-          )}
-        </div>
+        <span className="ml-auto font-mono text-[9.5px] text-dim">
+          {flip.capturing ? `● REC · ${flip.rate} Hz` : "IDLE"}
+        </span>
       </div>
 
       {/* subpestañas de visualización */}
@@ -403,16 +375,7 @@ export default function FlipperLab({ flip, serialOpen }: { flip: FlipperApi; ser
             />
             superponer revs
           </label>
-          <label className="flex cursor-pointer items-center gap-1.5 font-mono text-[10px] text-dim">
-            <input
-              type="checkbox"
-              checked={flip.angleOn}
-              onChange={(e) => flip.setAngleOn(e.target.checked)}
-              className="accent-[#f5a524]"
-            />
-            ángulo NEQ6
-            {!serialOpen && <span className="text-alert">· sin montura</span>}
-          </label>
+          {!serialOpen && <span className="font-mono text-[10px] text-alert">sin montura</span>}
         </div>
       </div>
 

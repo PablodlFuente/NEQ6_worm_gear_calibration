@@ -1,0 +1,12 @@
+App(
+    appid="neq6_current_logger",
+    name="NEQ6 Current",
+    apptype=FlipperAppType.EXTERNAL,
+    entry_point="neq6_logger_app",
+    requires=["gui", "bt"],
+    stack_size=4 * 1024,
+    order=10,
+    fap_category="Tools",
+    fap_description="ADC PA7 current logger for NEQ6 with BLE and USB CDC",
+    fap_author="NEQ6 worm gear calibration project",
+)

@@ -21,6 +21,7 @@ import RightPanel, { type Tab } from "./components/RightPanel";
 import FlipperLab from "./components/FlipperLab";
 import { type AutoState } from "./components/SidePanel";
 import { IDLE_MOVE, type MoveInputs, type MoveState } from "./components/DrivePanel";
+import type { AxisTestInputs, AxisTestState } from "./components/AxisTestPanel";
 import type { DecodedState } from "./components/DecoderPanel";
 import {
   IconActivity,
@@ -38,6 +39,19 @@ const MAX_ENTRIES = 700;
 const RX_TIMEOUT_MS = 900;
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+interface MoveRequest {
+  axis: 1 | 2;
+  speed: number;
+  deg: number;
+  maxDeg?: number;
+  onPosition?: (axis: 1 | 2, steps: number, tb: number) => void;
+}
+
+const wrapPosition24 = (value: number) => {
+  const width = 0x1000000;
+  return ((((value + POS_OFFSET) % width) + width) % width) - POS_OFFSET;
+};
 
 function Starfield() {
   return (
@@ -143,6 +157,19 @@ export default function App() {
   const [mvInputs, setMvInputs] = useState<MoveInputs>({ axis: 1, speed: "0.5", deg: "10" });
   const [move, setMove] = useState<MoveState>(IDLE_MOVE);
   const [jogAxis, setJogAxis] = useState<0 | 1 | 2>(0);
+  const [axisTestInputs, setAxisTestInputs] = useState<AxisTestInputs>({
+    axis: 1,
+    revolutions: "1",
+    sampleRate: 100,
+    speed: "0.5",
+  });
+  const [axisTest, setAxisTest] = useState<AxisTestState>({
+    running: false,
+    progress: 0,
+    currentDeg: 0,
+    targetDeg: 360,
+    message: "Listo para una vuelta completa.",
+  });
 
   /* pestaña activa + ancho del panel lateral */
   const [tab, setTab] = useState<Tab>("mov");
@@ -165,6 +192,7 @@ export default function App() {
   const rxWaitersRef = useRef<Array<(line: string) => void>>([]);
   const autoCancelRef = useRef(false);
   const moveCancelRef = useRef(false);
+  const axisTestCancelRef = useRef(false);
   const jogRef = useRef<{ axis: 1 | 2 } | null>(null);
   const barRef = useRef<CommandBarHandle>(null);
   const encoder = (encoderRef.current ??= new TextEncoder());
@@ -293,7 +321,7 @@ export default function App() {
   const serial = useSerial({ onData: handleData, onDisconnect: handleUnplugged });
   const { status, portInfo, supported: apiOk } = serial;
 
-  /* posición para la pestaña Test ejes (get_position) */
+  /* posición devuelta por :j (24 bits little-endian con offset 0x800000) */
   const parsePosLine = (line: string | null): number | null => {
     if (!line || !line.startsWith("=")) return null;
     const hex = line.slice(1).trim();
@@ -309,19 +337,7 @@ export default function App() {
     return (st[1] & 1) === 0; /* byte1·B0: 1=en marcha · 0=parado */
   };
 
-  const getPosition = async (): Promise<{ steps: number; deg: number } | null> => {
-    if (status !== "open" || move.running || auto.running || jogRef.current) return null;
-    if (!(await sendRaw(":j1", false))) return null;
-    const line = await waitForRx(RX_TIMEOUT_MS);
-    const pos = parsePosLine(line);
-    if (pos === null) return null;
-    const cpr = profile.cpr1 ?? 8990208;
-    return { steps: pos, deg: (pos * 360) / cpr };
-  };
-
   const flip = useFlipper({
-    getPosition,
-    serialOpen: status === "open",
     cpr1: profile.cpr1,
   });
 
@@ -593,30 +609,31 @@ export default function App() {
   };
 
   /* ── giro de alto nivel ───────────────────────────────── */
-  const runMove = async () => {
+  const runMove = async (request?: MoveRequest): Promise<boolean> => {
     if (status !== "open") {
       logFault("No hay puerto abierto: pulsa «Conectar» primero.");
-      return;
+      return false;
     }
-    if (move.running || auto.running) return;
+    if (move.running || auto.running) return false;
 
-    const axis = mvInputs.axis;
-    const speed = parseFloat(mvInputs.speed.replace(",", "."));
-    const deg = parseFloat(mvInputs.deg.replace(",", "."));
+    const axis = request?.axis ?? mvInputs.axis;
+    const speed = request?.speed ?? parseFloat(mvInputs.speed.replace(",", "."));
+    const deg = request?.deg ?? parseFloat(mvInputs.deg.replace(",", "."));
     if (!isFinite(speed) || speed <= 0) {
       logFault("Velocidad no válida: usa un valor mayor que 0 (p. ej. 0,5).");
-      return;
+      return false;
     }
-    if (!isFinite(deg) || deg === 0 || Math.abs(deg) > 720) {
-      logFault("Grados no válidos: usa un valor distinto de 0 (máx. ±720). Negativo = sentido contrario.");
-      return;
+    const maxDeg = request?.maxDeg ?? 720;
+    if (!isFinite(deg) || deg === 0 || Math.abs(deg) > maxDeg) {
+      logFault(`Grados no válidos: usa un valor distinto de 0 (máx. ±${maxDeg}). Negativo = sentido contrario.`);
+      return false;
     }
 
     const cpr = axis === 2 ? profile.cpr2 : profile.cpr1;
     const timer = profile.timer;
     if (!cpr || !timer) {
       logFault("Faltan CPR/timer: ejecuta «Escanear montura» (pestaña Montura) con el puerto abierto.");
-      return;
+      return false;
     }
 
     const sign = deg > 0 ? 1 : -1;
@@ -664,6 +681,7 @@ export default function App() {
           aborted = true;
           break;
         }
+        const positionRequestAt = Date.now();
         const pos = parsePosLine(await waitForRx(RX_TIMEOUT_MS));
         if (moveCancelRef.current) break;
         if (pos === null) {
@@ -671,12 +689,8 @@ export default function App() {
           aborted = true;
           break;
         }
-        let t = pos + sign * chunkSteps;
-        if (t > 0x7fffff || t < -POS_OFFSET) {
-          t = Math.max(-POS_OFFSET, Math.min(0x7fffff, t));
-          logSys(`Objetivo limitado al rango de 24 bits en el eje ${ax}.`);
-        }
-        target[ax] = t;
+        request?.onPosition?.(ax, pos, (positionRequestAt + Date.now()) / 2);
+        target[ax] = wrapPosition24(pos + sign * chunkSteps);
       }
       if (aborted || moveCancelRef.current) break;
 
@@ -717,7 +731,7 @@ export default function App() {
       /* 3) armar el GOTO: modo → destino → arranque */
       setMove((m) => ({ ...m, phase: "armando GOTO (:G → :S)" }));
       for (const ax of axes) {
-        if (!(await sendRaw(`:G${ax}00`, false))) {
+        if (!(await sendRaw(`:G${ax}0${sign < 0 ? "1" : "0"}`, false))) {
           aborted = true;
           break;
         }
@@ -800,11 +814,25 @@ export default function App() {
       const chunkDeg = chunkSteps / stepsPerDeg;
       const deadline = Date.now() + (chunkDeg / real) * 1000 * 1.8 + 20000;
       let streak = 0;
+      let chunkCompleted = false;
       while (Date.now() < deadline) {
         if (moveCancelRef.current) break;
         let allStopped = true;
         let ok = true;
         for (const ax of axes) {
+          if (request?.onPosition) {
+            const positionRequestAt = Date.now();
+            if (!(await sendRaw(`:j${ax}`, false))) {
+              ok = false;
+              break;
+            }
+            const position = parsePosLine(await waitForRx(RX_TIMEOUT_MS));
+            if (position === null) {
+              ok = false;
+              break;
+            }
+            request.onPosition(ax, position, (positionRequestAt + Date.now()) / 2);
+          }
           if (!(await sendRaw(`:f${ax}`, false))) {
             ok = false;
             break;
@@ -825,10 +853,28 @@ export default function App() {
           break;
         }
         streak = allStopped ? streak + 1 : 0;
-        if (streak >= 2) break;
-        await sleep(400);
+        if (streak >= 2) {
+          chunkCompleted = true;
+          break;
+        }
+        await sleep(request?.onPosition ? 180 : 400);
       }
       if (aborted) break;
+      if (!moveCancelRef.current && !chunkCompleted) {
+        logFault("El eje no confirmó la parada antes del tiempo límite; se envía STOP por seguridad.");
+        for (const ax of axes) await sendRaw(`:K${ax}`, false);
+        aborted = true;
+        break;
+      }
+
+      if (request?.onPosition && !moveCancelRef.current) {
+        for (const ax of axes) {
+          const positionRequestAt = Date.now();
+          if (!(await sendRaw(`:j${ax}`, false))) continue;
+          const position = parsePosLine(await waitForRx(RX_TIMEOUT_MS));
+          if (position !== null) request.onPosition(ax, position, (positionRequestAt + Date.now()) / 2);
+        }
+      }
 
       doneDeg = Math.min(Math.abs(deg), doneDeg + chunkDeg);
       setMove((m) => ({ ...m, done: doneDeg }));
@@ -837,6 +883,110 @@ export default function App() {
     if (moveCancelRef.current) logSys("Giro detenido por el usuario.");
     else if (!aborted) logSys(`Giro de ${Math.abs(deg)}° completado (≈${(Math.abs(deg) / real).toFixed(1)} s teóricos).`);
     setMove(IDLE_MOVE);
+    return !moveCancelRef.current && !aborted;
+  };
+
+  const startAxisTest = async () => {
+    if (axisTest.running || move.running || auto.running || jogRef.current) return;
+    const revolutions = Number(axisTestInputs.revolutions.replace(",", "."));
+    const speed = Number(axisTestInputs.speed.replace(",", "."));
+    const axis = axisTestInputs.axis;
+    const cpr = axis === 1 ? profile.cpr1 : profile.cpr2;
+    const targetDeg = revolutions * 360;
+    if (
+      status !== "open" ||
+      !flip.connected ||
+      !flip.sync ||
+      !cpr ||
+      !Number.isInteger(revolutions) ||
+      revolutions < 1 ||
+      revolutions > 10 ||
+      !isFinite(speed) ||
+      speed <= 0 ||
+      speed > 5
+    ) {
+      logFault("Test no iniciado: revisa montura, Flipper, CPR, revoluciones y velocidad.");
+      return;
+    }
+
+    axisTestCancelRef.current = false;
+    flip.clearData();
+    setAxisTest({
+      running: true,
+      progress: 0,
+      currentDeg: 0,
+      targetDeg,
+      message: "Preparando ADC y sincronización…",
+    });
+
+    const captureStarted = await flip.startCapture(axisTestInputs.sampleRate);
+    if (!captureStarted) {
+      setAxisTest((state) => ({ ...state, running: false, message: "El ADC no confirmó START." }));
+      return;
+    }
+
+    await sleep(150);
+    if (axisTestCancelRef.current) {
+      await flip.stopCapture();
+      setAxisTest((state) => ({
+        ...state,
+        running: false,
+        message: "Test cancelado antes de arrancar; el motor no se ha movido.",
+      }));
+      return;
+    }
+    let previousPosition: number | null = null;
+    let travelledSteps = 0;
+    const totalSteps = revolutions * cpr;
+    let success = false;
+    try {
+      success = await runMove({
+        axis,
+        speed,
+        deg: targetDeg,
+        maxDeg: 3600,
+        onPosition: (reportedAxis, steps, tb) => {
+          if (reportedAxis !== axis) return;
+          flip.recordAngle((steps * 360) / cpr, tb);
+          if (previousPosition !== null) {
+            let delta = steps - previousPosition;
+            if (delta > MAX_INC) delta -= 0x1000000;
+            else if (delta < -MAX_INC) delta += 0x1000000;
+            travelledSteps += delta;
+          }
+          previousPosition = steps;
+          const currentDeg = Math.min(targetDeg, (Math.abs(travelledSteps) * 360) / cpr);
+          setAxisTest((state) => ({
+            ...state,
+            currentDeg,
+            progress: totalSteps ? Math.min(1, Math.abs(travelledSteps) / totalSteps) : 0,
+            message: "Adquiriendo corriente y posición…",
+          }));
+        },
+      });
+    } finally {
+      await flip.stopCapture();
+    }
+
+    const cancelled = axisTestCancelRef.current;
+    setAxisTest((state) => ({
+      ...state,
+      running: false,
+      progress: success ? 1 : state.progress,
+      currentDeg: success ? targetDeg : state.currentDeg,
+      message: cancelled
+        ? "Test detenido por el usuario; los datos parciales se conservan."
+        : success
+          ? "Test completado; datos listos para revisar o exportar."
+          : "Test interrumpido por un error; revisa el registro.",
+    }));
+  };
+
+  const stopAxisTest = () => {
+    axisTestCancelRef.current = true;
+    setAxisTest((state) => ({ ...state, message: "Enviando parada inmediata…" }));
+    stopMove(true);
+    void flip.stopCapture();
   };
 
   /* ── comandos rápidos / inserción en barra ────────────── */
@@ -1072,6 +1222,19 @@ export default function App() {
             onStartJog={(axis, dir) => void startJog(axis, dir)}
             onStopJog={stopJog}
             flip={flip}
+            axisTestInputs={axisTestInputs}
+            onAxisTestInputs={(patch) => {
+              setAxisTestInputs((value) => ({ ...value, ...patch }));
+              if (patch.revolutions !== undefined) {
+                const revs = Number(patch.revolutions.replace(",", "."));
+                if (Number.isFinite(revs)) {
+                  setAxisTest((state) => ({ ...state, targetDeg: Math.max(0, revs * 360) }));
+                }
+              }
+            }}
+            axisTest={axisTest}
+            onStartAxisTest={() => void startAxisTest()}
+            onStopAxisTest={stopAxisTest}
           />
         </div>
       </main>

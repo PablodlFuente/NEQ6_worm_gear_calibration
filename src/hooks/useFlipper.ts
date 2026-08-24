@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useBle } from "./useBle";
+import { useFlipperSerial } from "./useFlipperSerial";
 import {
   adcToAmps,
   angleAt,
@@ -25,26 +26,22 @@ import {
 const MAX_SAMPLES = 1_500_000;
 
 interface Props {
-  getPosition: () => Promise<{ steps: number; deg: number } | null>;
-  serialOpen: boolean;
   cpr1?: number;
 }
 
-export function useFlipper({ getPosition, serialOpen, cpr1 }: Props) {
+export function useFlipper({ cpr1 }: Props) {
   /* buffers crudos — NUNCA se modifican */
   const tbRef = useRef<number[]>([]);
   const tsRef = useRef<number[]>([]);
   const adcRef = useRef<number[]>([]);
   const angleRef = useRef<AnglePoint[]>([]);
-  const getPosRef = useRef(getPosition);
-  getPosRef.current = getPosition;
 
   const [version, setVersion] = useState(0);
   const [tick, setTick] = useState(0);
   const [rate, setRate] = useState(100);
   const [capturing, setCapturing] = useState(false);
   const [syncing, setSyncing] = useState(false);
-  const [sync, setSync] = useState<{ offsetMs: number; driftPpm: number; rtt: number; n: number } | null>(null);
+  const [sync, setSync] = useState<{ offsetMs: number; jitterMs: number; rtt: number; n: number } | null>(null);
   const [angleOn, setAngleOn] = useState(true);
   const [avgFactor, setAvgFactor] = useState(1);
   const [overlayRevs, setOverlayRevs] = useState(true);
@@ -52,40 +49,68 @@ export function useFlipper({ getPosition, serialOpen, cpr1 }: Props) {
   const [sessions, setSessions] = useState<Session[]>([]);
 
   const pendingLineRef = useRef<((line: string) => void) | null>(null);
+  const commandQueueRef = useRef<Promise<unknown>>(Promise.resolve());
+  const captureGenerationRef = useRef(0);
   const capturingRef = useRef(false);
+  const syncRef = useRef(sync);
+  syncRef.current = sync;
 
-  /* ── BLE ─────────────────────────────────────────────── */
+  const onSamples = (batch: Sample[]) => {
+    const tb = tbRef.current;
+    const ts = tsRef.current;
+    const adc = adcRef.current;
+    const clock = syncRef.current;
+    for (const s of batch) {
+      /* Fecha real de adquisición, no fecha de llegada del paquete BLE/USB. */
+      tb.push(clock ? s.ts / 1000 - clock.offsetMs : s.tb);
+      ts.push(s.ts);
+      adc.push(s.adc);
+    }
+    if (tb.length > MAX_SAMPLES) {
+      void stopCapture(false);
+      setNotice(
+        `Buffer lleno (${MAX_SAMPLES.toLocaleString("es-ES")} muestras) — captura detenida. Exporta o guarda la sesión.`,
+      );
+    }
+  };
+
+  const onLine = (line: string) => {
+    if (pendingLineRef.current) {
+      const resolve = pendingLineRef.current;
+      pendingLineRef.current = null;
+      resolve(line);
+    }
+  };
+
+  const onDrop = (label: string) => {
+    capturingRef.current = false;
+    setCapturing(false);
+    setSync(null);
+    setNotice(`Flipper desconectado (${label}).`);
+    setVersion((v) => v + 1);
+  };
+
+  /* ── transportes BLE y USB CDC ───────────────────────── */
   const ble = useBle({
-    onSamples: (batch: Sample[]) => {
-      const tb = tbRef.current;
-      const ts = tsRef.current;
-      const adc = adcRef.current;
-      for (const s of batch) {
-        tb.push(s.tb);
-        ts.push(s.ts);
-        adc.push(s.adc);
-      }
-      if (tb.length > MAX_SAMPLES) {
-        void stopCapture(false);
-        setNotice(`Buffer lleno (${MAX_SAMPLES.toLocaleString("es-ES")} muestras) — captura detenida. Exporta o guarda la sesión.`);
-      }
-    },
-    onLine: (line) => {
-      if (pendingLineRef.current) {
-        const r = pendingLineRef.current;
-        pendingLineRef.current = null;
-        r(line);
-      }
-    },
-    onDrop: () => {
-      capturingRef.current = false;
-      setCapturing(false);
-      setNotice("Flipper desconectado por BLE.");
-      setVersion((v) => v + 1);
-    },
+    onSamples,
+    onLine,
+    onDrop: () => onDrop("BLE"),
+  });
+  const usb = useFlipperSerial({
+    onSamples,
+    onLine,
+    onDrop: () => onDrop("USB-COM"),
   });
 
-  const sendCmd = (cmd: string, timeout = 900): Promise<string | null> =>
+  const transport = ble.state === "connected" ? "ble" : usb.state === "connected" ? "usb" : null;
+  const connected = transport !== null;
+  const sendText = (cmd: string) => {
+    if (transport === "ble") return ble.sendText(cmd);
+    if (transport === "usb") return usb.sendText(cmd);
+    return Promise.reject(new Error("Flipper no conectado"));
+  };
+
+  const sendCmdNow = (cmd: string, timeout = 900): Promise<string | null> =>
     new Promise((resolve) => {
       let done = false;
       const timer = window.setTimeout(() => {
@@ -102,7 +127,7 @@ export function useFlipper({ getPosition, serialOpen, cpr1 }: Props) {
           resolve(line);
         }
       };
-      ble.sendText(cmd).catch(() => {
+      sendText(cmd).catch(() => {
         if (!done) {
           done = true;
           window.clearTimeout(timer);
@@ -112,15 +137,27 @@ export function useFlipper({ getPosition, serialOpen, cpr1 }: Props) {
       });
     });
 
+  /* BLE y CDC multiplexan respuestas y muestras en un único flujo. Mantener
+   * una sola petición ASCII en vuelo evita que un OK de STOP resuelva RATE o
+   * que SYNC intercepte la confirmación de START. */
+  const sendCmd = (cmd: string, timeout = 900): Promise<string | null> => {
+    const task = commandQueueRef.current.then(
+      () => sendCmdNow(cmd, timeout),
+      () => sendCmdNow(cmd, timeout),
+    );
+    commandQueueRef.current = task.then(
+      () => undefined,
+      () => undefined,
+    );
+    return task;
+  };
+
   /* ── sincronización de relojes (offset + drift) ──────── */
   const doSync = async () => {
-    if (ble.state !== "connected") return;
+    if (!connected || capturingRef.current) return;
     setSyncing(true);
     const offsets: number[] = [];
     const rtts: number[] = [];
-    const tStart = Date.now();
-    let first: number | null = null;
-    let last: number | null = null;
     for (let i = 0; i < 6; i++) {
       const d0 = Date.now();
       const p0 = performance.now();
@@ -133,16 +170,15 @@ export function useFlipper({ getPosition, serialOpen, cpr1 }: Props) {
       const offset = us / 1000 - (d0 + rtt / 2);
       offsets.push(offset);
       rtts.push(rtt);
-      if (first === null) first = offset;
-      last = offset;
       await new Promise((r) => setTimeout(r, 90));
     }
-    if (offsets.length >= 3 && first !== null && last !== null) {
+    if (offsets.length >= 3) {
       const sorted = [...offsets].sort((a, b) => a - b);
-      const elapsed = Date.now() - tStart;
+      const midpoint = sorted[Math.floor(sorted.length / 2)];
+      const deviations = offsets.map((value) => Math.abs(value - midpoint));
       setSync({
-        offsetMs: sorted[Math.floor(sorted.length / 2)],
-        driftPpm: elapsed > 0 ? ((last - first) / elapsed) * 1e6 : 0,
+        offsetMs: midpoint,
+        jitterMs: median(deviations),
         rtt: median(rtts),
         n: offsets.length,
       });
@@ -154,32 +190,52 @@ export function useFlipper({ getPosition, serialOpen, cpr1 }: Props) {
   };
 
   useEffect(() => {
-    if (ble.state === "connected") void doSync();
+    if (connected) {
+      void doSync();
+    } else {
+      captureGenerationRef.current++;
+      capturingRef.current = false;
+      setCapturing(false);
+      setSync(null);
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [ble.state]);
+  }, [transport]);
 
   /* ── captura ─────────────────────────────────────────── */
-  const startCapture = async () => {
-    if (ble.state !== "connected") return;
-    setNotice(null);
-    const r1 = await sendCmd(`RATE ${rate}`);
-    if (r1 && r1.startsWith("ERR")) {
-      setNotice(`El Flipper rechazó la tasa: ${r1}`);
-      return;
+  const startCapture = async (rateOverride?: number): Promise<boolean> => {
+    if (!connected) {
+      setNotice("Conecta el Flipper por BLE o USB-COM antes de capturar.");
+      return false;
     }
+    const requestedRate = rateOverride ?? rate;
+    const generation = ++captureGenerationRef.current;
+    setRate(requestedRate);
+    setNotice(null);
+    const r1 = await sendCmd(`RATE ${requestedRate}`);
+    if (!r1 || r1 !== "OK") {
+      setNotice(`El Flipper no confirmó la tasa (${r1 ?? "timeout"}).`);
+      return false;
+    }
+    if (generation !== captureGenerationRef.current) return false;
     const r2 = await sendCmd("START");
-    if (r2 && r2.startsWith("ERR")) {
-      setNotice(`No se pudo iniciar: ${r2}`);
-      return;
+    if (!r2 || r2 !== "OK") {
+      setNotice(`El Flipper no confirmó START (${r2 ?? "timeout"}).`);
+      return false;
+    }
+    if (generation !== captureGenerationRef.current) {
+      await sendCmd("STOP", 700);
+      return false;
     }
     capturingRef.current = true;
     setCapturing(true);
+    return true;
   };
 
   const stopCapture = async (bump = true) => {
+    captureGenerationRef.current++;
     capturingRef.current = false;
     setCapturing(false);
-    if (ble.state === "connected") await sendCmd("STOP", 500);
+    if (connected) await sendCmd("STOP", 700);
     if (bump) setVersion((v) => v + 1);
   };
 
@@ -189,17 +245,10 @@ export function useFlipper({ getPosition, serialOpen, cpr1 }: Props) {
     return () => window.clearInterval(iv);
   }, [capturing]);
 
-  /* asociación de ángulo con la NEQ6 (get_position) */
-  useEffect(() => {
-    if (!capturing || !angleOn || !serialOpen) return;
-    const iv = window.setInterval(() => {
-      void (async () => {
-        const p = await getPosRef.current();
-        if (p) angleRef.current.push({ tb: Date.now(), deg: ((p.deg % 360) + 360) % 360 });
-      })();
-    }, 250);
-    return () => window.clearInterval(iv);
-  }, [capturing, angleOn, serialOpen]);
+  const recordAngle = (deg: number, tb = Date.now()) => {
+    if (!capturingRef.current || !angleOn) return;
+    angleRef.current.push({ tb, deg: ((deg % 360) + 360) % 360 });
+  };
 
   useEffect(() => {
     void idb.list().then(setSessions).catch(() => setSessions([]));
@@ -437,6 +486,9 @@ export function useFlipper({ getPosition, serialOpen, cpr1 }: Props) {
 
   return {
     ble,
+    usb,
+    transport,
+    connected,
     sync,
     syncing,
     doSync,
@@ -466,6 +518,7 @@ export function useFlipper({ getPosition, serialOpen, cpr1 }: Props) {
     loadSession,
     deleteSession,
     clearData,
+    recordAngle,
     tick,
   };
 }

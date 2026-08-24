@@ -1,7 +1,7 @@
 import SidePanel, { type AutoState } from "./SidePanel";
 import DrivePanel, { type MoveInputs, type MoveState } from "./DrivePanel";
 import JogPad from "./JogPad";
-import FlipperLab from "./FlipperLab";
+import AxisTestPanel, { type AxisTestInputs, type AxisTestState } from "./AxisTestPanel";
 import type { MountProfile, QuickCmd } from "../lib/protocol";
 import type { SerialSettings, SerialStatus } from "../hooks/useSerial";
 import type { FlipperApi } from "../hooks/useFlipper";
@@ -41,6 +41,11 @@ interface Props {
   onStopJog: () => void;
   /* flipper */
   flip: FlipperApi;
+  axisTestInputs: AxisTestInputs;
+  onAxisTestInputs: (patch: Partial<AxisTestInputs>) => void;
+  axisTest: AxisTestState;
+  onStartAxisTest: () => void;
+  onStopAxisTest: () => void;
 }
 
 const TABS: { id: Tab; label: string; icon: (p: { className?: string }) => React.ReactNode }[] = [
@@ -142,7 +147,19 @@ export default function RightPanel(props: Props) {
           />
         )}
 
-        {tab === "test" && <FlipperLab flip={props.flip} serialOpen={open} />}
+        {tab === "test" && (
+          <AxisTestPanel
+            inputs={props.axisTestInputs}
+            onInputs={props.onAxisTestInputs}
+            state={props.axisTest}
+            mountOpen={open}
+            mountBusy={props.move.running || props.auto.running || props.jogAxis !== 0}
+            flip={props.flip}
+            movePhase={props.move.phase}
+            onStart={props.onStartAxisTest}
+            onStop={props.onStopAxisTest}
+          />
+        )}
       </div>
     </aside>
   );
