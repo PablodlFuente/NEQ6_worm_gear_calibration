@@ -1,0 +1,6 @@
+- [Inicio](Home.md)
+- [Instalación](Instalacion.md)
+- [Uso y seguridad](Uso-y-seguridad.md)
+- [Flipper Zero](Flipper-Zero.md)
+- [Análisis de datos](Analisis-de-datos.md)
+- [Registro y diagnóstico](Registro-y-diagnostico.md)

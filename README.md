@@ -1,62 +1,118 @@
-# NEQ6 Worm-Gear Calibration
+# NEQ6 - Ajuste Sinfín-Corona
 
-Herramienta web para mover un eje de una montura SkyWatcher NEQ6/EQ6, medir
-su corriente con un shunt y relacionar cada muestra con el ángulo del eje. El
-objetivo es encontrar variaciones periódicas de carga y ajustar el contacto del
-worm-gear sin perder el registro crudo.
+Aplicación web para controlar los ejes de una montura SkyWatcher NEQ6/EQ6 y
+medir la corriente del motor durante una o varias vueltas. Relaciona cada
+muestra del ADC con el feedback real `:j` de la controladora para localizar
+excentricidad, rozamiento o zonas de carga irregular del conjunto sinfín-corona.
 
-## Estado actual
+![Test de eje en ejecución](docs/images/test-en-ejecucion.png)
 
-- Control de la montura por Web Serial a 9600 8N1 mediante EQDirect.
-- Test automático de 1 a 10 vueltas en AR o DEC, con velocidad y muestreo
-  configurables, progreso en vivo y parada inmediata.
-- Logger para Flipper Zero en PA7/pin 2, calibrado con `K=1.0025189` y shunt de
-  `0.323 Ω`.
-- Dos transportes equivalentes para el logger: BLE Serial y USB dual CDC
-  (segundo puerto COM).
-- Gráficas temporal, por ángulo, polar y espectral con zoom/pan, picos FFT
-  seleccionables y ajuste elíptico final. Exportación ZIP de PNG, CSV, FFT y
-  resumen; sesiones locales en IndexedDB.
-- Verificación de recorrido exclusivamente por feedback `:j`; el test usa un
-  GOTO relativo continuo con 2° de toma de impulso, y el movimiento manual divide
-  los GOTO absolutos para evitar la ambigüedad modular de 24 bits. Firmware v3.1 con
-  medición visible de la tasa ADC efectiva.
+## Funciones principales
 
-## Puesta en marcha rápida
+- Control de AR/RA y DEC mediante EQDirect y Web Serial a 9600 8N1.
+- Movimiento manual, GOTO, jog y parada normal o inmediata.
+- Test automático de 1 a 10 vueltas en sentido CW o CCW.
+- Carrerilla de 2° en sentido contrario antes de registrar.
+- Posición y velocidad medidas exclusivamente mediante feedback `:j`.
+- Corriente instantánea e `I RMS₅₀` con el shunt calibrado de 0,323 Ω.
+- Flipper Zero por BLE o por su segundo puerto USB-COM.
+- Gráficas en vivo, Polar, Cartesiano, FFT y estadísticas.
+- Promedio por bloques, barras SEM, elipse polar, zoom y pan.
+- Exportación ZIP con CSV crudo/procesado, FFT, PNG y resumen JSON.
+- Registro local JSONL de acciones, mensajes y tráfico serie.
+
+## Requisitos
+
+- Windows, Linux o macOS con Node.js 20 o posterior.
+- Chrome o Edge de escritorio.
+- Adaptador EQDirect/UART-USB para la montura.
+- Flipper Zero con `NEQ6 Current`, o un logger ADC compatible.
+- Shunt low-side correctamente dimensionado y masa común.
+
+## Instalación
 
 ```powershell
+git clone <URL-DEL-REPOSITORIO>
+cd NEQ6_worm_gear_calibration
 npm ci
 npm run dev
 ```
 
-Abre la URL local en Chrome o Edge. Instala y ejecuta antes la aplicación
-`NEQ6 Current` del directorio `flipper_fw/neq6_current_logger`. En **Ajustes**,
-conecta la montura y el Flipper; ejecuta **Escanear montura**. Después abre
-**Test ejes**, configura la vuelta y pulsa **Iniciar test sincronizado**.
+Abre [http://127.0.0.1:3000](http://127.0.0.1:3000) en Chrome o Edge. El
+servidor escucha también en la red local; no lo expongas a Internet sin añadir
+autenticación y HTTPS.
 
-> **Seguridad eléctrica y mecánica:** PA7 admite una señal de ADC, no los 12 V
-> de la montura. El shunt debe cablearse en low-side, con masa común, protección
-> adecuada y una caída siempre dentro de 0–2,5 V. Antes de una vuelta completa,
-> libera los frenos, equilibra la carga, comprueba topes y evita que los cables
-> puedan enrollarse. Mantén accesible la parada física de alimentación.
-
-## Documentación
-
-- [Índice de documentos](docs/README.md)
-- [Arquitectura](docs/ARCHITECTURE.md)
-- [Flipper: montaje, compilación y conexiones](docs/FLIPPER_SETUP.md)
-- [Procedimiento del test](docs/TEST_PROCEDURE.md)
-- [Protocolo del logger](docs/FLIPPER_PROTOCOL.md)
-- [Diagnóstico de problemas](docs/TROUBLESHOOTING.md)
-
-## Desarrollo y comprobación
+Para comprobar la instalación:
 
 ```powershell
 npm run check
-cd flipper_fw\neq6_current_logger
-..\..\.tools\ufbt-venv\Scripts\ufbt.exe
 ```
 
-La aplicación requiere un contexto seguro (`localhost` o HTTPS) para Web
-Serial y Web Bluetooth. Los datos de medida se mantienen crudos; filtros,
-promedios y conversiones se calculan como vistas derivadas.
+## Preparar el Flipper Zero
+
+1. Compila o instala la aplicación de `flipper_fw/neq6_current_logger`.
+2. Conecta el shunt a PA7/A7 según [FLIPPER_SETUP.md](docs/FLIPPER_SETUP.md).
+3. Ejecuta **NEQ6 Current** en el Flipper.
+4. En **Ajustes → Conexión Flipper**, intenta primero BLE.
+5. Si BLE falla, elige el segundo COM del Flipper (CDC1). CDC0 es qFlipper/CLI.
+6. Pulsa `SYNC` si el estado no aparece como alineado.
+
+## Primera medición
+
+1. Libera el recorrido y comprueba cables, frenos y equilibrio.
+2. En **Ajustes**, conecta la montura a 9600 8N1.
+3. En **Montura**, ejecuta **Escanear montura**.
+4. En **Test ejes**, selecciona AR/DEC, CW/CCW, vueltas, ADC y velocidad.
+5. Empieza con 1 vuelta, 100 Hz y 0,2–0,5 °/s.
+6. Pulsa **Iniciar test sincronizado**.
+
+El eje se mueve primero 2° en el sentido opuesto. Después inicia el recorrido
+seleccionado y la adquisición comienza cuando `:j` confirma el cruce por 0°.
+La vuelta larga programa explícitamente el punto de frenado `:M`, igual que la
+implementación de referencia de INDI/EQMOD.
+
+## Resultados
+
+![Análisis polar](docs/images/analisis-polar.png)
+
+![Análisis cartesiano](docs/images/analisis-cartesiano.png)
+
+- **Polar:** corriente frente a fase angular y ajuste final de elipse.
+- **Cartesiano:** corriente frente a grados; con promedio muestra SEM en X/Y.
+- **FFT:** cinco picos automáticos y picos manuales; convierte cada periodo a
+  separación angular usando la velocidad medida.
+- **Estadísticas:** corriente, ruido, tasa efectiva, muestras por grado,
+  recorrido confirmado, velocidad real y parámetros de la elipse.
+
+## Logs y privacidad
+
+`npm run dev` crea `logs/AAAA-MM-DD.jsonl`. Se registran acciones de botones y
+selectores, mensajes, comandos y respuestas serie, con hora del navegador, hora
+del servidor, `User-Agent` e IP observada por el servidor.
+
+- En el mismo PC la IP será normalmente `127.0.0.1` o `::1`.
+- Desde otro equipo será normalmente su IP de la red local.
+- No se consulta ningún servicio externo para obtener la IP pública.
+- `logs/` está en `.gitignore`: revisa su contenido antes de compartirlo.
+
+## Seguridad
+
+PA7 no admite los 12 V de la montura. El shunt debe ir en low-side y la tensión
+del ADC debe permanecer dentro del rango permitido. Mantén accesible la parada
+física. Los comandos rojos piden confirmación; `L1` y `L2` se ejecutan sin ella
+porque son paradas inmediatas.
+
+## Documentación
+
+- [Guía detallada / Wiki](wiki/Home.md)
+- [Procedimiento de calibración](docs/TEST_PROCEDURE.md)
+- [Montaje y firmware del Flipper](docs/FLIPPER_SETUP.md)
+- [Protocolo del logger](docs/FLIPPER_PROTOCOL.md)
+- [Resolución de problemas](docs/TROUBLESHOOTING.md)
+- [Índice documental](docs/README.md)
+
+## Estado del proyecto
+
+El sistema es funcional, pero cualquier cambio de movimiento debe validarse
+primero sin carga y con recorrido corto. El Flipper es el logger actual; puede
+sustituirse por un ADC/microcontrolador USB-COM compatible.
