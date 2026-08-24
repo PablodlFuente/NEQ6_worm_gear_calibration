@@ -21,6 +21,7 @@ import {
   type MountProfile,
   type QuickCmd,
 } from "./lib/protocol";
+import { capturedAngleDeltaDeg } from "./lib/flipper";
 import TerminalLog, { type DisplayMode, type EntryKind, type LogEntry } from "./components/TerminalLog";
 import CommandBar, { type CommandBarHandle } from "./components/CommandBar";
 import RightPanel, { type Tab } from "./components/RightPanel";
@@ -1183,6 +1184,11 @@ export default function App() {
             }
             testStartedAt = performance.now();
             acquisitionPreviousPosition = steps;
+            flip.setCaptureMetadata({
+              axis,
+              direction: axisTestInputs.direction,
+              originSteps: steps,
+            });
             /* El origen de la prueba es el cruce de adquisición, no el cero
              * interno arbitrario del contador :j de la controladora. */
             flip.recordAngle(0, tb);
@@ -1254,7 +1260,8 @@ export default function App() {
       logFault("No se puede reposicionar mientras la montura está desconectada u ocupada.");
       return;
     }
-    const axis = axisTestInputs.axis;
+    const metadata = flip.captureMetadata;
+    const axis = metadata.axis ?? axisTestInputs.axis;
     const cpr = axis === 1 ? profile.cpr1 : profile.cpr2;
     if (!cpr) {
       logFault("Falta el CPR del eje: ejecuta «Escanear montura».");
@@ -1266,16 +1273,22 @@ export default function App() {
       logFault("No se pudo leer la posición actual con :j.");
       return;
     }
+    if (metadata.originSteps === null || metadata.direction === null) {
+      logFault("La captura no conserva origen/sentido; no es seguro reposicionar desde esta gráfica.");
+      return;
+    }
     const normalized = ((angle % 360) + 360) % 360;
-    const base = (normalized * cpr) / 360;
-    const nearest = base + Math.round((current - base) / cpr) * cpr;
-    const deltaDeg = ((nearest - current) * 360) / cpr;
+    const deltaDeg = capturedAngleDeltaDeg(current, cpr, metadata, normalized);
+    if (deltaDeg === null) return;
     if (Math.abs(deltaDeg) < 0.002) {
       logSys(`La montura ya está en ${normalized.toFixed(2)}°.`);
       return;
     }
     const configuredSpeed = Number(axisTestInputs.speed.replace(",", "."));
-    logSys(`Reposicionando ${axis === 1 ? "AR" : "DEC"} al punto ${normalized.toFixed(2)}° por el camino más corto.`);
+    logSys(
+      `Reposicionando ${axis === 1 ? "AR" : "DEC"} al punto relativo ${normalized.toFixed(2)}° ` +
+      `de la captura ${metadata.direction.toUpperCase()}, por el camino más corto.`,
+    );
     await runMove({
       axis,
       speed: Number.isFinite(configuredSpeed) && configuredSpeed > 0 ? configuredSpeed : 0.5,

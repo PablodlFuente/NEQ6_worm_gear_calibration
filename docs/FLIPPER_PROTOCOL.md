@@ -11,7 +11,7 @@ LF; el firmware también acepta CR.
 | `STOP` | `OK` | Detiene el timer de muestreo. |
 | `RATE <hz>` | `OK` o `ERR rate 10-1000` | Configura 10–1000 Hz. |
 | `SYNC` | `SYNC <us>` | Timestamp monotónico u32 del Flipper. |
-| `INFO` | `INFO v3.0 ...` | Tasa solicitada/real, estado y contadores. |
+| `INFO` | `INFO v3.1 ...` | Tasa solicitada/real, estado y contadores. |
 
 La web mantiene un único comando ASCII en vuelo. Las respuestas se multiplexan
 con las muestras binarias y no se interpretan bytes de payload como texto.
@@ -46,6 +46,10 @@ la cola/ring estaba llena. `n` cuenta muestras válidas incorporadas al ring.
 El CSV procesado incluye `amps_sem`, `angle_sem_deg` y `n_group`. Al volver a
 importarlo se restauran también los ángulos, por lo que las vistas Polar y
 Cartesiano se pueden reconstruir sin la montura conectada.
+
+Los CSV crudo y procesado incluyen comentarios `axis`, `direction` y
+`origin_steps`. La sesión IndexedDB y `resumen.json` conservan los mismos
+metadatos para reconstruir un ángulo relativo como posición absoluta `:j`.
 
 ## Sincronización
 

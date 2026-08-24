@@ -11,10 +11,8 @@ import { IconAlert, IconDownload, IconTrash } from "./icons";
 
 const AVGS = [1, 2, 5, 10, 20, 50, 100];
 const REV_COLORS = [
-  "rgba(76,201,240,0.5)",
-  "rgba(69,224,139,0.45)",
-  "rgba(174,191,220,0.4)",
-  "rgba(255,157,108,0.4)",
+  "#f5a524", "#4cc9f0", "#45e08b", "#ff6b9d", "#b892ff",
+  "#ff7d5c", "#68d8d6", "#e7e247", "#8fb8ff", "#f29cff",
 ];
 
 type View = "vivo" | "polar" | "cartesiano" | "fft" | "stats";
@@ -33,20 +31,23 @@ const VIEWS: { id: View; label: string }[] = [
 function ChartCanvas({
   draw,
   className,
-  zoomMode,
   transform,
   onTransform,
   onPick,
+  regionZoom,
+  onRegionZoomDone,
 }: {
   draw: (ctx: CanvasRenderingContext2D, w: number, h: number) => void;
   className: string;
-  zoomMode: boolean;
   transform: ChartTransform;
   onTransform: (next: ChartTransform) => void;
   onPick?: (x: number, y: number, clientX: number, clientY: number) => void;
+  regionZoom: boolean;
+  onRegionZoomDone: () => void;
 }) {
   const ref = useRef<HTMLCanvasElement>(null);
-  const drag = useRef<{ x: number; y: number; tx: number; ty: number; moved: boolean } | null>(null);
+  const drag = useRef<{ x: number; y: number; tx: number; ty: number; moved: boolean; mode: "pan" | "region" | "pick" } | null>(null);
+  const [selection, setSelection] = useState<{ x0: number; y0: number; x1: number; y1: number } | null>(null);
   useEffect(() => {
     const cv = ref.current;
     if (!cv || !cv.parentElement) return;
@@ -72,20 +73,43 @@ function ChartCanvas({
     return () => ro.disconnect();
   });
   const pointerDown = (event: React.PointerEvent<HTMLCanvasElement>) => {
+    if (event.button !== 0 && event.button !== 2) return;
+    const mode = event.button === 2 ? "pan" : regionZoom ? "region" : "pick";
+    if (mode === "pan") event.preventDefault();
     event.currentTarget.setPointerCapture(event.pointerId);
-    drag.current = { x: event.clientX, y: event.clientY, tx: transform.x, ty: transform.y, moved: false };
+    drag.current = { x: event.clientX, y: event.clientY, tx: transform.x, ty: transform.y, moved: false, mode };
+    if (mode === "region") {
+      const rect = event.currentTarget.getBoundingClientRect();
+      setSelection({ x0: event.clientX - rect.left, y0: event.clientY - rect.top, x1: event.clientX - rect.left, y1: event.clientY - rect.top });
+    }
   };
   const pointerMove = (event: React.PointerEvent<HTMLCanvasElement>) => {
     if (!drag.current) return;
     const dx = event.clientX - drag.current.x;
     const dy = event.clientY - drag.current.y;
     if (Math.hypot(dx, dy) > 3) drag.current.moved = true;
-    if (zoomMode) onTransform({ ...transform, x: drag.current.tx + dx, y: drag.current.ty + dy });
+    if (drag.current.mode === "pan") onTransform({ ...transform, x: drag.current.tx + dx, y: drag.current.ty + dy });
+    if (drag.current.mode === "region") {
+      const rect = event.currentTarget.getBoundingClientRect();
+      setSelection((current) => current ? { ...current, x1: event.clientX - rect.left, y1: event.clientY - rect.top } : current);
+    }
   };
   const pointerUp = (event: React.PointerEvent<HTMLCanvasElement>) => {
     const state = drag.current;
-    drag.current = null;
-    if (!state?.moved && onPick) {
+    if (state?.mode === "region" && selection) {
+      const width = Math.abs(selection.x1 - selection.x0);
+      const height = Math.abs(selection.y1 - selection.y0);
+      const rect = event.currentTarget.getBoundingClientRect();
+      if (width > 8 && height > 8) {
+        const cx = (selection.x0 + selection.x1) / 2;
+        const cy = (selection.y0 + selection.y1) / 2;
+        const nextScale = Math.min(8, transform.scale * Math.min(rect.width / width, rect.height / height));
+        const ratio = nextScale / transform.scale;
+        onTransform({ scale: nextScale, x: rect.width / 2 - (cx - transform.x) * ratio, y: rect.height / 2 - (cy - transform.y) * ratio });
+      }
+      setSelection(null);
+      onRegionZoomDone();
+    } else if (state?.mode === "pick" && !state.moved && onPick) {
       const rect = event.currentTarget.getBoundingClientRect();
       onPick(
         (event.clientX - rect.left) / rect.width,
@@ -94,14 +118,14 @@ function ChartCanvas({
         event.clientY,
       );
     }
+    drag.current = null;
   };
   const wheel = (event: React.WheelEvent<HTMLCanvasElement>) => {
-    if (!zoomMode) return;
     event.preventDefault();
     const parentRect = event.currentTarget.parentElement!.getBoundingClientRect();
     const px = event.clientX - parentRect.left;
     const py = event.clientY - parentRect.top;
-    const scale = Math.min(4, Math.max(1, transform.scale * (event.deltaY < 0 ? 1.18 : 1 / 1.18)));
+    const scale = Math.min(8, Math.max(1, transform.scale * (event.deltaY < 0 ? 1.18 : 1 / 1.18)));
     onTransform({
       scale,
       x: px - ((px - transform.x) * scale) / transform.scale,
@@ -112,14 +136,21 @@ function ChartCanvas({
     <div className={`relative w-full overflow-hidden rounded border border-line bg-[#081120] ${className}`}>
       <canvas
         ref={ref}
-        className={`block touch-none ${zoomMode ? "cursor-grab active:cursor-grabbing" : onPick ? "cursor-crosshair" : ""}`}
+        className={`block touch-none ${regionZoom ? "cursor-crosshair" : onPick ? "cursor-crosshair" : "cursor-default"}`}
         style={{ transformOrigin: "0 0", transform: `translate(${transform.x}px, ${transform.y}px) scale(${transform.scale})` }}
         onPointerDown={pointerDown}
         onPointerMove={pointerMove}
         onPointerUp={pointerUp}
         onPointerCancel={() => (drag.current = null)}
         onWheel={wheel}
+        onContextMenu={(event) => event.preventDefault()}
       />
+      {selection && (
+        <div
+          className="pointer-events-none absolute border border-ion bg-ion/10"
+          style={{ left: Math.min(selection.x0, selection.x1), top: Math.min(selection.y0, selection.y1), width: Math.abs(selection.x1 - selection.x0), height: Math.abs(selection.y1 - selection.y0) }}
+        />
+      )}
     </div>
   );
 }
@@ -145,7 +176,7 @@ export default function FlipperLab({
   onMoveToAngle: (angle: number) => void;
 }) {
   const [view, setView] = useState<View>("vivo");
-  const [zoomMode, setZoomMode] = useState(false);
+  const [regionZoom, setRegionZoom] = useState(false);
   const [transforms, setTransforms] = useState<Record<View, ChartTransform>>({
     vivo: RESET_TRANSFORM,
     polar: RESET_TRANSFORM,
@@ -239,6 +270,18 @@ export default function FlipperLab({
     let maxI = 0.05;
     for (let i = 0; i < data.length; i++) maxI = Math.max(maxI, data.amps[i]);
     maxI *= 1.15;
+    const shadeSector = (angle: number, color: string) => {
+      const a0 = ((angle - 5 - 90) * Math.PI) / 180;
+      const a1 = ((angle + 5 - 90) * Math.PI) / 180;
+      ctx.fillStyle = color;
+      ctx.beginPath();
+      ctx.moveTo(cx, cy);
+      ctx.arc(cx, cy, R, a0, a1);
+      ctx.closePath();
+      ctx.fill();
+    };
+    if (derived?.minSector) shadeSector(derived.minSector.angle, "rgba(76,201,240,0.09)");
+    if (derived?.maxSector) shadeSector(derived.maxSector.angle, "rgba(245,165,36,0.12)");
     ctx.strokeStyle = "rgba(29,48,80,0.9)";
     ctx.fillStyle = "#42567a";
     ctx.font = "8.5px IBM Plex Mono, monospace";
@@ -280,10 +323,14 @@ export default function FlipperLab({
     if (flip.overlayRevs) {
       const lastRev = data.revs[data.length - 1] ?? 0;
       for (let rev = 0; rev <= Math.min(lastRev, 11); rev++) {
-        plot(REV_COLORS[rev % REV_COLORS.length], 1, rev);
+        plot(REV_COLORS[rev % REV_COLORS.length], 1.7, rev);
       }
-    }
-    plot("rgba(245,165,36,0.95)", 1.6);
+      ctx.textAlign = "right";
+      for (let rev = 0; rev <= Math.min(lastRev, 9); rev++) {
+        ctx.fillStyle = REV_COLORS[rev % REV_COLORS.length];
+        ctx.fillText(`rev ${rev + 1}`, w - 8, 11 + rev * 11);
+      }
+    } else plot("rgba(245,165,36,0.95)", 1.6);
     const fit = derived?.ellipse;
     if (fit && !flip.capturing) {
       const scale = R / maxI;
@@ -307,10 +354,12 @@ export default function FlipperLab({
       ctx.fillStyle = "#4cc9f0";
       ctx.textAlign = "left";
       ctx.fillText(
-        `elipse a=${fit.semiMajor.toFixed(3)} A · b=${fit.semiMinor.toFixed(3)} A · φ=${fit.angleDeg.toFixed(1)}°`,
+        `elipse a=${fit.semiMajor.toFixed(3)} A · b=${fit.semiMinor.toFixed(3)} A · a/b=${(fit.semiMajor / fit.semiMinor).toFixed(3)} · φ=${fit.angleDeg.toFixed(1)}°`,
         6,
         23,
       );
+      const centerAngle = ((Math.atan2(fit.centerX, -fit.centerY) * 180) / Math.PI + 360) % 360;
+      ctx.fillText(`centro x=${fit.centerX.toFixed(3)} · y=${fit.centerY.toFixed(3)} A · r=${Math.hypot(fit.centerX, fit.centerY).toFixed(3)} A @ ${centerAngle.toFixed(1)}°`, 6, 35);
     }
     ctx.fillStyle = "#f5a524";
     ctx.textAlign = "left";
@@ -344,6 +393,14 @@ export default function FlipperLab({
     maxI += span * 0.12;
     const X = (a: number) => L + (a / 360) * (w - L - Rg);
     const Y = (v: number) => h - Bm - ((v - minI) / (maxI - minI || 1)) * (h - T - Bm);
+    if (derived?.minSector) {
+      ctx.fillStyle = "rgba(76,201,240,0.09)";
+      ctx.fillRect(X(derived.minSector.angle - 5), T, X(derived.minSector.angle + 5) - X(derived.minSector.angle - 5), h - T - Bm);
+    }
+    if (derived?.maxSector) {
+      ctx.fillStyle = "rgba(245,165,36,0.12)";
+      ctx.fillRect(X(derived.maxSector.angle - 5), T, X(derived.maxSector.angle + 5) - X(derived.maxSector.angle - 5), h - T - Bm);
+    }
     ctx.font = "8.5px IBM Plex Mono, monospace";
     ctx.strokeStyle = "rgba(29,48,80,0.9)";
     ctx.fillStyle = "#42567a";
@@ -386,21 +443,32 @@ export default function FlipperLab({
         ctx.stroke();
       }
     }
-    ctx.strokeStyle = "rgba(245,165,36,0.95)";
-    ctx.lineWidth = 1.8;
-    ctx.beginPath();
-    let started = false;
-    let previousPhase: number | null = null;
-    for (let i = 0; i < data.length; i++) {
-      const phase = ((data.angles[i] % 360) + 360) % 360;
-      const x = X(phase);
-      const y = Y(data.amps[i]);
-      if (!started || (previousPhase !== null && Math.abs(phase - previousPhase) > 180)) ctx.moveTo(x, y);
-      else ctx.lineTo(x, y);
-      started = true;
-      previousPhase = phase;
-    }
-    ctx.stroke();
+    const plotRevision = (color: string, rev?: number) => {
+      ctx.strokeStyle = color;
+      ctx.lineWidth = 1.8;
+      ctx.beginPath();
+      let started = false;
+      let previousPhase: number | null = null;
+      for (let i = 0; i < data.length; i++) {
+        if (rev !== undefined && data.revs[i] !== rev) {
+          started = false;
+          previousPhase = null;
+          continue;
+        }
+        const phase = ((data.angles[i] % 360) + 360) % 360;
+        const x = X(phase);
+        const y = Y(data.amps[i]);
+        if (!started || (previousPhase !== null && Math.abs(phase - previousPhase) > 180)) ctx.moveTo(x, y);
+        else ctx.lineTo(x, y);
+        started = true;
+        previousPhase = phase;
+      }
+      ctx.stroke();
+    };
+    if (flip.overlayRevs) {
+      const lastRev = data.revs[data.length - 1] ?? 0;
+      for (let rev = 0; rev <= Math.min(lastRev, 11); rev++) plotRevision(REV_COLORS[rev % REV_COLORS.length], rev);
+    } else plotRevision("rgba(245,165,36,0.95)");
   };
 
   /* ── dibujo: FFT ─────────────────────────────────────── */
@@ -506,7 +574,9 @@ export default function FlipperLab({
       renderPng(drawCart),
       renderPng(drawFft),
     ]);
-    let peaksCsv = "source,frequency_hz,period_s,period_mount_deg,magnitude\n";
+    const metaAxis = flip.captureMetadata.axis === 1 ? "AR" : flip.captureMetadata.axis === 2 ? "DEC" : "unknown";
+    const metaDirection = flip.captureMetadata.direction?.toUpperCase() ?? "unknown";
+    let peaksCsv = `# axis=${metaAxis}\n# direction=${metaDirection}\nsource,frequency_hz,period_s,period_mount_deg,magnitude\n`;
     for (const [source, peak] of [
       ...derived.peaks.map((peak, index) => [`automatic_A${index + 1}`, peak] as const),
       ...selectedPeaks.map((peak, index) => [`manual_M${index + 1}`, peak] as const),
@@ -526,9 +596,10 @@ export default function FlipperLab({
 
   const chartFor = useMemo(() => {
     const interaction = {
-      zoomMode,
       transform: transforms[view],
       onTransform: setTransform,
+      regionZoom,
+      onRegionZoomDone: () => setRegionZoom(false),
     };
     switch (view) {
       case "polar":
@@ -541,7 +612,7 @@ export default function FlipperLab({
         return <ChartCanvas draw={drawLive} className="h-[46dvh] min-h-[300px]" {...interaction} />;
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [view, derived, n, flip.tick, flip.overlayRevs, flip.capturing, zoomMode, transforms, selectedPeaks]);
+  }, [view, derived, n, flip.tick, flip.overlayRevs, flip.capturing, regionZoom, transforms, selectedPeaks]);
 
   const selCls =
     "rounded border border-line bg-[#0c1930] px-1.5 py-1 font-mono text-[10.5px] text-fog focus:border-ion/60 focus:outline-none disabled:opacity-40";
@@ -609,12 +680,12 @@ export default function FlipperLab({
           {view !== "stats" && (
             <>
               <button
-                onClick={() => setZoomMode((active) => !active)}
+                onClick={() => setRegionZoom((active) => !active)}
                 className={`rounded border px-2 py-1 font-display text-[9px] font-bold tracking-wider ${
-                  zoomMode ? "border-ion/60 bg-ion/15 text-ion" : "border-line text-dim hover:text-fog"
+                  regionZoom ? "border-ion/60 bg-ion/15 text-ion" : "border-line text-dim hover:text-fog"
                 }`}
               >
-                ZOOM / PAN
+                ⌕ LUPA REGIÓN
               </button>
               <button onClick={resetView} className="rounded border border-line px-2 py-1 font-display text-[9px] font-bold tracking-wider text-dim hover:border-ember/50 hover:text-ember">
                 RESTAURAR
@@ -635,9 +706,9 @@ export default function FlipperLab({
           <span className="text-dim">I </span>
           <span className="tabular-nums text-ember">{stats.lastA.toFixed(3)} A</span>
         </span>
-        <span className="rounded border border-line bg-[#0c1930] px-1.5 py-px" title="Valor eficaz de las últimas 50 muestras">
-          <span className="text-dim">I RMS₅₀ </span>
-          <span className="tabular-nums text-ion">{stats.rms50.toFixed(3)} A</span>
+        <span className="rounded border border-line bg-[#0c1930] px-1.5 py-px" title="Valor eficaz móvil de los últimos 0,5 segundos">
+          <span className="text-dim">I RMS₀․₅s </span>
+          <span className="tabular-nums text-ion">{stats.rmsHalfSecond.toFixed(3)} A</span>
         </span>
         <span className="rounded border border-line bg-[#0c1930] px-1.5 py-px">
           <span className="text-dim">revs </span>
@@ -664,9 +735,7 @@ export default function FlipperLab({
         {view !== "stats" ? (
           <div className="flex min-h-[300px] flex-col gap-2">
             {chartFor}
-            {zoomMode && (
-              <p className="font-mono text-[9.5px] text-ion">Modo zoom: rueda para ampliar/reducir · arrastra para desplazar · Restaurar vuelve al encuadre completo.</p>
-            )}
+            <p className="font-mono text-[9.5px] text-dim">Rueda: zoom · botón derecho: desplazar · Lupa región: encuadrar un rectángulo · Restaurar: vista completa.</p>
             {(view === "polar" || view === "cartesiano") && derived?.plot && (
               <p className="font-mono text-[9.5px] text-dim">
                 ×1 representa cada muestra con ángulo · ×N representa la media de bloques consecutivos de N
@@ -771,7 +840,9 @@ export default function FlipperLab({
             <StatCell k="mediana" v={`${derived.st.median.toFixed(5)} A`} />
             <StatCell k="desv. típica σ" v={`${derived.st.sd.toFixed(5)} A`} />
             <StatCell k="σ de la media (σ/√N)" v={`${derived.st.sem.toExponential(2)} A`} tone="text-mint" />
-            <StatCell k="pico máximo" v={`${derived.st.maxA.toFixed(3)} A`} tone="text-ember" />
+            <StatCell k="pico máximo / posición" v={`${derived.st.maxA.toFixed(3)} A · ${derived.st.maxAngleDeg !== null ? `${derived.st.maxAngleDeg.toFixed(2)}°` : "sin ángulo"}`} tone="text-ember" />
+            {derived.maxSector && <StatCell k="sector 10° de mayor media" v={`${(derived.maxSector.angle - 5).toFixed(0)}–${(derived.maxSector.angle + 5).toFixed(0)}° · ${derived.maxSector.mean.toFixed(4)} A`} tone="text-ember" />}
+            {derived.minSector && <StatCell k="sector 10° de menor media" v={`${(derived.minSector.angle - 5).toFixed(0)}–${(derived.minSector.angle + 5).toFixed(0)}° · ${derived.minSector.mean.toFixed(4)} A`} tone="text-ion" />}
             {derived.st.circ && (
               <>
                 <StatCell k="ángulo medio (circ.)" v={`${derived.st.circ.meanDeg.toFixed(2)}°`} tone="text-ion" />
@@ -795,8 +866,10 @@ export default function FlipperLab({
             {!flip.capturing && derived.ellipse && (
               <>
                 <StatCell k="elipse · semiejes a / b" v={`${derived.ellipse.semiMajor.toFixed(4)} / ${derived.ellipse.semiMinor.toFixed(4)} A`} tone="text-ion" />
+                <StatCell k="elipse · cociente a/b" v={(derived.ellipse.semiMajor / derived.ellipse.semiMinor).toFixed(4)} tone="text-ion" />
                 <StatCell k="elipse · inclinación φ" v={`${derived.ellipse.angleDeg.toFixed(2)}°`} tone="text-ion" />
                 <StatCell k="elipse · centro x / y" v={`${derived.ellipse.centerX.toFixed(4)} / ${derived.ellipse.centerY.toFixed(4)} A`} tone="text-ion" />
+                <StatCell k="elipse · centro polar r / θ" v={`${Math.hypot(derived.ellipse.centerX, derived.ellipse.centerY).toFixed(4)} A / ${(((Math.atan2(derived.ellipse.centerX, -derived.ellipse.centerY) * 180) / Math.PI + 360) % 360).toFixed(2)}°`} tone="text-ion" />
                 <StatCell k="elipse · excentricidad / RMS" v={`${derived.ellipse.eccentricity.toFixed(4)} / ${derived.ellipse.rms.toFixed(4)}`} tone="text-ion" />
               </>
             )}
@@ -849,7 +922,7 @@ export default function FlipperLab({
                     <p className="truncate font-mono text-[10.5px] text-fog">{s.name}</p>
                     <p className="font-mono text-[9px] text-dim">
                       {new Date(s.createdAt).toLocaleString("es-ES")} ·{" "}
-                      {s.adc.length.toLocaleString("es-ES")} mues. · {s.rateHz} Hz
+                      {s.adc.length.toLocaleString("es-ES")} mues. · {s.rateHz} Hz · {s.metadata?.axis === 1 ? "AR" : s.metadata?.axis === 2 ? "DEC" : "eje ?"} · {s.metadata?.direction?.toUpperCase() ?? "sentido ?"}
                     </p>
                   </div>
                   <button

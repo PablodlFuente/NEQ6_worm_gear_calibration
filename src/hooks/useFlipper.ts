@@ -5,6 +5,7 @@ import {
   adcToAmps,
   chooseSampleClockOffset,
   averageAngleSeries,
+  binCartesian,
   angleAt,
   buildProcCsv,
   buildRawCsv,
@@ -20,8 +21,10 @@ import {
   topPeaks,
   unwrapDegrees,
   type AnglePoint,
+  type CaptureMetadata,
   type Sample,
   type Session,
+  EMPTY_CAPTURE_METADATA,
 } from "../lib/flipper";
 import { buildZip, downloadBlob } from "../lib/zip";
 
@@ -57,6 +60,8 @@ export function useFlipper({ cpr1 }: Props) {
     total: number;
   } | null>(null);
   const [sessions, setSessions] = useState<Session[]>([]);
+  const [captureMetadata, setCaptureMetadataState] = useState<CaptureMetadata>({ ...EMPTY_CAPTURE_METADATA });
+  const captureMetadataRef = useRef<CaptureMetadata>({ ...EMPTY_CAPTURE_METADATA });
 
   const pendingLineRef = useRef<((line: string) => void) | null>(null);
   const commandQueueRef = useRef<Promise<unknown>>(Promise.resolve());
@@ -293,6 +298,11 @@ export function useFlipper({ cpr1 }: Props) {
     angleRef.current.push({ tb, deg: ((deg % 360) + 360) % 360 });
   };
 
+  const setCaptureMetadata = (metadata: CaptureMetadata) => {
+    captureMetadataRef.current = { ...metadata };
+    setCaptureMetadataState({ ...metadata });
+  };
+
   useEffect(() => {
     void idb.list().then(setSessions).catch(() => setSessions([]));
   }, []);
@@ -356,6 +366,23 @@ export function useFlipper({ cpr1 }: Props) {
       ? Math.abs(unwrapped[unwrapped.length - 1].deg - unwrapped[0].deg)
       : 0;
     const ellipse = plot && angleSpanDeg >= 330 ? fitPolarEllipse(plot.angles, plot.amps) : null;
+    const sectorAngles: number[] = [];
+    const sectorCurrents: number[] = [];
+    if (perUnw) {
+      for (let i = 0; i < n; i++) {
+        if (!Number.isFinite(perUnw[i])) continue;
+        sectorAngles.push(perUnw[i]);
+        sectorCurrents.push(amps[i]);
+      }
+    }
+    const sectors = sectorAngles.length ? binCartesian(sectorAngles, sectorCurrents, 36) : [];
+    const populatedSectors = sectors.filter((sector) => Number.isFinite(sector.mean));
+    const maxSector = populatedSectors.length
+      ? populatedSectors.reduce((best, sector) => sector.mean > best.mean ? sector : best)
+      : null;
+    const minSector = populatedSectors.length
+      ? populatedSectors.reduce((best, sector) => sector.mean < best.mean ? sector : best)
+      : null;
 
     const D = (tsRef.current[n - 1] - tsRef.current[0]) / 1e6;
     let mag: Float64Array | null = null;
@@ -382,6 +409,7 @@ export function useFlipper({ cpr1 }: Props) {
       samplesPerDeg: null as number | null,
       angleSpanDeg,
       maxA: 0,
+      maxAngleDeg: null as number | null,
     };
     if (unwrapped.length >= 2 && perUnw) {
       const angleSpan = angleSpanDeg;
@@ -399,7 +427,13 @@ export function useFlipper({ cpr1 }: Props) {
       if (segmentSpeeds.length) st.feedbackSpeedDegS = median(segmentSpeeds);
     }
     let mx = 0;
-    for (let i = 0; i < n; i++) if (amps[i] > mx) mx = amps[i];
+    for (let i = 0; i < n; i++) {
+      if (amps[i] <= mx) continue;
+      mx = amps[i];
+      st.maxAngleDeg = perUnw && Number.isFinite(perUnw[i])
+        ? ((perUnw[i] % 360) + 360) % 360
+        : null;
+    }
     st.maxA = mx;
 
     return {
@@ -411,6 +445,9 @@ export function useFlipper({ cpr1 }: Props) {
       avgA,
       plot,
       ellipse,
+      sectors,
+      maxSector,
+      minSector,
       mag,
       peaks,
       df: D > 0 ? 1 / D : 0,
@@ -435,7 +472,7 @@ export function useFlipper({ cpr1 }: Props) {
 
   const stamp = () => new Date().toISOString().slice(0, 19).replace(/[:T]/g, "-");
 
-  const rawCsvText = () => buildRawCsv(makeSamples(), rate);
+  const rawCsvText = () => buildRawCsv(makeSamples(), rate, captureMetadataRef.current);
 
   const processedCsvText = () => {
     if (!derived?.plot) return null;
@@ -458,7 +495,7 @@ export function useFlipper({ cpr1 }: Props) {
         ? `feedback_speed=${derived.st.feedbackSpeedDegS.toFixed(6)} deg/s · samples_per_deg=${(derived.st.samplesPerDeg ?? 0).toFixed(3)}`
         : "feedback_speed=unavailable",
     ];
-    return buildProcCsv(rows, rate, statsTxt);
+    return buildProcCsv(rows, rate, statsTxt, captureMetadataRef.current);
   };
 
   const exportRaw = () => {
@@ -493,7 +530,9 @@ export function useFlipper({ cpr1 }: Props) {
     if (processed) files.push({ name: "datos/angulo-corriente-procesado.csv", data: processed });
     if (derived.mag) {
       const speed = derived.st.feedbackSpeedDegS;
-      let fftCsv = "bin,frequency_hz,period_s,period_mount_deg,magnitude\n";
+      const axis = captureMetadataRef.current.axis === 1 ? "AR" : captureMetadataRef.current.axis === 2 ? "DEC" : "unknown";
+      const direction = captureMetadataRef.current.direction?.toUpperCase() ?? "unknown";
+      let fftCsv = `# axis=${axis}\n# direction=${direction}\nbin,frequency_hz,period_s,period_mount_deg,magnitude\n`;
       for (let i = 1; i < derived.mag.length; i++) {
         const frequency = i * derived.df;
         const period = 1 / frequency;
@@ -503,7 +542,7 @@ export function useFlipper({ cpr1 }: Props) {
     }
     files.push({
       name: "datos/resumen.json",
-      data: JSON.stringify({ exportedAt: new Date().toISOString(), requestedRateHz: rate, statistics: derived.st, ellipse: derived.ellipse, deviceInfo }, null, 2),
+      data: JSON.stringify({ exportedAt: new Date().toISOString(), requestedRateHz: rate, metadata: captureMetadataRef.current, statistics: derived.st, sectors10deg: derived.sectors, ellipse: derived.ellipse, deviceInfo }, null, 2),
     });
     files.push(...extraFiles);
     downloadBlob(`neq6-test-${stamp()}.zip`, buildZip(files));
@@ -521,6 +560,7 @@ export function useFlipper({ cpr1 }: Props) {
     tsRef.current = parsed.samples.map((s) => s.ts);
     adcRef.current = parsed.samples.map((s) => s.adc);
     angleRef.current = parsed.angles;
+    setCaptureMetadata(parsed.metadata);
     setVersion((v) => v + 1);
     setNotice(
       `Importadas ${parsed.samples.length.toLocaleString("es-ES")} muestras (${parsed.processed ? "CSV procesado" : "CSV crudo"})` +
@@ -543,6 +583,7 @@ export function useFlipper({ cpr1 }: Props) {
       adc: [...adcRef.current],
       angleTb: angleRef.current.map((a) => a.tb),
       angleDeg: angleRef.current.map((a) => a.deg),
+      metadata: { ...captureMetadataRef.current },
     };
     await idb.save(s);
     setSessions(await idb.list());
@@ -554,6 +595,7 @@ export function useFlipper({ cpr1 }: Props) {
     tsRef.current = [...s.ts];
     adcRef.current = [...s.adc];
     angleRef.current = s.angleTb.map((tb, i) => ({ tb, deg: s.angleDeg[i] }));
+    setCaptureMetadata(s.metadata ?? { ...EMPTY_CAPTURE_METADATA });
     setRate(s.rateHz);
     setVersion((v) => v + 1);
     setNotice(`Sesión «${s.name}» cargada.`);
@@ -570,21 +612,24 @@ export function useFlipper({ cpr1 }: Props) {
     adcRef.current = [];
     angleRef.current = [];
     sampleClockOffsetRef.current = null;
+    setCaptureMetadata({ ...EMPTY_CAPTURE_METADATA });
     setVersion((v) => v + 1);
     setNotice(null);
   };
 
   const n = adcRef.current.length;
   const lastA = n ? adcToAmps(adcRef.current[n - 1]) : 0;
-  let rms50 = 0;
+  let rmsHalfSecond = 0;
   if (n) {
-    const start = Math.max(0, n - 50);
+    const cutoffUs = tsRef.current[n - 1] - 500_000;
+    let start = n - 1;
+    while (start > 0 && tsRef.current[start - 1] >= cutoffUs) start--;
     let sumSquares = 0;
     for (let i = start; i < n; i++) {
       const amps = adcToAmps(adcRef.current[i]);
       sumSquares += amps * amps;
     }
-    rms50 = Math.sqrt(sumSquares / (n - start));
+    rmsHalfSecond = Math.sqrt(sumSquares / (n - start));
   }
 
   return {
@@ -602,7 +647,7 @@ export function useFlipper({ cpr1 }: Props) {
     stopCapture,
     angleOn,
     setAngleOn,
-    stats: { n, lastA, rms50, revs: derived?.nRevs ?? 0 },
+    stats: { n, lastA, rmsHalfSecond, revs: derived?.nRevs ?? 0 },
     buffers: { tbRef, tsRef, adcRef, angleRef },
     derived,
     avgFactor,
@@ -623,6 +668,8 @@ export function useFlipper({ cpr1 }: Props) {
     deleteSession,
     clearData,
     recordAngle,
+    captureMetadata,
+    setCaptureMetadata,
     tick,
   };
 }

@@ -17,7 +17,10 @@ const TERMS = [
   ["FFT", "Transformada rápida de Fourier: separa las repeticiones periódicas de la corriente."],
   ["Hz", "Ciclos por segundo. En la FFT, 1 Hz significa una repetición cada segundo."],
   ["SEM", "Error estándar de la media (σ/√N); barras X/Y cuando se promedian bloques."],
-  ["RMS", "Root Mean Square o valor eficaz. I RMS₅₀ se calcula sobre las últimas 50 muestras."],
+  ["RMS", "Root Mean Square o valor eficaz. I RMS₀․₅s usa una ventana temporal móvil de medio segundo."],
+  ["σ", "Desviación típica: dispersión de las medidas respecto a su media."],
+  ["R̄ circular", "Concentración angular entre 0 y 1; cerca de 1 significa ángulos muy agrupados."],
+  ["OOR / OVF", "Muestras fuera de rango / desbordamientos del búfer del firmware."],
   ["RTT / jitter", "Tiempo de ida y vuelta / variación temporal usados al sincronizar navegador y Flipper."],
   ["CSV", "Archivo tabular exportable; el crudo conserva las muestras y el procesado conserva medias y errores."],
   ["IDLE / REC", "Adquisición parada / adquisición activa."],
@@ -98,13 +101,43 @@ export default function HelpModal({ open, onClose }: Props) {
             <HelpBlock title="Cómo leer la FFT">
               La frecuencia indica repeticiones por segundo y el periodo su separación temporal. «Cada °» convierte
               ese periodo a recorrido de la montura mediante la velocidad medida por <Code>:j</Code>: por ejemplo,
-              2 s a 0,4 °/s equivalen a una repetición cada 0,8°. Sin feedback angular no se muestra esa conversión.
+              2 s a 0,4 °/s equivalen a una repetición cada 0,8°. Un pico aislado no identifica por sí mismo una pieza:
+              puede ser una periodicidad mecánica, conmutación del motor, resonancia, ruido eléctrico o un armónico.
+              Picos cercanos a 2f, 3f… suelen ser armónicos de una misma repetición; bandas laterales pueden indicar modulación.
             </HelpBlock>
             <HelpBlock title="Zoom, picos, elipse y exportación">
-              Activa Zoom/Pan, usa la rueda y arrastra; Restaurar recupera el encuadre. FFT conserva cinco picos
+              La rueda hace zoom siempre; desplaza con el botón derecho. «Lupa región» encuadra un rectángulo y
+              Restaurar recupera la vista completa. FFT conserva cinco picos
               automáticos y permite añadir/quitar otros manuales. Pulsa un punto Polar/Cartesiano para reposicionar.
-              I RMS₅₀ es el valor eficaz móvil de las últimas 50 muestras. Al terminar, Polar muestra la elipse y sus ejes.
+              I RMS₀․₅s es el valor eficaz móvil de medio segundo. Al terminar, Polar muestra la elipse y sus ejes.
               «Exportar todo» crea un ZIP con PNG, CSV crudo/procesado, espectro FFT, picos y resumen JSON.
+            </HelpBlock>
+            <HelpBlock title="Estadísticas · adquisición">
+              <b className="text-fog">N crudo/promediado</b> cuenta muestras originales y puntos tras ×N. <b className="text-fog">Tiempo</b>
+              usa timestamps del Flipper; <b className="text-fog">tasa efectiva</b> es (N−1)/tiempo. <b className="text-fog">velocidad :j</b>
+              es la mediana de los desplazamientos/tiempo. <b className="text-fog">muestras/grado</b> sólo cuenta ADC situado entre
+              anclas válidas. <b className="text-fog">recorrido :j</b> es el arco realmente confirmado y <b className="text-fog">factor</b> es ×N.
+            </HelpBlock>
+            <HelpBlock title="Estadísticas · corriente y ángulo">
+              <b className="text-fog">Media</b> es el promedio; <b className="text-fog">mediana</b>, el valor central; <b className="text-fog">σ</b>,
+              la dispersión; y <b className="text-fog">SEM</b>, la incertidumbre estadística de la media. <b className="text-fog">Pico máximo</b>
+              da corriente y posición. Las 36 secciones de 10° muestran dónde la corriente media es mayor y menor; naranja = máxima,
+              azul = mínima. El ángulo medio circular, R̄ y σ circular describen la distribución angular, no el esfuerzo.
+            </HelpBlock>
+            <HelpBlock title="Estadísticas · resolución y Flipper">
+              <b className="text-fog">δθ=360/CPR</b> es la resolución teórica de una cuenta del controlador, no la precisión mecánica.
+              <b className="text-fog">OOR</b> cuenta lecturas fuera del rango admitido y <b className="text-fog">OVF</b> muestras perdidas
+              por desbordamiento. La versión identifica el firmware que produjo esos contadores.
+            </HelpBlock>
+            <HelpBlock title="Estadísticas · elipse">
+              <b className="text-fog">a y b</b> son semiejes mayor y menor; <b className="text-fog">a/b</b> mide elongación (1 = circular).
+              <b className="text-fog">φ</b> es la inclinación del eje mayor. El centro se da como x/y y también como radio/ángulo polar.
+              La excentricidad resume la forma y el RMS indica el residuo del ajuste: menor RMS significa mejor ajuste.
+            </HelpBlock>
+            <HelpBlock title="Revoluciones y metadatos">
+              «Superponer revs» representa cada vuelta completa con un color distinto para comparar repetibilidad.
+              Eje, sentido CW/CCW y origen <Code>:j</Code> se guardan en sesión, CSV y resumen exportado; son necesarios
+              para que «mover a esta posición» traduzca el ángulo relativo al destino absoluto correcto.
             </HelpBlock>
           </div>
 

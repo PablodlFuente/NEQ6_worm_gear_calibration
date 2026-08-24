@@ -9,6 +9,7 @@ import {
   angleAt,
   buildProcCsv,
   buildRawCsv,
+  capturedAngleDeltaDeg,
   fitPolarEllipse,
   parseCsv,
   unwrapDegrees,
@@ -80,6 +81,22 @@ test("CSV crudo conserva timestamp, ADC y tiempo sincronizado", () => {
   assert.deepEqual(parsed?.samples, samples);
   assert.deepEqual(parsed?.angles, []);
   assert.equal(parsed?.processed, false);
+});
+
+test("CSV conserva eje, sentido y origen absoluto de la captura", () => {
+  const csv = buildRawCsv(
+    [{ ts: 100, adc: 321, tb: 1_700_000_000_000 }],
+    500,
+    { axis: 2, direction: "ccw", originSteps: 123456 },
+  );
+  const parsed = parseCsv(csv)!;
+  assert.deepEqual(parsed.metadata, { axis: 2, direction: "ccw", originSteps: 123456 });
+});
+
+test("reposiciona un ángulo relativo respetando origen y sentido", () => {
+  const cpr = 360_000;
+  assert.equal(capturedAngleDeltaDeg(110_000, cpr, { axis: 1, direction: "cw", originSteps: 100_000 }, 20), 10);
+  assert.equal(capturedAngleDeltaDeg(90_000, cpr, { axis: 1, direction: "ccw", originSteps: 100_000 }, 20), -10);
 });
 
 test("promedio por bloques conserva x1 y calcula SEM en ambos ejes", () => {

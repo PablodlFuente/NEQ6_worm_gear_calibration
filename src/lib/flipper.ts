@@ -23,6 +23,32 @@ export interface AnglePoint {
   deg: number; /* 0–360 */
 }
 
+export interface CaptureMetadata {
+  axis: 1 | 2 | null;
+  direction: "cw" | "ccw" | null;
+  originSteps: number | null;
+}
+
+export const EMPTY_CAPTURE_METADATA: CaptureMetadata = {
+  axis: null,
+  direction: null,
+  originSteps: null,
+};
+
+export function capturedAngleDeltaDeg(
+  currentSteps: number,
+  cpr: number,
+  metadata: CaptureMetadata,
+  angleDeg: number,
+): number | null {
+  if (!cpr || metadata.originSteps === null || metadata.direction === null) return null;
+  const normalized = ((angleDeg % 360) + 360) % 360;
+  const sign = metadata.direction === "cw" ? 1 : -1;
+  const base = metadata.originSteps + sign * (normalized * cpr) / 360;
+  const nearest = base + Math.round((currentSteps - base) / cpr) * cpr;
+  return ((nearest - currentSteps) * 360) / cpr;
+}
+
 export interface Session {
   id: string;
   name: string;
@@ -33,6 +59,7 @@ export interface Session {
   adc: number[];
   angleTb: number[];
   angleDeg: number[];
+  metadata?: CaptureMetadata;
 }
 
 export const FLIPPER_COMMANDS = [
@@ -250,12 +277,9 @@ export function angleAt(unw: AnglePoint[], tb: number): number | null {
   return a.deg + f * (b.deg - a.deg);
 }
 
-/**
- * Corrige únicamente una separación completa entre los dos relojes. Esto
- * puede ocurrir si el contador u32 del Flipper cruza su vuelta de 71,6 min
- * entre SYNC y una captura posterior. Si ya existe solape no se toca nada:
- * se conserva la sincronización medida y, por tanto, la fase real.
- */
+/** Elige una vez el offset temporal de la captura. Conserva SYNC si coincide
+ * con la recepción y cae al ancla del primer lote si pertenece a otra vuelta
+ * del contador u32 del Flipper (71,6 min). */
 export function chooseSampleClockOffset(
   syncOffsetMs: number | null,
   sampleTsUs: number,
@@ -476,8 +500,15 @@ export function binCartesian(angles: number[], currents: number[], bins = 72): A
 }
 
 /* ── CSV (crudo y procesado) ──────────────────────────── */
-export function buildRawCsv(samples: Sample[], rate: number): string {
-  const head = `# neq6-logger raw · rate=${rate}Hz · I(A)=adc*${AMP_PER_RAW.toFixed(9)}\nts_us,adc_raw,tb_ms\n`;
+function metadataHeader(metadata?: CaptureMetadata): string {
+  const axis = metadata?.axis === 1 ? "AR" : metadata?.axis === 2 ? "DEC" : "unknown";
+  const direction = metadata?.direction?.toUpperCase() ?? "unknown";
+  const origin = metadata?.originSteps ?? "unknown";
+  return `# axis=${axis}\n# direction=${direction}\n# origin_steps=${origin}\n`;
+}
+
+export function buildRawCsv(samples: Sample[], rate: number, metadata?: CaptureMetadata): string {
+  const head = `# neq6-logger raw · rate=${rate}Hz · I(A)=adc*${AMP_PER_RAW.toFixed(9)}\n${metadataHeader(metadata)}ts_us,adc_raw,tb_ms\n`;
   const rows = samples.map((s) => `${s.ts},${s.adc},${s.tb}`);
   return head + rows.join("\n") + "\n";
 }
@@ -496,9 +527,11 @@ export function buildProcCsv(
   }[],
   rate: number,
   statsTxt: string[],
+  metadata?: CaptureMetadata,
 ): string {
   const head =
     `# neq6-logger procesado · rate=${rate}Hz\n` +
+    metadataHeader(metadata) +
     statsTxt.map((s) => `# ${s}\n`).join("") +
     "ts_us,adc_raw,amps,amps_sem,angle_unwrapped_deg,angle_sem_deg,rev,tb_ms,n_group\n";
   const body = rows.map(
@@ -508,7 +541,16 @@ export function buildProcCsv(
   return head + body.join("\n") + "\n";
 }
 
-export function parseCsv(text: string): { samples: Sample[]; angles: AnglePoint[]; processed: boolean } | null {
+export function parseCsv(text: string): { samples: Sample[]; angles: AnglePoint[]; processed: boolean; metadata: CaptureMetadata } | null {
+  const metadata: CaptureMetadata = { ...EMPTY_CAPTURE_METADATA };
+  for (const line of text.split(/\r?\n/)) {
+    const axis = line.match(/^#\s*axis=(AR|DEC)/i)?.[1]?.toUpperCase();
+    const direction = line.match(/^#\s*direction=(CW|CCW)/i)?.[1]?.toLowerCase();
+    const origin = line.match(/^#\s*origin_steps=(-?\d+)/i)?.[1];
+    if (axis) metadata.axis = axis === "AR" ? 1 : 2;
+    if (direction) metadata.direction = direction as "cw" | "ccw";
+    if (origin) metadata.originSteps = Number(origin);
+  }
   const lines = text.split(/\r?\n/).filter((l) => l.length && !l.startsWith("#"));
   if (!lines.length) return null;
   const head = lines[0].toLowerCase().split(",");
@@ -539,7 +581,7 @@ export function parseCsv(text: string): { samples: Sample[]; angles: AnglePoint[
       }
     }
   }
-  return samples.length ? { samples, angles, processed } : null;
+  return samples.length ? { samples, angles, processed, metadata } : null;
 }
 
 /* ── IndexedDB (sesiones) ─────────────────────────────── */
