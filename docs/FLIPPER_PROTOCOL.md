@@ -43,6 +43,10 @@ I [A] = adc_raw × 2.5 × 1.0025189 / 4096 / 0.323
 conversión oficial HAL calibrada. `ovf` cuenta ticks o muestras perdidos porque
 la cola/ring estaba llena. `n` cuenta muestras válidas incorporadas al ring.
 
+El CSV procesado incluye `amps_sem`, `angle_sem_deg` y `n_group`. Al volver a
+importarlo se restauran también los ángulos, por lo que las vistas Polar y
+Cartesiano se pueden reconstruir sin la montura conectada.
+
 ## Sincronización
 
 Para cada `SYNC`, la web registra el instante de envío y recepción. Estima la
@@ -53,4 +57,3 @@ hora de adquisición queda:
 ```text
 browser_ms = flipper_us / 1000 - offset_ms
 ```
-

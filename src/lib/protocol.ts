@@ -1,7 +1,10 @@
 /* Protocolo MC de SkyWatcher (NEQ6) — comandos, decodificación y datos */
 
 export const POS_OFFSET = 0x800000;
-export const MAX_INC = 0x7fffff; /* máx. pasos por tramo de 24 bits */
+/** Umbral para desenvolver diferencias entre posiciones firmadas de 24 bits. */
+export const MAX_POSITION_DELTA = 0x7fffff;
+/** Máximo recorrido modular que cabe en un objetivo GOTO de 24 bits. */
+export const MAX_GOTO_STEPS = 0xffffff;
 
 /* ── serialización little-endian (byte bajo primero) ────── */
 

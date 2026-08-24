@@ -251,6 +251,99 @@ export function topPeaks(
   return peaks.slice(0, k);
 }
 
+/* ── promedio secuencial corriente/ángulo ─────────────── */
+export interface AveragedSeries {
+  length: number;
+  factor: number;
+  ts: Float64Array;
+  tb: Float64Array;
+  adc: Float64Array;
+  amps: Float64Array;
+  ampsErr: Float64Array; /* error estándar de la media */
+  angles: Float64Array; /* grados desenvueltos */
+  angleErr: Float64Array; /* error estándar de la media */
+  revs: Int32Array;
+  counts: Uint16Array;
+}
+
+/** Agrupa en orden temporal bloques completos de N muestras que tienen ángulo.
+ * Con N=1 se conserva cada dato. Para N>1 se devuelve media y SEM en corriente
+ * y ángulo; el último bloque incompleto se deja fuera hasta completarse. */
+export function averageAngleSeries(
+  ts: ArrayLike<number>,
+  tb: ArrayLike<number>,
+  adc: ArrayLike<number>,
+  amps: ArrayLike<number>,
+  angles: ArrayLike<number>,
+  factor: number,
+): AveragedSeries | null {
+  const m = Math.max(1, Math.floor(factor));
+  let valid = 0;
+  const size = Math.min(ts.length, tb.length, adc.length, amps.length, angles.length);
+  for (let i = 0; i < size; i++) if (Number.isFinite(angles[i])) valid++;
+  const groups = Math.floor(valid / m);
+  if (!groups) return null;
+
+  const out: AveragedSeries = {
+    length: groups,
+    factor: m,
+    ts: new Float64Array(groups),
+    tb: new Float64Array(groups),
+    adc: new Float64Array(groups),
+    amps: new Float64Array(groups),
+    ampsErr: new Float64Array(groups),
+    angles: new Float64Array(groups),
+    angleErr: new Float64Array(groups),
+    revs: new Int32Array(groups),
+    counts: new Uint16Array(groups),
+  };
+
+  let group = 0;
+  let count = 0;
+  let sumTs = 0;
+  let sumTb = 0;
+  let sumAdc = 0;
+  let sumA = 0;
+  let sumA2 = 0;
+  let sumAngle = 0;
+  let sumAngle2 = 0;
+  for (let i = 0; i < size && group < groups; i++) {
+    const angle = angles[i];
+    if (!Number.isFinite(angle)) continue;
+    const current = amps[i];
+    sumTs += ts[i];
+    sumTb += tb[i];
+    sumAdc += adc[i];
+    sumA += current;
+    sumA2 += current * current;
+    sumAngle += angle;
+    sumAngle2 += angle * angle;
+    count++;
+    if (count !== m) continue;
+
+    const varianceA = m > 1 ? Math.max(0, (sumA2 - (sumA * sumA) / m) / (m - 1)) : 0;
+    const varianceAngle =
+      m > 1 ? Math.max(0, (sumAngle2 - (sumAngle * sumAngle) / m) / (m - 1)) : 0;
+    out.ts[group] = sumTs / m;
+    out.tb[group] = sumTb / m;
+    out.adc[group] = sumAdc / m;
+    out.amps[group] = sumA / m;
+    out.ampsErr[group] = Math.sqrt(varianceA / m);
+    out.angles[group] = sumAngle / m;
+    out.angleErr[group] = Math.sqrt(varianceAngle / m);
+    out.counts[group] = m;
+    group++;
+    count = 0;
+    sumTs = sumTb = sumAdc = sumA = sumA2 = sumAngle = sumAngle2 = 0;
+  }
+
+  const firstAngle = out.angles[0];
+  for (let i = 0; i < out.length; i++) {
+    out.revs[i] = Math.floor((Math.abs(out.angles[i] - firstAngle) + 1e-4) / 360);
+  }
+  return out;
+}
+
 /* ── binning por ángulo (0–360°) ──────────────────────── */
 export interface AngleBin {
   angle: number;
@@ -302,33 +395,43 @@ export function buildRawCsv(samples: Sample[], rate: number): string {
 }
 
 export function buildProcCsv(
-  rows: (Sample & { amps: number; unw: number | null; rev: number | null })[],
+  rows: {
+    ts: number;
+    tb: number;
+    adc: number;
+    amps: number;
+    ampsErr: number;
+    unw: number;
+    angleErr: number;
+    rev: number;
+    n: number;
+  }[],
   rate: number,
   statsTxt: string[],
 ): string {
   const head =
     `# neq6-logger procesado · rate=${rate}Hz\n` +
     statsTxt.map((s) => `# ${s}\n`).join("") +
-    "ts_us,adc_raw,amps,angle_unwrapped_deg,rev,tb_ms\n";
+    "ts_us,adc_raw,amps,amps_sem,angle_unwrapped_deg,angle_sem_deg,rev,tb_ms,n_group\n";
   const body = rows.map(
     (r) =>
-      `${r.ts},${r.adc},${r.amps.toFixed(6)},${r.unw === null ? "" : r.unw.toFixed(4)},${
-        r.rev === null ? "" : r.rev
-      },${r.tb}`,
+      `${r.ts.toFixed(3)},${r.adc.toFixed(3)},${r.amps.toFixed(6)},${r.ampsErr.toFixed(6)},${r.unw.toFixed(6)},${r.angleErr.toFixed(6)},${r.rev},${r.tb.toFixed(3)},${r.n}`,
   );
   return head + body.join("\n") + "\n";
 }
 
-export function parseCsv(text: string): { samples: Sample[]; processed: boolean } | null {
+export function parseCsv(text: string): { samples: Sample[]; angles: AnglePoint[]; processed: boolean } | null {
   const lines = text.split(/\r?\n/).filter((l) => l.length && !l.startsWith("#"));
   if (!lines.length) return null;
   const head = lines[0].toLowerCase().split(",");
   const iTs = head.indexOf("ts_us");
   const iAdc = head.indexOf("adc_raw");
   const iTb = head.indexOf("tb_ms");
+  const iAngle = head.indexOf("angle_unwrapped_deg");
   if (iTs < 0 || iAdc < 0) return null;
   const processed = head.includes("amps");
   const samples: Sample[] = [];
+  const angles: AnglePoint[] = [];
   for (let i = 1; i < lines.length; i++) {
     const c = lines[i].split(",");
     const ts = Number(c[iTs]);
@@ -339,9 +442,16 @@ export function parseCsv(text: string): { samples: Sample[]; processed: boolean 
       const amps = Number(c[head.indexOf("amps")]);
       if (isFinite(amps)) adc = Math.round(amps / AMP_PER_RAW);
     }
-    samples.push({ ts, adc: Math.round(adc), tb: iTb >= 0 ? Number(c[iTb]) || 0 : 0 });
+    const tb = iTb >= 0 ? Number(c[iTb]) || 0 : 0;
+    samples.push({ ts, adc: Math.round(adc), tb });
+    if (iAngle >= 0) {
+      const angle = Number(c[iAngle]);
+      if (Number.isFinite(angle) && Number.isFinite(tb)) {
+        angles.push({ tb, deg: ((angle % 360) + 360) % 360 });
+      }
+    }
   }
-  return samples.length ? { samples, processed } : null;
+  return samples.length ? { samples, angles, processed } : null;
 }
 
 /* ── IndexedDB (sesiones) ─────────────────────────────── */

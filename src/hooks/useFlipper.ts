@@ -3,9 +3,8 @@ import { useBle } from "./useBle";
 import { useFlipperSerial } from "./useFlipperSerial";
 import {
   adcToAmps,
+  averageAngleSeries,
   angleAt,
-  binCartesian,
-  binPolar,
   buildProcCsv,
   buildRawCsv,
   circularStats,
@@ -66,6 +65,9 @@ export function useFlipper({ cpr1 }: Props) {
       ts.push(s.ts);
       adc.push(s.adc);
     }
+    /* STOP puede confirmarse antes de que el ring termine de vaciarse. Las
+     * últimas tramas siguen siendo válidas y deben provocar un render final. */
+    if (!capturingRef.current) setVersion((value) => value + 1);
     if (tb.length > MAX_SAMPLES) {
       void stopCapture(false);
       setNotice(
@@ -278,22 +280,27 @@ export function useFlipper({ cpr1 }: Props) {
       }
       if (has) {
         revOf = new Int32Array(n);
-        let prevK = Math.floor(perUnw[0] / 360);
-        const k0 = prevK;
+        let firstValid = 0;
+        while (firstValid < n && !Number.isFinite(perUnw[firstValid])) firstValid++;
+        const origin = perUnw[firstValid];
+        let prevK = 0;
+        let maxTravel = 0;
         for (let i = 0; i < n; i++) {
           const u = perUnw[i];
-          const k = isNaN(u) ? prevK : Math.floor(u / 360);
+          const travel = Number.isFinite(u) ? Math.abs(u - origin) : 0;
+          if (travel > maxTravel) maxTravel = travel;
+          const k = Number.isFinite(u) ? Math.floor((travel + 1e-4) / 360) : prevK;
           if (k !== prevK) {
             revTimes.push(tbRef.current[i]);
             prevK = k;
           }
-          revOf[i] = k - k0;
+          revOf[i] = k;
         }
-        nRevs = Math.max(0, prevK - k0);
+        nRevs = Math.max(0, Math.floor((maxTravel + 0.05) / 360));
       }
     }
 
-    const m = Math.max(1, Math.min(avgFactor, n));
+    const m = Math.max(1, avgFactor);
     const avgA: number[] = [];
     for (let i = 0; i + m <= n; i += m) {
       let s = 0;
@@ -301,17 +308,9 @@ export function useFlipper({ cpr1 }: Props) {
       avgA.push(s / m);
     }
 
-    const angles: number[] = [];
-    const currents: number[] = [];
-    if (perUnw && revOf) {
-      for (let i = 0; i < n; i++)
-        if (!isNaN(perUnw[i])) {
-          angles.push(perUnw[i]);
-          currents.push(amps[i]);
-        }
-    }
-    const polarAvg = angles.length ? binPolar(angles, currents) : null;
-    const cart = angles.length ? binCartesian(angles, currents) : null;
+    const plot = perUnw
+      ? averageAngleSeries(tsRef.current, tbRef.current, adcRef.current, amps, perUnw, m)
+      : null;
 
     const D = (tsRef.current[n - 1] - tsRef.current[0]) / 1e6;
     let mag: Float64Array | null = null;
@@ -332,7 +331,7 @@ export function useFlipper({ cpr1 }: Props) {
       sem: avgA.length > 1 ? std(avgA) / Math.sqrt(avgA.length) : 0,
       durS: D,
       rateEst: D > 0 ? (n - 1) / D : 0,
-      circ: angles.length ? circularStats(angles) : null,
+      circ: plot ? circularStats(Array.from(plot.angles)) : null,
       dThetaEnc: cpr1 ? 360 / cpr1 : null,
       maxA: 0,
     };
@@ -347,38 +346,15 @@ export function useFlipper({ cpr1 }: Props) {
       revTimes,
       nRevs,
       avgA,
-      polarAvg,
-      cart,
+      plot,
       mag,
       peaks,
       df: D > 0 ? 1 / D : 0,
       st,
-      hasAngle: angles.length > 0,
+      hasAngle: Boolean(plot?.length),
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [version, avgFactor, cpr1, tick]);
-
-  const revPolars = useMemo(() => {
-    if (!derived?.revOf || !overlayRevs) return null;
-    const groups = new Map<number, { a: number[]; c: number[] }>();
-    const { revOf, perUnw, amps } = derived;
-    for (let i = 0; i < revOf.length; i++) {
-      const u = perUnw![i];
-      if (isNaN(u)) continue;
-      const k = revOf[i];
-      if (k < 0) continue;
-      let g = groups.get(k);
-      if (!g) {
-        g = { a: [], c: [] };
-        groups.set(k, g);
-      }
-      g.a.push(u);
-      g.c.push(amps[i]);
-    }
-    return [...groups.entries()]
-      .sort((x, y) => x[0] - y[0])
-      .map(([k, g]) => ({ k, bins: binPolar(g.a, g.c) }));
-  }, [derived, overlayRevs]);
 
   /* ── export / import / sesiones ──────────────────────── */
   const makeSamples = (): Sample[] =>
@@ -408,11 +384,20 @@ export function useFlipper({ cpr1 }: Props) {
       setNotice("No hay datos procesados que exportar.");
       return;
     }
-    const rows = makeSamples().map((s, i) => ({
-      ...s,
-      amps: adcToAmps(s.adc),
-      unw: derived.perUnw && !isNaN(derived.perUnw[i]) ? derived.perUnw[i] : null,
-      rev: derived.revOf ? derived.revOf[i] : null,
+    if (!derived.plot) {
+      setNotice("No hay muestras con ángulo para el CSV procesado.");
+      return;
+    }
+    const rows = Array.from({ length: derived.plot.length }, (_, i) => ({
+      ts: derived.plot!.ts[i],
+      tb: derived.plot!.tb[i],
+      adc: derived.plot!.adc[i],
+      amps: derived.plot!.amps[i],
+      ampsErr: derived.plot!.ampsErr[i],
+      unw: derived.plot!.angles[i],
+      angleErr: derived.plot!.angleErr[i],
+      rev: derived.plot!.revs[i],
+      n: derived.plot!.counts[i],
     }));
     const statsTxt = [
       `media=${derived.st.mean.toFixed(6)} A · mediana=${derived.st.median.toFixed(6)} A · σ=${derived.st.sd.toFixed(6)} A`,
@@ -431,9 +416,12 @@ export function useFlipper({ cpr1 }: Props) {
     tbRef.current = parsed.samples.map((s) => s.tb);
     tsRef.current = parsed.samples.map((s) => s.ts);
     adcRef.current = parsed.samples.map((s) => s.adc);
-    angleRef.current = [];
+    angleRef.current = parsed.angles;
     setVersion((v) => v + 1);
-    setNotice(`Importadas ${parsed.samples.length.toLocaleString("es-ES")} muestras (${parsed.processed ? "CSV procesado" : "CSV crudo"}).`);
+    setNotice(
+      `Importadas ${parsed.samples.length.toLocaleString("es-ES")} muestras (${parsed.processed ? "CSV procesado" : "CSV crudo"})` +
+        (parsed.angles.length ? ` · ${parsed.angles.length.toLocaleString("es-ES")} ángulos.` : "."),
+    );
   };
 
   const saveSession = async () => {
@@ -502,7 +490,6 @@ export function useFlipper({ cpr1 }: Props) {
     stats: { n, lastA, revs: derived?.nRevs ?? 0 },
     buffers: { tbRef, tsRef, adcRef, angleRef },
     derived,
-    revPolars,
     avgFactor,
     setAvgFactor,
     overlayRevs,

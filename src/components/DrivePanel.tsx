@@ -1,4 +1,4 @@
-import { MAX_INC, type MountProfile } from "../lib/protocol";
+import { MAX_GOTO_STEPS, type MountProfile } from "../lib/protocol";
 import { IconAlert, IconPlay, IconStop } from "./icons";
 
 export interface MoveInputs {
@@ -75,7 +75,7 @@ export default function DrivePanel({
     real = (timer * 360) / (t1 * cpr);
     if (degOk) {
       steps = Math.max(1, Math.round(Math.abs(deg) * (cpr / 360)));
-      chunks = Math.max(1, Math.ceil(steps / MAX_INC));
+      chunks = Math.max(1, Math.ceil(steps / MAX_GOTO_STEPS));
       secs = Math.abs(deg) / real;
     }
   }

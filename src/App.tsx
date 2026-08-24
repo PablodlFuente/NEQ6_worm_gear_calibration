@@ -8,7 +8,8 @@ import {
   DIAG_SEQUENCE,
   hexLE,
   le24,
-  MAX_INC,
+  MAX_GOTO_STEPS,
+  MAX_POSITION_DELTA,
   POS_OFFSET,
   posField,
   statusFromChars,
@@ -641,7 +642,7 @@ export default function App() {
     const real = (timer * 360) / (t1 * cpr);
     const stepsPerDeg = cpr / 360;
     const totalSteps = Math.max(1, Math.round(Math.abs(deg) * stepsPerDeg));
-    const chunks = Math.max(1, Math.ceil(totalSteps / MAX_INC));
+    const chunks = Math.max(1, Math.ceil(totalSteps / MAX_GOTO_STEPS));
     const axes: (1 | 2)[] = axis === 3 ? [1, 2] : [axis as 1 | 2];
 
     moveCancelRef.current = false;
@@ -674,7 +675,7 @@ export default function App() {
 
       /* 1) leer posición actual de cada eje */
       setMove((m) => ({ ...m, chunk: ci + 1, phase: "leyendo posición (:j)" }));
-      const chunkSteps = Math.min(MAX_INC, totalSteps - ci * MAX_INC);
+      const chunkSteps = Math.min(MAX_GOTO_STEPS, totalSteps - ci * MAX_GOTO_STEPS);
       const target: Record<number, number> = {};
       for (const ax of axes) {
         if (!(await sendRaw(`:j${ax}`, false))) {
@@ -950,8 +951,8 @@ export default function App() {
           flip.recordAngle((steps * 360) / cpr, tb);
           if (previousPosition !== null) {
             let delta = steps - previousPosition;
-            if (delta > MAX_INC) delta -= 0x1000000;
-            else if (delta < -MAX_INC) delta += 0x1000000;
+            if (delta > MAX_POSITION_DELTA) delta -= 0x1000000;
+            else if (delta < -MAX_POSITION_DELTA) delta += 0x1000000;
             travelledSteps += delta;
           }
           previousPosition = steps;

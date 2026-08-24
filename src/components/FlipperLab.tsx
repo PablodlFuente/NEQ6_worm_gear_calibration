@@ -6,7 +6,6 @@ import {
   MAX_CURRENT_A,
   SHUNT_R_OHM,
   ADC_CAL_K,
-  type AngleBin,
 } from "../lib/flipper";
 import { IconAlert, IconDownload, IconTrash } from "./icons";
 
@@ -79,7 +78,7 @@ export default function FlipperLab({ flip, serialOpen }: { flip: FlipperApi; ser
   const [view, setView] = useState<View>("vivo");
   const fileRef = useRef<HTMLInputElement>(null);
 
-  const { derived, revPolars, stats } = flip;
+  const { derived, stats } = flip;
   const n = stats.n;
   void flip.tick;
 
@@ -145,14 +144,16 @@ export default function FlipperLab({ flip, serialOpen }: { flip: FlipperApi; ser
     const cx = w / 2;
     const cy = h / 2;
     const R = Math.min(w, h) / 2 - 22;
-    const data = derived?.polarAvg;
+    const data = derived?.plot;
     if (!data) {
       ctx.fillStyle = "#42567a";
       ctx.textAlign = "center";
       ctx.fillText("necesita ángulo de la montura durante la captura", w / 2, h / 2);
       return;
     }
-    const maxI = Math.max(0.05, ...data.map((d) => (isFinite(d.mean) ? d.mean : 0))) * 1.15;
+    let maxI = 0.05;
+    for (let i = 0; i < data.length; i++) maxI = Math.max(maxI, data.amps[i]);
+    maxI *= 1.15;
     ctx.strokeStyle = "rgba(29,48,80,0.9)";
     ctx.fillStyle = "#42567a";
     ctx.font = "8.5px IBM Plex Mono, monospace";
@@ -171,16 +172,19 @@ export default function FlipperLab({ flip, serialOpen }: { flip: FlipperApi; ser
       ctx.stroke();
       ctx.fillText(`${a}°`, cx + Math.sin(r) * (R + 12), cy - Math.cos(r) * (R + 12) + 3);
     }
-    const plot = (bins: AngleBin[], color: string, width: number) => {
+    const plot = (color: string, width: number, rev?: number) => {
       ctx.strokeStyle = color;
       ctx.lineWidth = width;
       ctx.beginPath();
       let started = false;
-      const pts = bins.filter((b) => isFinite(b.mean));
-      for (const b of [...pts, pts[0]]) {
-        if (!b) continue;
-        const r = (b.mean / maxI) * R;
-        const a = (b.angle * Math.PI) / 180;
+      for (let i = 0; i < data.length; i++) {
+        if (rev !== undefined && data.revs[i] !== rev) {
+          started = false;
+          continue;
+        }
+        const r = (data.amps[i] / maxI) * R;
+        const phase = ((data.angles[i] % 360) + 360) % 360;
+        const a = (phase * Math.PI) / 180;
         const x = cx + Math.sin(a) * r;
         const y = cy - Math.cos(a) * r;
         started ? ctx.lineTo(x, y) : ctx.moveTo(x, y);
@@ -188,11 +192,16 @@ export default function FlipperLab({ flip, serialOpen }: { flip: FlipperApi; ser
       }
       ctx.stroke();
     };
-    if (revPolars) revPolars.slice(0, 12).forEach((rp, i) => plot(rp.bins, REV_COLORS[i % REV_COLORS.length], 1));
-    plot(data, "rgba(245,165,36,0.95)", 2);
+    if (flip.overlayRevs) {
+      const lastRev = data.revs[data.length - 1] ?? 0;
+      for (let rev = 0; rev <= Math.min(lastRev, 11); rev++) {
+        plot(REV_COLORS[rev % REV_COLORS.length], 1, rev);
+      }
+    }
+    plot("rgba(245,165,36,0.95)", 1.6);
     ctx.fillStyle = "#f5a524";
     ctx.textAlign = "left";
-    ctx.fillText(`max ${maxI.toFixed(3)} A · promedio en ámbar`, 6, 11);
+    ctx.fillText(`max ${maxI.toFixed(3)} A · ${data.length.toLocaleString("es-ES")} puntos`, 6, 11);
   };
 
   /* ── dibujo: cartesiano con barras de error ──────────── */
@@ -202,7 +211,7 @@ export default function FlipperLab({ flip, serialOpen }: { flip: FlipperApi; ser
     const Bm = 20;
     const T = 10;
     const Rg = 10;
-    const data = derived?.cart;
+    const data = derived?.plot;
     if (!data) {
       ctx.fillStyle = "#42567a";
       ctx.font = "9px IBM Plex Mono, monospace";
@@ -210,14 +219,23 @@ export default function FlipperLab({ flip, serialOpen }: { flip: FlipperApi; ser
       ctx.fillText("necesita ángulo de la montura durante la captura", w / 2, h / 2);
       return;
     }
-    const maxI = Math.max(0.05, ...data.map((d) => (isFinite(d.mean) ? d.mean + d.err : 0))) * 1.1;
+    let minI = Infinity;
+    let maxI = -Infinity;
+    for (let i = 0; i < data.length; i++) {
+      minI = Math.min(minI, data.amps[i] - data.ampsErr[i]);
+      maxI = Math.max(maxI, data.amps[i] + data.ampsErr[i]);
+    }
+    if (!Number.isFinite(minI) || !Number.isFinite(maxI)) return;
+    const span = Math.max(0.01, maxI - minI);
+    minI = Math.max(0, minI - span * 0.12);
+    maxI += span * 0.12;
     const X = (a: number) => L + (a / 360) * (w - L - Rg);
-    const Y = (v: number) => h - Bm - (v / maxI) * (h - T - Bm);
+    const Y = (v: number) => h - Bm - ((v - minI) / (maxI - minI || 1)) * (h - T - Bm);
     ctx.font = "8.5px IBM Plex Mono, monospace";
     ctx.strokeStyle = "rgba(29,48,80,0.9)";
     ctx.fillStyle = "#42567a";
     for (let g = 0; g <= 4; g++) {
-      const v = (maxI * g) / 4;
+      const v = minI + ((maxI - minI) * g) / 4;
       const y = Y(v);
       ctx.beginPath();
       ctx.moveTo(L, y);
@@ -228,32 +246,46 @@ export default function FlipperLab({ flip, serialOpen }: { flip: FlipperApi; ser
     }
     ctx.textAlign = "center";
     for (let a = 0; a <= 360; a += 60) ctx.fillText(`${a}°`, X(a), h - 7);
-    ctx.strokeStyle = "rgba(76,201,240,0.85)";
-    ctx.lineWidth = 1;
-    for (const d of data) {
-      if (!isFinite(d.mean)) continue;
-      const x = X(d.angle);
-      const y0 = Y(d.mean - d.err);
-      const y1 = Y(d.mean + d.err);
-      ctx.beginPath();
-      ctx.moveTo(x, y0);
-      ctx.lineTo(x, y1);
-      ctx.moveTo(x - 2.5, y0);
-      ctx.lineTo(x + 2.5, y0);
-      ctx.moveTo(x - 2.5, y1);
-      ctx.lineTo(x + 2.5, y1);
-      ctx.stroke();
+    if (data.factor > 1) {
+      ctx.strokeStyle = "rgba(76,201,240,0.85)";
+      ctx.lineWidth = 1;
+      for (let i = 0; i < data.length; i++) {
+        const phase = ((data.angles[i] % 360) + 360) % 360;
+        const x = X(phase);
+        const y = Y(data.amps[i]);
+        const y0 = Y(data.amps[i] - data.ampsErr[i]);
+        const y1 = Y(data.amps[i] + data.ampsErr[i]);
+        const x0 = X(Math.max(0, phase - data.angleErr[i]));
+        const x1 = X(Math.min(360, phase + data.angleErr[i]));
+        ctx.beginPath();
+        ctx.moveTo(x, y0);
+        ctx.lineTo(x, y1);
+        ctx.moveTo(x - 2.5, y0);
+        ctx.lineTo(x + 2.5, y0);
+        ctx.moveTo(x - 2.5, y1);
+        ctx.lineTo(x + 2.5, y1);
+        ctx.moveTo(x0, y);
+        ctx.lineTo(x1, y);
+        ctx.moveTo(x0, y - 2.5);
+        ctx.lineTo(x0, y + 2.5);
+        ctx.moveTo(x1, y - 2.5);
+        ctx.lineTo(x1, y + 2.5);
+        ctx.stroke();
+      }
     }
     ctx.strokeStyle = "rgba(245,165,36,0.95)";
     ctx.lineWidth = 1.8;
     ctx.beginPath();
     let started = false;
-    for (const d of data) {
-      if (!isFinite(d.mean)) continue;
-      const x = X(d.angle);
-      const y = Y(d.mean);
-      started ? ctx.lineTo(x, y) : ctx.moveTo(x, y);
+    let previousPhase: number | null = null;
+    for (let i = 0; i < data.length; i++) {
+      const phase = ((data.angles[i] % 360) + 360) % 360;
+      const x = X(phase);
+      const y = Y(data.amps[i]);
+      if (!started || (previousPhase !== null && Math.abs(phase - previousPhase) > 180)) ctx.moveTo(x, y);
+      else ctx.lineTo(x, y);
       started = true;
+      previousPhase = phase;
     }
     ctx.stroke();
   };
@@ -310,7 +342,7 @@ export default function FlipperLab({ flip, serialOpen }: { flip: FlipperApi; ser
         return <ChartCanvas draw={drawLive} className="h-[46dvh] min-h-[300px]" />;
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [view, derived, revPolars, n, flip.tick]);
+  }, [view, derived, n, flip.tick, flip.overlayRevs]);
 
   const selCls =
     "rounded border border-line bg-[#0c1930] px-1.5 py-1 font-mono text-[10.5px] text-fog focus:border-ion/60 focus:outline-none disabled:opacity-40";
@@ -357,7 +389,7 @@ export default function FlipperLab({ flip, serialOpen }: { flip: FlipperApi; ser
         ))}
         <div className="ml-auto flex items-center gap-2">
           <label className="hidden items-center gap-1.5 font-mono text-[10px] text-dim sm:flex">
-            promedio ×
+            bloque ×
             <select value={flip.avgFactor} onChange={(e) => flip.setAvgFactor(Number(e.target.value))} className={selCls}>
               {AVGS.map((a) => (
                 <option key={a} value={a}>
@@ -414,6 +446,12 @@ export default function FlipperLab({ flip, serialOpen }: { flip: FlipperApi; ser
         {view !== "stats" ? (
           <div className="flex h-full min-h-[300px] flex-col gap-2">
             {chartFor}
+            {(view === "polar" || view === "cartesiano") && derived?.plot && (
+              <p className="font-mono text-[9.5px] text-dim">
+                ×1 representa cada muestra con ángulo · ×N representa la media de bloques consecutivos de N
+                {view === "cartesiano" && flip.avgFactor > 1 ? " · barras X/Y = error estándar (SEM)" : ""}
+              </p>
+            )}
             {view === "fft" && derived && derived.peaks.length > 0 && (
               <div className="overflow-hidden rounded border border-line">
                 <table className="w-full font-mono text-[10px]">

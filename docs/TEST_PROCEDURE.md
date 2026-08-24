@@ -35,6 +35,12 @@ velocidad, progreso, inicio y parada. Al pulsar inicio se borra la vista actual,
 se inicia el ADC y después el movimiento. La gráfica de la izquierda crece
 durante la adquisición.
 
+Las vistas Polar y Cartesiano se actualizan durante la captura. `bloque ×1`
+representa todas las muestras que ya tienen ángulo; `bloque ×50`, por ejemplo,
+genera un punto por cada 50 muestras consecutivas. En Cartesiano aparecen barras
+de error estándar tanto horizontales (ángulo) como verticales (corriente). El
+CSV procesado exporta esas mismas medias, errores y el tamaño de cada bloque.
+
 Pulsa **Parada de emergencia** ante ruido anormal, atasco, aumento brusco de
 corriente o riesgo de cable. El motor recibe `:L` y el logger recibe `STOP`; el
 registro parcial se conserva para diagnóstico.
@@ -50,4 +56,3 @@ registro parcial se conserva para diagnóstico.
   compara sesiones crudas. No ajustes basándote solo en datos promediados.
 
 Exporta siempre el CSV crudo antes de una intervención mecánica importante.
-
