@@ -12,7 +12,7 @@ import {
   parseCsv,
   unwrapDegrees,
 } from "../src/lib/flipper.ts";
-import { calculateMotionTiming, MAX_GOTO_STEPS, MAX_POSITION_DELTA, MAX_SAFE_ABSOLUTE_GOTO_DELTA, MIN_T1_TICKS } from "../src/lib/protocol.ts";
+import { calculateMotionTiming, lowSpeedGotoMarginSteps, MAX_GOTO_STEPS, MAX_POSITION_DELTA, MAX_SAFE_ABSOLUTE_GOTO_DELTA, MIN_T1_TICKS } from "../src/lib/protocol.ts";
 import { buildZip } from "../src/lib/zip.ts";
 
 function frame(timestamp: number, adc: number): Uint8Array {
@@ -106,6 +106,13 @@ test("una vuelta EQ6 se divide para evitar la ambigüedad modular de :S", () => 
 
 test("una vuelta EQ6 cabe en un único desplazamiento relativo :H", () => {
   assert.equal(Math.ceil(9_020_208 / MAX_GOTO_STEPS), 1);
+});
+
+test("la carrerilla de 2° usa GOTO lento y la vuelta usa GOTO rápido", () => {
+  const cpr = 9_020_208;
+  const margin = lowSpeedGotoMarginSteps(cpr);
+  assert.ok((2 * cpr) / 360 < margin);
+  assert.ok(cpr > margin);
 });
 
 test("la velocidad respeta la cuantización y el mínimo T1=6", () => {

@@ -3,6 +3,8 @@ node_modules/
 dist/
 build/
 *.log
+logs/
+docs/docs_dev/
 .tools/
 tmp/
 **/.vscode/

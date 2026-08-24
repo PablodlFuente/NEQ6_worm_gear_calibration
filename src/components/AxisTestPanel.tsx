@@ -4,6 +4,7 @@ import { IconAlert, IconPlay, IconStop } from "./icons";
 
 export interface AxisTestInputs {
   axis: 1 | 2;
+  direction: "cw" | "ccw";
   revolutions: string;
   sampleRate: number;
   speed: string;
@@ -93,6 +94,19 @@ export default function AxisTestPanel({
               </button>
             ))}
           </div>
+        </label>
+
+        <label className="col-span-2 font-mono text-[9.5px] uppercase tracking-[0.12em] text-dim">
+          Sentido de medida
+          <select
+            className={`${inputClass} mt-1`}
+            value={inputs.direction}
+            disabled={state.running}
+            onChange={(event) => onInputs({ direction: event.target.value as "cw" | "ccw" })}
+          >
+            <option value="cw">CW · horario</option>
+            <option value="ccw">CCW · antihorario</option>
+          </select>
         </label>
 
         <label className="font-mono text-[9.5px] uppercase tracking-[0.12em] text-dim">

@@ -2,6 +2,7 @@ import { useEffect, useRef, useState, type CSSProperties, type ReactNode } from 
 import { useSerial, type SerialSettings } from "./hooks/useSerial";
 import { useFlipper } from "./hooks/useFlipper";
 import { asciiOf, fmtBytes, fmtDuration, portLabel, TERMINATIONS, timeNow } from "./lib/serial";
+import { audit, installUiAudit } from "./lib/audit";
 import {
   cmdParts,
   calculateMotionTiming,
@@ -9,6 +10,7 @@ import {
   DIAG_SEQUENCE,
   hexLE,
   le24,
+  lowSpeedGotoMarginSteps,
   MAX_GOTO_STEPS,
   MAX_SAFE_ABSOLUTE_GOTO_DELTA,
   MAX_POSITION_DELTA,
@@ -162,6 +164,7 @@ export default function App() {
   const [jogAxis, setJogAxis] = useState<0 | 1 | 2>(0);
   const [axisTestInputs, setAxisTestInputs] = useState<AxisTestInputs>({
     axis: 1,
+    direction: "cw",
     revolutions: "1",
     sampleRate: 100,
     speed: "0.5",
@@ -215,11 +218,18 @@ export default function App() {
     ...data,
   });
 
-  const addEntries = (list: LogEntry[]) =>
+  const addEntries = (list: LogEntry[]) => {
+    for (const item of list) {
+      audit(`app.${item.kind}`, {
+        time: item.time,
+        text: item.text ?? (item.bytes ? asciiOf(item.bytes) : ""),
+      });
+    }
     setEntries((prev) => {
       const next = [...prev, ...list];
       return next.length > MAX_ENTRIES ? next.slice(next.length - MAX_ENTRIES) : next;
     });
+  };
 
   const logSys = (text: string) => addEntries([entry("sys", { text })]);
   const logFault = (text: string) => addEntries([entry("fault", { text })]);
@@ -349,6 +359,11 @@ export default function App() {
 
   /* ── mensajes de arranque ─────────────────────────────── */
   useEffect(() => {
+    audit("app.loaded", { title: document.title });
+    return installUiAudit();
+  }, []);
+
+  useEffect(() => {
     if (!supported) {
       logFault("Este navegador no soporta la Web Serial API. Usa Chrome o Edge de escritorio (HTTPS o localhost).");
     } else if (!secure) {
@@ -426,6 +441,16 @@ export default function App() {
     if (status !== "open") {
       logFault("No hay puerto abierto: pulsa «Conectar» primero.");
       return false;
+    }
+    if (/^:(?:Q|E|W)/.test(raw.trim())) {
+      const accepted = window.confirm(
+        `COMANDO DE RIESGO\n\n${raw.trim()} puede modificar posición, memoria o firmware de la montura.\n\n¿Quieres enviarlo realmente?`,
+      );
+      audit("ui.danger-confirmation", { command: raw.trim(), accepted });
+      if (!accepted) {
+        logSys(`Comando de riesgo ${raw.trim()} cancelado por el usuario.`);
+        return false;
+      }
     }
     const term = TERMINATIONS.find((t) => t.id === termination)?.value ?? "\r";
     const bytes = encoder.encode(raw + term);
@@ -701,11 +726,13 @@ export default function App() {
       }
       if (aborted || moveCancelRef.current) break;
 
+      const highSpeedGoto = chunkSteps > lowSpeedGotoMarginSteps(cpr);
+
       /* 2) fijar periodo: :I (tracking) y :T (GOTO, ×ratio; reintento con T1 si !3) */
       setMove((m) => ({ ...m, phase: "fijando periodo (:I → :T)" }));
       for (const ax of axes) {
         const ratio = (ax === 2 ? profile.ratio2 : profile.ratio1) || 16;
-        const tHigh = Math.min(0xffffff, Math.round(t1 * ratio));
+        const tGoto = highSpeedGoto ? Math.min(0xffffff, Math.round(t1 * ratio)) : t1;
         if (!(await sendRaw(`:I${ax}${le24(t1)}`, false))) {
           aborted = true;
           break;
@@ -715,7 +742,7 @@ export default function App() {
         if (!rI || !rI.startsWith("="))
           logSys(`:I${ax}${le24(t1)} → ${rI ?? "sin respuesta"} (aviso: este firmware quizá no lo usa).`);
 
-        if (!(await sendRaw(`:T${ax}${le24(tHigh)}`, false))) {
+        if (!(await sendRaw(`:T${ax}${le24(tGoto)}`, false))) {
           aborted = true;
           break;
         }
@@ -739,7 +766,8 @@ export default function App() {
       const gotoCommand = request?.relativeGoto ? ":H" : ":S";
       setMove((m) => ({ ...m, phase: `armando GOTO (:G → ${gotoCommand})` }));
       for (const ax of axes) {
-        if (!(await sendRaw(`:G${ax}0${sign < 0 ? "1" : "0"}`, false))) {
+        const gotoMode = highSpeedGoto ? "0" : "2";
+        if (!(await sendRaw(`:G${ax}${gotoMode}${sign < 0 ? "1" : "0"}`, false))) {
           aborted = true;
           break;
         }
@@ -766,6 +794,25 @@ export default function App() {
         if (moveCancelRef.current) break;
         if (!rS || !rS.startsWith("=")) {
           logFault(`${gotoCommand}${ax} rechazado (${rS ?? "sin respuesta"}) — giro cancelado.`);
+          aborted = true;
+          break;
+        }
+      }
+      if (aborted || moveCancelRef.current) break;
+
+      /* EQMOD/INDI siempre programa el punto de frenado antes de :J. Sin :M
+       * queda activo un valor anterior y el eje puede pasar casi todo el GOTO
+       * en la rampa lenta. */
+      setMove((m) => ({ ...m, phase: "configurando frenado (:M)" }));
+      const brakeSteps = Math.min(chunkSteps, highSpeedGoto ? 3200 : 200);
+      for (const ax of axes) {
+        if (!(await sendRaw(`:M${ax}${le24(brakeSteps)}`, false))) {
+          aborted = true;
+          break;
+        }
+        const rM = await waitForRx(RX_TIMEOUT_MS);
+        if (!rM || !rM.startsWith("=")) {
+          logFault(`:M${ax} rechazado (${rM ?? "sin respuesta"}) — giro cancelado.`);
           aborted = true;
           break;
         }
@@ -902,6 +949,7 @@ export default function App() {
     const revolutions = Number(axisTestInputs.revolutions.replace(",", "."));
     const speed = Number(axisTestInputs.speed.replace(",", "."));
     const axis = axisTestInputs.axis;
+    const measurementSign = axisTestInputs.direction === "cw" ? 1 : -1;
     const cpr = axis === 1 ? profile.cpr1 : profile.cpr2;
     const targetDeg = revolutions * 360;
     if (
@@ -935,7 +983,7 @@ export default function App() {
     /* El retroceso corto usa un destino absoluto :S. En este controlador se ha
      * observado que :H puede conservar el sentido del GOTO anterior pese a
      * cambiar el bit de :G. :S fuerza aquí una posición realmente opuesta. */
-    const preRollOk = await runMove({ axis, speed, deg: -2, maxDeg: 5 });
+    const preRollOk = await runMove({ axis, speed, deg: -2 * measurementSign, maxDeg: 5 });
     if (!preRollOk || axisTestCancelRef.current) {
       setAxisTest((state) => ({
         ...state,
@@ -962,7 +1010,7 @@ export default function App() {
       moveSuccess = await runMove({
         axis,
         speed,
-        deg: targetDeg + 2,
+        deg: (targetDeg + 2) * measurementSign,
         maxDeg: 3602,
         relativeGoto: true,
         onPosition: async (reportedAxis, steps, tb) => {

@@ -13,6 +13,12 @@ export const MAX_GOTO_STEPS = 0xffffff;
 export const MAX_SAFE_ABSOLUTE_GOTO_DELTA = 0x7fffff;
 /** Límite aplicado por la implementación de referencia de SkyWatcher/INDI. */
 export const MIN_T1_TICKS = 6;
+/** Umbral de INDI: recorrido equivalente a 5 s a 128x velocidad sideral. */
+export const SIDEREAL_DAY_SECONDS = 86164.09065;
+
+export function lowSpeedGotoMarginSteps(cpr: number): number {
+  return Math.round((640 * cpr) / SIDEREAL_DAY_SECONDS);
+}
 
 export interface MotionTiming {
   t1: number;
