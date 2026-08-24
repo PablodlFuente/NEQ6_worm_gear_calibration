@@ -4,6 +4,7 @@ import { useFlipper } from "./hooks/useFlipper";
 import { asciiOf, fmtBytes, fmtDuration, portLabel, TERMINATIONS, timeNow } from "./lib/serial";
 import {
   cmdParts,
+  calculateMotionTiming,
   decodeResponse,
   DIAG_SEQUENCE,
   hexLE,
@@ -24,16 +25,15 @@ import { type AutoState } from "./components/SidePanel";
 import { IDLE_MOVE, type MoveInputs, type MoveState } from "./components/DrivePanel";
 import type { AxisTestInputs, AxisTestState } from "./components/AxisTestPanel";
 import type { DecodedState } from "./components/DecoderPanel";
+import HelpModal from "./components/HelpModal";
 import {
   IconActivity,
   IconAlert,
   IconCrosshair,
   IconDownload,
-  IconPlug,
   IconScroll,
   IconTerminal,
   IconTrash,
-  IconUnplug,
 } from "./components/icons";
 
 const MAX_ENTRIES = 700;
@@ -171,6 +171,7 @@ export default function App() {
     targetDeg: 360,
     message: "Listo para una vuelta completa.",
   });
+  const [helpOpen, setHelpOpen] = useState(false);
 
   /* pestaña activa + ancho del panel lateral */
   const [tab, setTab] = useState<Tab>("mov");
@@ -350,7 +351,7 @@ export default function App() {
       logFault("Web Serial necesita un contexto seguro: sirve esta página por HTTPS o localhost.");
     } else {
       logSys("Web Serial disponible · NEQ6: 9600 8N1, protocolo MC (el de EQDIRect/EQASCOM).");
-      logSys("Pulsa «Conectar», elige tu conversor UART-USB y luego «Escanear montura» (pestaña Montura).");
+      logSys("Abre Ajustes → Conexión montura, elige tu conversor UART-USB y luego ejecuta «Escanear montura».");
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -530,8 +531,8 @@ export default function App() {
       return;
     }
     const speed = parseFloat(mvInputs.speed.replace(",", ".")) || 0.5;
-    const t1 = Math.min(0xffffff, Math.max(1, Math.round((timer * 360) / (speed * cpr))));
-    const real = (timer * 360) / (t1 * cpr);
+    const timing = calculateMotionTiming(timer, cpr, speed);
+    const { t1, realDegPerSec: real } = timing;
     const ratio = (axis === 2 ? profile.ratio2 : profile.ratio1) || 16;
     jogRef.current = { axis };
     setJogAxis(axis);
@@ -638,8 +639,8 @@ export default function App() {
     }
 
     const sign = deg > 0 ? 1 : -1;
-    const t1 = Math.min(0xffffff, Math.max(1, Math.round((timer * 360) / (speed * cpr))));
-    const real = (timer * 360) / (t1 * cpr);
+    const timing = calculateMotionTiming(timer, cpr, speed);
+    const { t1, realDegPerSec: real } = timing;
     const stepsPerDeg = cpr / 360;
     const totalSteps = Math.max(1, Math.round(Math.abs(deg) * stepsPerDeg));
     const chunks = Math.max(1, Math.ceil(totalSteps / MAX_GOTO_STEPS));
@@ -663,8 +664,8 @@ export default function App() {
         `${totalSteps.toLocaleString("es-ES")} pasos · T1=${t1} (real ≈ ${real.toFixed(3)}°/s)` +
         (chunks > 1 ? ` · ${chunks} tramos` : ""),
     );
-    if (t1 === 1 && real < speed - 1e-9)
-      logSys(`Velocidad limitada a ${real.toFixed(2)}°/s: es el máximo del modo lento (T1=1).`);
+    if (timing.limited)
+      logSys(`Velocidad limitada a ${real.toFixed(3)}°/s: máximo calculado con T1=6 para esta montura.`);
 
     let aborted = false;
     let doneDeg = 0;
@@ -1082,28 +1083,10 @@ export default function App() {
           <StatusPill status={status} label={portLabel(portInfo)} />
 
           <button
-            onClick={status === "open" ? handleClose : handleConnect}
-            disabled={!supported || !secure || status === "connecting"}
-            className={`flex items-center gap-2 rounded px-3.5 py-2 font-display text-[11px] font-bold tracking-[0.16em] transition-all active:translate-y-px disabled:cursor-not-allowed disabled:opacity-35 ${
-              status === "open"
-                ? "border border-alert/50 bg-alert/10 text-alert hover:bg-alert/20"
-                : "bg-ember text-[#1c1204] hover:bg-[#ffc04d] hover:shadow-[0_0_18px_rgba(245,165,36,0.35)]"
-            }`}
+            onClick={() => setHelpOpen(true)}
+            className="rounded border border-line bg-[#0c1930] px-3.5 py-2 font-display text-[11px] font-bold tracking-[0.16em] text-fog transition-colors hover:border-ember/50 hover:text-ember"
           >
-            {status === "connecting" ? (
-              <>
-                <span className="h-3.5 w-3.5 animate-spin rounded-full border-2 border-[#1c1204]/30 border-t-[#1c1204]" />
-                ABRIENDO
-              </>
-            ) : status === "open" ? (
-              <>
-                <IconUnplug className="h-4 w-4" /> CERRAR
-              </>
-            ) : (
-              <>
-                <IconPlug className="h-4 w-4" /> CONECTAR
-              </>
-            )}
+            ? AYUDA
           </button>
         </div>
       </header>
@@ -1257,6 +1240,7 @@ export default function App() {
         </span>
         <span className="hidden text-[#42567a] md:inline">9600 · 8N1 · SkyWatcher MC</span>
       </footer>
+      <HelpModal open={helpOpen} onClose={() => setHelpOpen(false)} />
     </div>
   );
 }

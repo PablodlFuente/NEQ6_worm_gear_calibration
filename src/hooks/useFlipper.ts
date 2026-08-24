@@ -333,8 +333,25 @@ export function useFlipper({ cpr1 }: Props) {
       rateEst: D > 0 ? (n - 1) / D : 0,
       circ: plot ? circularStats(Array.from(plot.angles)) : null,
       dThetaEnc: cpr1 ? 360 / cpr1 : null,
+      feedbackSpeedDegS: null as number | null,
+      samplesPerDeg: null as number | null,
       maxA: 0,
     };
+    if (unwrapped.length >= 2 && perUnw) {
+      const angleSpan = Math.abs(unwrapped[unwrapped.length - 1].deg - unwrapped[0].deg);
+      const segmentSpeeds: number[] = [];
+      for (let i = 1; i < unwrapped.length; i++) {
+        const dtS = (unwrapped[i].tb - unwrapped[i - 1].tb) / 1000;
+        const dDeg = Math.abs(unwrapped[i].deg - unwrapped[i - 1].deg);
+        if (dtS > 0 && dDeg > 1e-9) segmentSpeeds.push(dDeg / dtS);
+      }
+      let positionedSamples = 0;
+      for (let i = 0; i < perUnw.length; i++) {
+        if (Number.isFinite(perUnw[i])) positionedSamples++;
+      }
+      if (angleSpan > 0) st.samplesPerDeg = positionedSamples / angleSpan;
+      if (segmentSpeeds.length) st.feedbackSpeedDegS = median(segmentSpeeds);
+    }
     let mx = 0;
     for (let i = 0; i < n; i++) if (amps[i] > mx) mx = amps[i];
     st.maxA = mx;
@@ -402,6 +419,10 @@ export function useFlipper({ cpr1 }: Props) {
     const statsTxt = [
       `media=${derived.st.mean.toFixed(6)} A · mediana=${derived.st.median.toFixed(6)} A · σ=${derived.st.sd.toFixed(6)} A`,
       `σ_media=${derived.st.sem.toExponential(3)} A · N=${derived.st.n} · factor=${avgFactor}`,
+      "angle_source=mount_:j_feedback_time_interpolated",
+      derived.st.feedbackSpeedDegS !== null
+        ? `feedback_speed=${derived.st.feedbackSpeedDegS.toFixed(6)} deg/s · samples_per_deg=${(derived.st.samplesPerDeg ?? 0).toFixed(3)}`
+        : "feedback_speed=unavailable",
     ];
     download(`neq6-proc-${stamp()}.csv`, buildProcCsv(rows, rate, statsTxt));
   };

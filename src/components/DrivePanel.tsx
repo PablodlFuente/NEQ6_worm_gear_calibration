@@ -1,4 +1,4 @@
-import { MAX_GOTO_STEPS, type MountProfile } from "../lib/protocol";
+import { calculateMotionTiming, MAX_GOTO_STEPS, type MountProfile } from "../lib/protocol";
 import { IconAlert, IconPlay, IconStop } from "./icons";
 
 export interface MoveInputs {
@@ -70,9 +70,14 @@ export default function DrivePanel({
   let steps = 0;
   let chunks = 0;
   let secs = 0;
+  let maxSpeed = 0;
+  let limited = false;
   if (cpr && timer && speedOk) {
-    t1 = Math.min(0xffffff, Math.max(1, Math.round((timer * 360) / (speed * cpr))));
-    real = (timer * 360) / (t1 * cpr);
+    const timing = calculateMotionTiming(timer, cpr, speed);
+    t1 = timing.t1;
+    real = timing.realDegPerSec;
+    maxSpeed = timing.maxDegPerSec;
+    limited = timing.limited;
     if (degOk) {
       steps = Math.max(1, Math.round(Math.abs(deg) * (cpr / 360)));
       chunks = Math.max(1, Math.ceil(steps / MAX_GOTO_STEPS));
@@ -177,8 +182,9 @@ export default function DrivePanel({
             <span className="text-alert">Indica grados ≠ 0 (máx. ±720). Negativo = sentido contrario.</span>
           ) : (
             <>
-              T1=<span className="text-ion">{int(t1)}</span> · real ≈{" "}
-              <span className="text-mint">{real.toFixed(3)}°/s</span> ·{" "}
+              solicitada <span className="text-fog">{speed.toFixed(3)}°/s</span> · T1=<span className="text-ion">{int(t1)}</span> · programada{" "}
+              <span className={limited ? "text-alert" : "text-mint"}>{real.toFixed(3)}°/s</span>
+              {limited ? <span className="text-alert"> (límite {maxSpeed.toFixed(3)}°/s)</span> : null} ·{" "}
               <span className="text-fog">{int(steps)}</span> pasos
               {chunks > 1 ? <span className="text-ember"> · {chunks} tramos</span> : null} · ~
               <span className="text-fog">

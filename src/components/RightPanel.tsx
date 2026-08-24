@@ -155,6 +155,7 @@ export default function RightPanel(props: Props) {
             mountOpen={open}
             mountBusy={props.move.running || props.auto.running || props.jogAxis !== 0}
             flip={props.flip}
+            profile={props.profile}
             movePhase={props.move.phase}
             onStart={props.onStartAxisTest}
             onStop={props.onStopAxisTest}

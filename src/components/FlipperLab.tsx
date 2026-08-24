@@ -460,6 +460,7 @@ export default function FlipperLab({ flip, serialOpen }: { flip: FlipperApi; ser
                       <th className="px-2 py-1">#</th>
                       <th className="px-2 py-1">frecuencia</th>
                       <th className="px-2 py-1">periodo</th>
+                      <th className="px-2 py-1">cada (montura)</th>
                       <th className="px-2 py-1 text-right">magnitud</th>
                     </tr>
                   </thead>
@@ -470,6 +471,11 @@ export default function FlipperLab({ flip, serialOpen }: { flip: FlipperApi; ser
                         <td className="px-2 py-1 tabular-nums">{p.freq.toFixed(3)} Hz</td>
                         <td className="px-2 py-1 tabular-nums">
                           {p.period >= 1 ? `${p.period.toFixed(3)} s` : `${(p.period * 1000).toFixed(1)} ms`}
+                        </td>
+                        <td className="px-2 py-1 tabular-nums text-ion">
+                          {derived.st.feedbackSpeedDegS
+                            ? `${(p.period * derived.st.feedbackSpeedDegS).toFixed(3)}°`
+                            : "—"}
                         </td>
                         <td className="px-2 py-1 text-right tabular-nums text-dim">
                           {p.mag.toExponential(2)}
@@ -483,7 +489,7 @@ export default function FlipperLab({ flip, serialOpen }: { flip: FlipperApi; ser
             {view === "fft" && derived && (
               <p className="font-mono text-[9.5px] text-dim">
                 Espectro · {derived.st.durS.toFixed(1)} s de señal · resolución{" "}
-                {(1 / (derived.st.durS || 1)).toFixed(3)} Hz · ventana de Hann
+                {(1 / (derived.st.durS || 1)).toFixed(3)} Hz · ventana de Hann · grados calculados con velocidad medida :j
               </p>
             )}
           </div>
@@ -496,6 +502,12 @@ export default function FlipperLab({ flip, serialOpen }: { flip: FlipperApi; ser
             <StatCell k="N (crudo / promediado)" v={`${derived.st.n.toLocaleString("es-ES")} / ${derived.st.nAvg.toLocaleString("es-ES")}`} />
             <StatCell k="duración" v={`${derived.st.durS.toFixed(2)} s`} />
             <StatCell k="tasa estimada" v={`${derived.st.rateEst.toFixed(1)} Hz`} />
+            {derived.st.feedbackSpeedDegS !== null && (
+              <StatCell k="velocidad medida (:j)" v={`${derived.st.feedbackSpeedDegS.toFixed(4)} °/s`} tone="text-ion" />
+            )}
+            {derived.st.samplesPerDeg !== null && (
+              <StatCell k="muestras / grado medidas" v={derived.st.samplesPerDeg.toFixed(1)} tone="text-ion" />
+            )}
             <StatCell k="factor de promedio" v={`×${flip.avgFactor}`} tone="text-ion" />
             <StatCell k="media" v={`${derived.st.mean.toFixed(5)} A`} />
             <StatCell k="mediana" v={`${derived.st.median.toFixed(5)} A`} />

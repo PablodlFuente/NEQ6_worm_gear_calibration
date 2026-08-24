@@ -5,6 +5,32 @@ export const POS_OFFSET = 0x800000;
 export const MAX_POSITION_DELTA = 0x7fffff;
 /** Máximo recorrido modular que cabe en un objetivo GOTO de 24 bits. */
 export const MAX_GOTO_STEPS = 0xffffff;
+/** Límite aplicado por la implementación de referencia de SkyWatcher/INDI. */
+export const MIN_T1_TICKS = 6;
+
+export interface MotionTiming {
+  t1: number;
+  realDegPerSec: number;
+  maxDegPerSec: number;
+  limited: boolean;
+}
+
+/**
+ * Cuantiza una velocidad solicitada al periodo entero T1 que acepta la montura.
+ * La velocidad devuelta es la programada realmente, no una medida de feedback.
+ */
+export function calculateMotionTiming(timer: number, cpr: number, requestedDegPerSec: number): MotionTiming {
+  const maxDegPerSec = (timer * 360) / (MIN_T1_TICKS * cpr);
+  const rawT1 = (timer * 360) / (requestedDegPerSec * cpr);
+  const t1 = Math.min(0xffffff, Math.max(MIN_T1_TICKS, Math.round(rawT1)));
+  const realDegPerSec = (timer * 360) / (t1 * cpr);
+  return {
+    t1,
+    realDegPerSec,
+    maxDegPerSec,
+    limited: requestedDegPerSec > maxDegPerSec + 1e-12,
+  };
+}
 
 /* ── serialización little-endian (byte bajo primero) ────── */
 

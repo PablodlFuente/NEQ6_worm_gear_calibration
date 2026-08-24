@@ -109,7 +109,7 @@ function EmptyState({ ready }: { ready: boolean }) {
       </div>
       <ul className="grid max-w-md gap-2 text-left font-mono text-[11.5px] text-[#7d92b8]">
         <li className="flex gap-2">
-          <span className="text-ember">01</span> Pulsa «Conectar» y elige el conversor (CH340, FTDI, CP210x…).
+          <span className="text-ember">01</span> Abre Ajustes y conecta el conversor (CH340, FTDI, CP210x…).
         </li>
         <li className="flex gap-2">
           <span className="text-ember">02</span> La NEQ6 habla a <b className="text-fog">9600 8N1</b>, protocolo MC (EQDIRect).

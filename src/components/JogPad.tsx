@@ -78,69 +78,33 @@ export default function JogPad({ disabled, activeAxis, speedLabel, onStart, onSt
         <span className="text-[#ffc46b]">:K</span> (parada suave). Asegúrate de que la zona de giro está libre.
       </p>
 
-      <div className="mt-2.5 grid grid-cols-[1fr_auto_1fr] items-center gap-2">
-        {/* AR */}
-        <div className="flex flex-col items-stretch gap-1.5">
-          <p className="text-center font-display text-[9.5px] font-bold tracking-[0.2em] text-[#4d6389]">
-            AR <span className={activeAxis === 1 ? "text-ember" : ""}>·1</span>
-          </p>
-          <HoldBtn
-            label="AR horario"
-            active={activeAxis === 1}
-            disabled={disabled}
-            onStart={() => onStart(1, 1)}
-            onStop={onStop}
-          >
-            <IconArrowUp className="h-5 w-5 rotate-90" />
-          </HoldBtn>
-          <HoldBtn
-            label="AR antihorario"
-            active={activeAxis === 1}
-            disabled={disabled}
-            onStart={() => onStart(1, -1)}
-            onStop={onStop}
-          >
-            <IconArrowUp className="h-5 w-5 -rotate-90" />
+      <div className="mx-auto mt-2.5 grid w-full max-w-[270px] grid-cols-3 grid-rows-3 gap-1.5">
+        <div className="col-start-2 row-start-1">
+          <HoldBtn label="DEC norte" active={activeAxis === 2} disabled={disabled} onStart={() => onStart(2, 1)} onStop={onStop}>
+            <span className="flex flex-col items-center gap-0.5"><IconArrowUp className="h-5 w-5" /><small className="font-display text-[8px] tracking-wider">DEC+</small></span>
           </HoldBtn>
         </div>
-
-        {/* centro */}
-        <div className="flex flex-col items-center gap-1.5 px-1">
-          <IconCrosshair
-            className={`h-8 w-8 transition-colors ${activeAxis ? "text-ember" : "text-[#2a3f63]"}`}
-          />
-          <button
-            onClick={onStop}
-            disabled={disabled}
-            title="Parada suave de ambos ejes (:K1 :K2)"
-            className="flex items-center gap-1.5 rounded border border-alert/50 bg-alert/5 px-2.5 py-1.5 font-display text-[9.5px] font-bold tracking-[0.14em] text-alert transition-colors hover:bg-alert/15 active:translate-y-px disabled:cursor-not-allowed disabled:opacity-30"
-          >
-            <IconStop className="h-3 w-3" /> STOP
-          </button>
-        </div>
-
-        {/* DEC */}
-        <div className="flex flex-col items-stretch gap-1.5">
-          <p className="text-center font-display text-[9.5px] font-bold tracking-[0.2em] text-[#4d6389]">
-            DEC <span className={activeAxis === 2 ? "text-ember" : ""}>·2</span>
-          </p>
-          <HoldBtn
-            label="DEC norte"
-            active={activeAxis === 2}
-            disabled={disabled}
-            onStart={() => onStart(2, 1)}
-            onStop={onStop}
-          >
-            <IconArrowUp className="h-5 w-5" />
+        <div className="col-start-1 row-start-2">
+          <HoldBtn label="AR antihorario" active={activeAxis === 1} disabled={disabled} onStart={() => onStart(1, -1)} onStop={onStop}>
+            <span className="flex items-center gap-1"><IconArrowUp className="h-5 w-5 -rotate-90" /><small className="font-display text-[8px] tracking-wider">AR−</small></span>
           </HoldBtn>
-          <HoldBtn
-            label="DEC sur"
-            active={activeAxis === 2}
-            disabled={disabled}
-            onStart={() => onStart(2, -1)}
-            onStop={onStop}
-          >
-            <IconArrowUp className="h-5 w-5 rotate-180" />
+        </div>
+        <button
+          onClick={onStop}
+          disabled={disabled}
+          title="Parada suave del eje activo"
+          className="col-start-2 row-start-2 flex h-14 flex-col items-center justify-center gap-1 rounded-md border border-alert/50 bg-alert/5 font-display text-[9px] font-bold tracking-[0.12em] text-alert transition-colors hover:bg-alert/15 disabled:opacity-30"
+        >
+          <IconStop className="h-4 w-4" /> STOP
+        </button>
+        <div className="col-start-3 row-start-2">
+          <HoldBtn label="AR horario" active={activeAxis === 1} disabled={disabled} onStart={() => onStart(1, 1)} onStop={onStop}>
+            <span className="flex items-center gap-1"><small className="font-display text-[8px] tracking-wider">AR+</small><IconArrowUp className="h-5 w-5 rotate-90" /></span>
+          </HoldBtn>
+        </div>
+        <div className="col-start-2 row-start-3">
+          <HoldBtn label="DEC sur" active={activeAxis === 2} disabled={disabled} onStart={() => onStart(2, -1)} onStop={onStop}>
+            <span className="flex flex-col items-center gap-0.5"><small className="font-display text-[8px] tracking-wider">DEC−</small><IconArrowUp className="h-5 w-5 rotate-180" /></span>
           </HoldBtn>
         </div>
       </div>

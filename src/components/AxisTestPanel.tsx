@@ -1,4 +1,5 @@
 import type { FlipperApi } from "../hooks/useFlipper";
+import { calculateMotionTiming, type MountProfile } from "../lib/protocol";
 import { IconAlert, IconPlay, IconStop } from "./icons";
 
 export interface AxisTestInputs {
@@ -23,6 +24,7 @@ interface Props {
   mountOpen: boolean;
   mountBusy: boolean;
   flip: FlipperApi;
+  profile: MountProfile;
   movePhase: string;
   onStart: () => void;
   onStop: () => void;
@@ -39,6 +41,7 @@ export default function AxisTestPanel({
   mountOpen,
   mountBusy,
   flip,
+  profile,
   movePhase,
   onStart,
   onStop,
@@ -48,6 +51,11 @@ export default function AxisTestPanel({
   const valuesOk = Number.isInteger(revs) && revs >= 1 && revs <= 10 && speed > 0 && speed <= 5;
   const ready = mountOpen && flip.connected && Boolean(flip.sync) && !flip.syncing && !mountBusy && valuesOk;
   const progress = Math.max(0, Math.min(1, state.progress));
+  const cpr = inputs.axis === 1 ? profile.cpr1 : profile.cpr2;
+  const timing = cpr && profile.timer && speed > 0 ? calculateMotionTiming(profile.timer, cpr, speed) : null;
+  const estimatedSamplesPerDeg = timing ? inputs.sampleRate / timing.realDegPerSec : null;
+  const measuredSpeed = flip.derived?.st.feedbackSpeedDegS ?? null;
+  const measuredSamplesPerDeg = flip.derived?.st.samplesPerDeg ?? null;
 
   return (
     <section className="rounded border border-line bg-panel p-3">
@@ -124,6 +132,22 @@ export default function AxisTestPanel({
             <span className="pointer-events-none absolute right-2.5 top-2 font-mono text-[10px] text-dim">°/s</span>
           </div>
         </label>
+      </div>
+
+      <div className="mt-2 grid grid-cols-2 gap-1.5 rounded border border-line bg-[#081120] p-2.5 font-mono text-[9.5px]">
+        <span className="text-dim">vel. programada</span>
+        <span className={`text-right tabular-nums ${timing?.limited ? "text-alert" : "text-mint"}`}>
+          {timing ? `${timing.realDegPerSec.toFixed(4)} °/s` : "—"}
+        </span>
+        <span className="text-dim">vel. medida (:j)</span>
+        <span className="text-right tabular-nums text-ion">{measuredSpeed ? `${measuredSpeed.toFixed(4)} °/s` : "—"}</span>
+        <span className="text-dim">muestras/° estimadas</span>
+        <span className="text-right tabular-nums text-fog">{estimatedSamplesPerDeg ? estimatedSamplesPerDeg.toFixed(1) : "—"}</span>
+        <span className="text-dim">muestras/° medidas</span>
+        <span className="text-right tabular-nums text-ion">{measuredSamplesPerDeg ? measuredSamplesPerDeg.toFixed(1) : "—"}</span>
+        {timing?.limited && (
+          <p className="col-span-2 mt-1 text-alert">Límite de esta montura: {timing.maxDegPerSec.toFixed(4)} °/s (T1=6).</p>
+        )}
       </div>
 
       <div className="mt-3 rounded border border-line bg-[#081120] p-2.5 font-mono text-[9.5px]">

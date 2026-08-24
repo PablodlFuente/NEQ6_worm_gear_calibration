@@ -11,7 +11,7 @@ import {
   parseCsv,
   unwrapDegrees,
 } from "../src/lib/flipper.ts";
-import { MAX_GOTO_STEPS, MAX_POSITION_DELTA } from "../src/lib/protocol.ts";
+import { calculateMotionTiming, MAX_GOTO_STEPS, MAX_POSITION_DELTA, MIN_T1_TICKS } from "../src/lib/protocol.ts";
 
 function frame(timestamp: number, adc: number): Uint8Array {
   return Uint8Array.from([
@@ -100,4 +100,18 @@ test("CSV procesado incluye errores X/Y y tamaño de bloque", () => {
 test("una vuelta EQ6 cabe en un único GOTO de 24 bits", () => {
   assert.equal(Math.ceil(9_020_208 / MAX_GOTO_STEPS), 1);
   assert.equal(MAX_POSITION_DELTA, 0x7fffff);
+});
+
+test("la velocidad respeta la cuantización y el mínimo T1=6", () => {
+  const timer = 64_935;
+  const cpr = 9_020_208;
+  const fast = calculateMotionTiming(timer, cpr, 5);
+  assert.equal(fast.t1, MIN_T1_TICKS);
+  assert.equal(fast.limited, true);
+  assert.ok(Math.abs(fast.realDegPerSec - fast.maxDegPerSec) < 1e-12);
+
+  const normal = calculateMotionTiming(timer, cpr, 0.2);
+  assert.ok(normal.t1 > MIN_T1_TICKS);
+  assert.equal(normal.limited, false);
+  assert.ok(Math.abs(normal.realDegPerSec - 0.2) < 0.01);
 });
