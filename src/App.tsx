@@ -31,7 +31,6 @@ import { IDLE_MOVE, type MoveInputs, type MoveState } from "./components/DrivePa
 import type { AxisTestInputs, AxisTestState, ExtendedTestState } from "./components/AxisTestPanel";
 import type { DecodedState } from "./components/DecoderPanel";
 import HelpModal from "./components/HelpModal";
-import FlipperSerialConsole from "./components/FlipperSerialConsole";
 import {
   IconActivity,
   IconAlert,
@@ -159,6 +158,7 @@ export default function App() {
 
   /* barra de comandos + decodificador + autodiagnóstico */
   const [cmd, setCmd] = useState("");
+  const [flipCmd, setFlipCmd] = useState("");
   const [decoded, setDecoded] = useState<DecodedState | null>(null);
   const [profile, setProfile] = useState<MountProfile>({});
   const [axisPosition, setAxisPosition] = useState<{ ar?: number; dec?: number }>({});
@@ -1469,6 +1469,20 @@ export default function App() {
     logSys(`Registro exportado (${entries.length} líneas).`);
   };
 
+  const exportFlipperLog = () => {
+    if (!flip.consoleLines.length) return;
+    const lines = flip.consoleLines.map((line) =>
+      `${new Date(line.time).toLocaleTimeString("es-ES", { hour12: false })}  ${line.direction.toUpperCase()}  ${line.text}`,
+    );
+    const blob = new Blob([lines.join("\n")], { type: "text/plain;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `flipper-log-${new Date().toISOString().slice(0, 19).replace(/[:T]/g, "-")}.txt`;
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
   /* ── redimensionado del panel lateral ─────────────────── */
   const onDividerDown = (e: React.PointerEvent) => {
     e.preventDefault();
@@ -1492,6 +1506,15 @@ export default function App() {
 
   /* ── UI ───────────────────────────────────────────────── */
   const sideStyle = { "--side-w": `${sideW}px` } as CSSProperties;
+  const showingFlipperSerial = tab === "montura" && serialTarget === "flipper";
+  const visibleLogEntries: LogEntry[] = showingFlipperSerial
+    ? flip.consoleLines.map((line) => ({
+        id: 2_000_000 + line.id,
+        time: new Date(line.time).toLocaleTimeString("es-ES", { hour12: false }),
+        kind: line.direction,
+        text: line.text,
+      }))
+    : entries;
 
   return (
     <div className="relative z-10 flex min-h-dvh flex-col lg:h-dvh lg:overflow-hidden">
@@ -1559,8 +1582,6 @@ export default function App() {
               canMoveToAngle={status === "open" && !move.running && !axisTest.running && !extendedTest.running && !auto.running}
               onMoveToAngle={(angle) => void moveToCapturedAngle(angle)}
             />
-          ) : tab === "montura" && serialTarget === "flipper" ? (
-            <FlipperSerialConsole flip={flip} view="monitor" />
           ) : (
             <section
               className="brackets rise relative flex h-[56dvh] min-h-0 flex-1 flex-col overflow-hidden rounded-md border border-line bg-panel shadow-[inset_0_1px_0_rgba(255,255,255,0.04),0_10px_34px_rgba(0,0,0,0.4)] lg:h-auto"
@@ -1568,9 +1589,11 @@ export default function App() {
             >
               <div className="flex shrink-0 items-center gap-2 border-b border-line bg-[#0a1424] px-3 py-2">
                 <IconTerminal className="h-4 w-4 shrink-0 text-ember" />
-                <span className="font-display text-[11px] font-bold tracking-[0.24em] text-fog">MONITOR SERIE</span>
+                <span className="font-display text-[11px] font-bold tracking-[0.24em] text-fog">
+                  MONITOR SERIE {showingFlipperSerial ? "FLIPPER" : "MONTURA"}
+                </span>
                 <span className="rounded border border-line px-1.5 py-px font-mono text-[10px] text-dim">
-                  {entries.length} lín
+                  {visibleLogEntries.length} lín
                 </span>
                 <div className="ml-auto flex items-center gap-1.5">
                   <div className="flex overflow-hidden rounded border border-line">
@@ -1593,26 +1616,26 @@ export default function App() {
                   >
                     <IconScroll className="h-3.5 w-3.5" />
                   </ToolBtn>
-                  <ToolBtn title="Limpiar monitor" onClick={clearLog}>
+                  <ToolBtn title="Limpiar monitor" onClick={showingFlipperSerial ? flip.clearConsole : clearLog}>
                     <IconTrash className="h-3.5 w-3.5" />
                   </ToolBtn>
-                  <ToolBtn title="Exportar registro (.txt)" onClick={exportLog}>
+                  <ToolBtn title="Exportar registro (.txt)" onClick={showingFlipperSerial ? exportFlipperLog : exportLog}>
                     <IconDownload className="h-3.5 w-3.5" />
                   </ToolBtn>
                 </div>
               </div>
 
-              <TerminalLog entries={entries} mode={displayMode} autoscroll={autoscroll} ready={apiOk && secure} />
+              <TerminalLog entries={visibleLogEntries} mode={displayMode} autoscroll={autoscroll} ready={showingFlipperSerial ? flip.connected : apiOk && secure} />
 
               <CommandBar
                 ref={barRef}
-                value={cmd}
-                onChange={setCmd}
-                disabled={status !== "open"}
-                onSend={(c) => void sendRaw(c)}
-                termination={termination}
-                onTermination={setTermination}
-                history={history}
+                value={showingFlipperSerial ? flipCmd : cmd}
+                onChange={showingFlipperSerial ? setFlipCmd : setCmd}
+                disabled={showingFlipperSerial ? !flip.connected || flip.capturing : status !== "open"}
+                onSend={(c) => showingFlipperSerial ? void flip.sendConsoleCommand(c) : void sendRaw(c)}
+                termination={showingFlipperSerial ? "lf" : termination}
+                onTermination={showingFlipperSerial ? () => undefined : setTermination}
+                history={showingFlipperSerial ? flip.consoleLines.filter((line) => line.direction === "tx").map((line) => line.text) : history}
               />
             </section>
           )}
