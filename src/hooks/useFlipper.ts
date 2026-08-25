@@ -3,10 +3,12 @@ import { useBle } from "./useBle";
 import { useFlipperSerial } from "./useFlipperSerial";
 import {
   adcToAmps,
+  averageFftSpectra,
   chooseSampleClockOffset,
   averageAngleSeries,
   binCartesian,
   angleAt,
+  buildMeasurementCsv,
   buildProcCsv,
   buildRawCsv,
   circularStats,
@@ -368,6 +370,8 @@ export function useFlipper({ cpr1 }: Props) {
     const measuredSpeedDegS = speeds.length ? median(speeds) : null;
     const positionedAngles: number[] = [];
     const positionedCurrents: number[] = [];
+    const revolutionTs: number[][] = [];
+    const revolutionAmps: number[][] = [];
     const binSum = new Float64Array(360);
     const binCount = new Uint32Array(360);
     let maxA = -Infinity;
@@ -378,6 +382,10 @@ export function useFlipper({ cpr1 }: Props) {
       const phase = ((angle % 360) + 360) % 360;
       positionedAngles.push(angle);
       positionedCurrents.push(amps[i]);
+      const travel = Math.abs(angle - angles[0].deg);
+      const revolution = Math.max(0, Math.floor(Math.max(0, travel - 1e-6) / 360));
+      (revolutionTs[revolution] ??= []).push(tsRef.current[i]);
+      (revolutionAmps[revolution] ??= []).push(amps[i]);
       const bin = Math.min(359, Math.floor(phase));
       binSum[bin] += amps[i];
       binCount[bin]++;
@@ -394,6 +402,14 @@ export function useFlipper({ cpr1 }: Props) {
       for (let i = 0; i < amps.length; i++) maxA = Math.max(maxA, amps[i]);
     }
     const magnitude = fftMag(resampleUniform(tsRef.current, amps, 4096));
+    const dfHz = 1 / durationS;
+    const revolutionSpectra = revolutionTs.flatMap((timestamps, index) => {
+      const values = revolutionAmps[index];
+      if (!values || timestamps.length < 64) return [];
+      const revolutionDurationS = (timestamps[timestamps.length - 1] - timestamps[0]) / 1e6;
+      if (!(revolutionDurationS > 0.5)) return [];
+      return [{ dfHz: 1 / revolutionDurationS, magnitude: Array.from(fftMag(resampleUniform(timestamps, Float64Array.from(values), 4096))) }];
+    });
     return {
       id,
       label,
@@ -423,6 +439,8 @@ export function useFlipper({ cpr1 }: Props) {
         circularStdDeg: circular?.stdDeg ?? null,
         ellipse: positionedAngles.length >= 12 ? fitPolarEllipse(positionedAngles, positionedCurrents) : null,
       },
+      spectrum: { dfHz, magnitude: Array.from(magnitude) },
+      revolutionSpectra,
       samples: {
         anglesDeg: positionedAngles,
         currentA: positionedCurrents,
@@ -439,16 +457,10 @@ export function useFlipper({ cpr1 }: Props) {
   };
 
   const archiveExtendedPass = (id: string) => {
-    const raw = buildRawCsv(makeSamples(), rate, captureMetadataRef.current, calibrationRef.current);
-    const angles = [
-      "tb_ms,angle_relative_deg",
-      ...angleRef.current.map((point) => `${point.tb.toFixed(3)},${point.deg.toFixed(9)}`),
-      "",
-    ].join("\n");
-    extendedFilesRef.current.push(
-      { name: `datos/test-extendido/${id}-adc-crudo.csv`, data: raw },
-      { name: `datos/test-extendido/${id}-feedback-j.csv`, data: angles },
-    );
+    extendedFilesRef.current.push({
+      name: `${id}-medidas.csv`,
+      data: buildMeasurementCsv(makeSamples(), angleRef.current, captureMetadataRef.current, calibrationRef.current, "extended"),
+    });
   };
 
   useEffect(() => {
@@ -622,6 +634,9 @@ export function useFlipper({ cpr1 }: Props) {
 
   const rawCsvText = () => buildRawCsv(makeSamples(), rate, captureMetadataRef.current, calibrationRef.current);
 
+  const measurementCsvText = (testType: "basic" | "extended" = "basic") =>
+    buildMeasurementCsv(makeSamples(), angleRef.current, captureMetadataRef.current, calibrationRef.current, testType);
+
   const processedCsvText = () => {
     if (!derived?.plot) return null;
     const rows = Array.from({ length: derived.plot.length }, (_, i) => ({
@@ -638,10 +653,9 @@ export function useFlipper({ cpr1 }: Props) {
     const statsTxt = [
       `media=${derived.st.mean.toFixed(6)} A · mediana=${derived.st.median.toFixed(6)} A · σ=${derived.st.sd.toFixed(6)} A`,
       `σ_media=${derived.st.sem.toExponential(3)} A · N=${derived.st.n} · factor=${avgFactor}`,
-      "angle_source=mount_:j_feedback_time_interpolated",
       derived.st.feedbackSpeedDegS !== null
-        ? `feedback_speed=${derived.st.feedbackSpeedDegS.toFixed(6)} deg/s · samples_per_deg=${(derived.st.samplesPerDeg ?? 0).toFixed(3)}`
-        : "feedback_speed=unavailable",
+        ? `velocidad_feedback=${derived.st.feedbackSpeedDegS.toFixed(6)} deg/s · muestras_por_grado=${(derived.st.samplesPerDeg ?? 0).toFixed(3)}`
+        : "velocidad_feedback=no_disponible",
     ];
     return buildProcCsv(rows, rate, statsTxt, captureMetadataRef.current, calibrationRef.current);
   };
@@ -671,15 +685,18 @@ export function useFlipper({ cpr1 }: Props) {
       setNotice("No hay datos que exportar.");
       return;
     }
-    const files: { name: string; data: string | Uint8Array }[] = [
-      { name: "datos/adc-crudo.csv", data: rawCsvText() },
-      ...extendedFilesRef.current,
-    ];
-    const processed = processedCsvText();
-    if (processed) files.push({ name: "datos/angulo-corriente-procesado.csv", data: processed });
-    if (derived.mag) {
+    const axis = captureMetadataRef.current.axis === 1 ? "AR" : captureMetadataRef.current.axis === 2 ? "DEC" : "eje-desconocido";
+    const isExtended = Boolean(extendedAnalysis?.passes.length);
+    const testLabel = isExtended ? "test-extendido" : "test-basico";
+    const root = `NEQ6_${axis}_${testLabel}_${stamp()}`;
+    const files: { name: string; data: string | Uint8Array }[] = [];
+    if (isExtended) {
+      files.push(...extendedFilesRef.current.map((file) => ({ name: `${root}/medidas/${file.name}`, data: file.data })));
+    } else {
+      files.push({ name: `${root}/medidas/medidas.csv`, data: measurementCsvText("basic") });
+    }
+    if (!isExtended && derived.mag) {
       const speed = derived.st.feedbackSpeedDegS;
-      const axis = captureMetadataRef.current.axis === 1 ? "AR" : captureMetadataRef.current.axis === 2 ? "DEC" : "unknown";
       const direction = captureMetadataRef.current.direction?.toUpperCase() ?? "unknown";
       let fftCsv = `# axis=${axis}\n# direction=${direction}\nbin,frequency_hz,period_s,period_mount_deg,magnitude\n`;
       for (let i = 1; i < derived.mag.length; i++) {
@@ -687,15 +704,43 @@ export function useFlipper({ cpr1 }: Props) {
         const period = 1 / frequency;
         fftCsv += `${i},${frequency.toFixed(9)},${period.toFixed(9)},${speed ? (period * speed).toFixed(9) : ""},${derived.mag[i].toExponential(9)}\n`;
       }
-      files.push({ name: "datos/fft-espectro.csv", data: fftCsv });
+      files.push({ name: `${root}/fft/espectro.csv`, data: fftCsv });
     }
-    files.push({
-      name: "datos/resumen.json",
-      data: JSON.stringify({ exportedAt: new Date().toISOString(), requestedRateHz: rate, metadata: captureMetadataRef.current, calibration: calibrationRef.current, statistics: derived.st, sectors10deg: derived.sectors, ellipse: derived.ellipse, extendedAnalysis, deviceInfo }, null, 2),
-    });
-    files.push(...extraFiles);
-    downloadBlob(`neq6-test-${stamp()}.zip`, buildZip(files));
-    setNotice("Exportación completa preparada: gráficas, CSV, FFT y resumen.");
+    if (extendedAnalysis) {
+      for (const pass of extendedAnalysis.passes) {
+        if (!pass.spectrum) continue;
+        let csv = `# pasada=${pass.label}\n# eje=${axis}\n# sentido=${pass.direction.toUpperCase()}\nfrequency_hz,period_s,period_mount_deg,magnitude\n`;
+        for (let i = 1; i < pass.spectrum.magnitude.length; i++) {
+          const frequency = i * pass.spectrum.dfHz;
+          csv += `${frequency.toFixed(9)},${(1 / frequency).toFixed(9)},${pass.measuredSpeedDegS ? (pass.measuredSpeedDegS / frequency).toFixed(9) : ""},${pass.spectrum.magnitude[i].toExponential(9)}\n`;
+        }
+        files.push({ name: `${root}/fft/espectro-${pass.id}.csv`, data: csv });
+        pass.revolutionSpectra?.forEach((spectrum, revolutionIndex) => {
+          let revolutionCsv = `# pasada=${pass.label}\n# revolucion=${revolutionIndex + 1}\nfrequency_hz,period_s,period_mount_deg,magnitude\n`;
+          for (let i = 1; i < spectrum.magnitude.length; i++) {
+            const frequency = i * spectrum.dfHz;
+            revolutionCsv += `${frequency.toFixed(9)},${(1 / frequency).toFixed(9)},${pass.measuredSpeedDegS ? (pass.measuredSpeedDegS / frequency).toFixed(9) : ""},${spectrum.magnitude[i].toExponential(9)}\n`;
+          }
+          files.push({ name: `${root}/fft/revoluciones/${pass.id}-rev-${revolutionIndex + 1}.csv`, data: revolutionCsv });
+        });
+      }
+      const movingSpectra = extendedAnalysis.passes.filter((pass) => pass.direction !== "stationary" && pass.spectrum).map((pass) => pass.spectrum!);
+      const averageSpectrum = averageFftSpectra(movingSpectra.length ? movingSpectra : extendedAnalysis.passes.flatMap((pass) => pass.spectrum ? [pass.spectrum] : []));
+      if (averageSpectrum) {
+        let csv = "# promedio interpolado de todos los espectros del test extendido\nfrequency_hz,period_s,magnitude\n";
+        for (let i = 1; i < averageSpectrum.magnitude.length; i++) {
+          const frequency = i * averageSpectrum.dfHz;
+          csv += `${frequency.toFixed(9)},${(1 / frequency).toFixed(9)},${averageSpectrum.magnitude[i].toExponential(9)}\n`;
+        }
+        files.push({ name: `${root}/fft/espectro-promedio.csv`, data: csv });
+      }
+      let comparison = "grupo,clasificacion,frecuencia_hz,periodicidad_grados,pasadas,armonico_de_hz,evidencia\n";
+      for (const group of extendedAnalysis.groups) comparison += `${group.id},${group.classification},${group.representativeHz.toFixed(9)},${group.representativeDeg?.toFixed(9) ?? ""},\"${group.passes.join(" | ")}\",${group.harmonicOfHz?.toFixed(9) ?? ""},\"${group.reason.replaceAll('"', '""')}\"\n`;
+      files.push({ name: `${root}/fft/analisis-comparativo.csv`, data: comparison });
+    }
+    files.push(...extraFiles.map((file) => ({ name: `${root}/${file.name.replace(/^datos\//, "fft/")}`, data: file.data })));
+    downloadBlob(`${root}.zip`, buildZip(files));
+    setNotice("Exportación preparada: medidas sin agrupar, gráficas y análisis FFT.");
   };
 
   const exportSavedSessions = async () => {
@@ -703,10 +748,29 @@ export function useFlipper({ cpr1 }: Props) {
     const files = sessions.flatMap((session) => {
       const safeName = session.name.replace(/[^a-z0-9_-]+/gi, "_");
       const samples = session.adc.map((adc, index) => ({ tb: session.tb[index], ts: session.ts[index], adc }));
-      return [
-        { name: `sesiones/${safeName}/adc-crudo.csv`, data: buildRawCsv(samples, session.rateHz, session.metadata, session.calibration) },
-        { name: `sesiones/${safeName}/metadatos.json`, data: JSON.stringify({ name: session.name, createdAt: session.createdAt, axis: session.metadata?.axis, direction: session.metadata?.direction }, null, 2) },
-      ];
+      const axis = session.metadata?.axis === 1 ? "AR" : session.metadata?.axis === 2 ? "DEC" : "eje-desconocido";
+      const kind = session.extendedAnalysis?.passes.length ? "test-extendido" : "test-basico";
+      const angles = session.angleTb.map((tb, index) => ({ tb, deg: session.angleDeg[index] }));
+      const base = `sesiones/${safeName}_${axis}_${kind}`;
+      const archivedMeasurements = session.extendedFiles?.filter((file) => file.name.endsWith("-medidas.csv")) ?? [];
+      const result: { name: string; data: string }[] = kind === "test-extendido" && archivedMeasurements.length
+        ? archivedMeasurements.map((file) => ({ name: `${base}/medidas/${file.name.split("/").pop()}`, data: file.data }))
+        : [{ name: `${base}/medidas.csv`, data: buildMeasurementCsv(samples, angles, session.metadata, session.calibration, kind === "test-extendido" ? "extended" : "basic") }];
+      if (session.extendedAnalysis) {
+        for (const pass of session.extendedAnalysis.passes) {
+          if (!pass.spectrum) continue;
+          let csv = `# pasada=${pass.label}\nfrequency_hz,period_s,period_mount_deg,magnitude\n`;
+          for (let i = 1; i < pass.spectrum.magnitude.length; i++) {
+            const frequency = i * pass.spectrum.dfHz;
+            csv += `${frequency.toFixed(9)},${(1 / frequency).toFixed(9)},${pass.measuredSpeedDegS ? (pass.measuredSpeedDegS / frequency).toFixed(9) : ""},${pass.spectrum.magnitude[i].toExponential(9)}\n`;
+          }
+          result.push({ name: `${base}/fft/espectro-${pass.id}.csv`, data: csv });
+        }
+        let comparison = "grupo,clasificacion,frecuencia_hz,periodicidad_grados,pasadas,evidencia\n";
+        for (const group of session.extendedAnalysis.groups) comparison += `${group.id},${group.classification},${group.representativeHz.toFixed(9)},${group.representativeDeg?.toFixed(9) ?? ""},\"${group.passes.join(" | ")}\",\"${group.reason.replaceAll('"', '""')}\"\n`;
+        result.push({ name: `${base}/fft/analisis-comparativo.csv`, data: comparison });
+      }
+      return result;
     });
     downloadBlob(`neq6-sesiones-${stamp()}.zip`, buildZip(files));
     setNotice(`${sessions.length} sesiones exportadas.`);

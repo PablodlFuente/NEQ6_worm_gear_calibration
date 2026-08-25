@@ -7,6 +7,8 @@ import {
   chooseSampleClockOffset,
   averageAngleSeries,
   angleAt,
+  averageFftSpectra,
+  buildMeasurementCsv,
   buildProcCsv,
   buildRawCsv,
   capturedAngleDeltaDeg,
@@ -96,6 +98,34 @@ test("CSV conserva eje, sentido y origen absoluto de la captura", () => {
   const parsed = parseCsv(csv)!;
   assert.deepEqual(parsed.metadata, { axis: 2, direction: "ccw", originSteps: 123456 });
   assert.deepEqual(parsed.calibration, { shuntOhm: 0.5, k: 0.99 });
+});
+
+test("CSV de usuario conserva cada muestra cruda y documenta sus seis columnas", () => {
+  const samples = [
+    { ts: 100, adc: 321, tb: Date.parse("2026-01-02T03:04:05.000Z") },
+    { ts: 200, adc: 322, tb: Date.parse("2026-01-02T03:04:05.100Z") },
+  ];
+  const csv = buildMeasurementCsv(
+    samples,
+    [{ tb: samples[0].tb, deg: 359 }, { tb: samples[1].tb, deg: 1 }],
+    { axis: 2, direction: "cw", originSteps: 10 },
+  );
+  assert.match(csv, /^# test=basico/m);
+  assert.match(csv, /^# eje=DEC/m);
+  assert.match(csv, /^# (t_us|timestamp|adc_raw|amps_raw|angle|rev):/m);
+  assert.match(csv, /^t_us,timestamp,adc_raw,amps_raw,angle,rev$/m);
+  assert.doesNotMatch(csv, /tb_ms|:j|n_group/);
+  const parsed = parseCsv(csv);
+  assert.equal(parsed?.samples.length, 2);
+  assert.equal(parsed?.angles.length, 2);
+});
+
+test("promedia FFT con distinta resolución sobre un eje común", () => {
+  const average = averageFftSpectra([
+    { dfHz: 1, magnitude: [0, 2, 4, 6] },
+    { dfHz: 0.5, magnitude: [0, 1, 2, 3, 4, 5, 6] },
+  ]);
+  assert.deepEqual(average, { dfHz: 1, magnitude: [0, 2, 4, 6] });
 });
 
 test("reposiciona un ángulo relativo respetando origen y sentido", () => {

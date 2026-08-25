@@ -71,10 +71,40 @@ export interface ExtendedAngularProfile {
 }
 
 export interface ExtendedAngularSamples {
-  /** Ángulo desenvuelto procedente de :j para cada muestra posicionada. */
+  /** Ángulo desenvuelto del feedback de la montura para cada muestra posicionada. */
   anglesDeg: number[];
   /** Corriente calibrada correspondiente, sin promedio implícito. */
   currentA: number[];
+}
+
+export interface FftSpectrum {
+  /** Separación entre bins del espectro. */
+  dfHz: number;
+  /** Magnitud, incluido el bin de continua. */
+  magnitude: number[];
+}
+
+/** Promedia espectros con distinta resolución interpolándolos sobre el eje
+ * común más prudente: el df más grueso y el menor Nyquist disponible. */
+export function averageFftSpectra(spectra: FftSpectrum[]): FftSpectrum | null {
+  const valid = spectra.filter((spectrum) => spectrum.dfHz > 0 && spectrum.magnitude.length > 2);
+  if (!valid.length) return null;
+  const dfHz = Math.max(...valid.map((spectrum) => spectrum.dfHz));
+  const maxHz = Math.min(...valid.map((spectrum) => (spectrum.magnitude.length - 1) * spectrum.dfHz));
+  const length = Math.floor(maxHz / dfHz) + 1;
+  const magnitude = Array.from({ length }, (_, index) => {
+    const hz = index * dfHz;
+    let sum = 0;
+    for (const spectrum of valid) {
+      const position = hz / spectrum.dfHz;
+      const left = Math.floor(position);
+      const right = Math.min(spectrum.magnitude.length - 1, left + 1);
+      const fraction = position - left;
+      sum += spectrum.magnitude[left] * (1 - fraction) + spectrum.magnitude[right] * fraction;
+    }
+    return sum / valid.length;
+  });
+  return { dfHz, magnitude };
 }
 
 export interface ExtendedPassResult {
@@ -85,6 +115,10 @@ export interface ExtendedPassResult {
   measuredSpeedDegS: number | null;
   peaks: ExtendedPeak[];
   statistics: ExtendedPassStatistics;
+  /** Espectro completo de la pasada, no sólo sus picos principales. */
+  spectrum?: FftSpectrum;
+  /** Espectros separados de cada revolución completa disponible. */
+  revolutionSpectra?: FftSpectrum[];
   /** Datos nuevos: bloque × se aplica dinámicamente en la interfaz. */
   samples: ExtendedAngularSamples;
   /** Compatibilidad con sesiones creadas por versiones anteriores. */
@@ -706,12 +740,50 @@ export function buildProcCsv(
   return head + body.join("\n") + "\n";
 }
 
+/** CSV único orientado al usuario: una fila por conversión real del ADC. */
+export function buildMeasurementCsv(
+  samples: Sample[],
+  anglePoints: AnglePoint[],
+  metadata?: CaptureMetadata,
+  calibration: AdcCalibration = DEFAULT_ADC_CALIBRATION,
+  testType: "basic" | "extended" = "basic",
+): string {
+  const axis = metadata?.axis === 1 ? "AR" : metadata?.axis === 2 ? "DEC" : "desconocido";
+  const direction = metadata?.direction?.toUpperCase() ?? "sin movimiento";
+  const unwrapped = unwrapDegrees(anglePoints);
+  let origin: number | null = null;
+  const rows = samples.map((sample) => {
+    const absoluteAngle = angleAt(unwrapped, sample.tb);
+    if (absoluteAngle !== null && origin === null) origin = absoluteAngle;
+    const travel = absoluteAngle !== null && origin !== null ? Math.abs(absoluteAngle - origin) : null;
+    const angle = absoluteAngle === null ? "" : (((absoluteAngle % 360) + 360) % 360).toFixed(9);
+    const rev = travel === null ? "" : String(Math.floor((travel + 1e-4) / 360) + 1);
+    const timestamp = sample.tb > 0 ? new Date(sample.tb).toISOString() : "";
+    return `${sample.ts},${timestamp},${sample.adc},${adcToAmps(sample.adc, calibration).toFixed(9)},${angle},${rev}`;
+  });
+  return [
+    `# test=${testType === "extended" ? "extendido" : "basico"}`,
+    `# eje=${axis}`,
+    `# sentido=${direction}`,
+    "# t_us: tiempo monotónico de la muestra medido por el Flipper, en microsegundos",
+    "# timestamp: fecha y hora UTC de recepción sincronizada, formato ISO 8601",
+    "# adc_raw: lectura digital original del ADC, sin agrupar ni promediar",
+    "# amps_raw: corriente calculada para esa lectura con la calibración del shunt, en amperios",
+    "# angle: posición angular dentro de la revolución, de 0 a menos de 360 grados; vacía sin movimiento",
+    "# rev: revolución de la captura, empezando en 1; vacía sin movimiento",
+    `# calibracion: shunt=${calibration.shuntOhm} ohm; k=${calibration.k}`,
+    "t_us,timestamp,adc_raw,amps_raw,angle,rev",
+    ...rows,
+    "",
+  ].join("\n");
+}
+
 export function parseCsv(text: string): { samples: Sample[]; angles: AnglePoint[]; processed: boolean; metadata: CaptureMetadata; calibration: AdcCalibration } | null {
   const metadata: CaptureMetadata = { ...EMPTY_CAPTURE_METADATA };
   const calibration: AdcCalibration = { ...DEFAULT_ADC_CALIBRATION };
   for (const line of text.split(/\r?\n/)) {
-    const axis = line.match(/^#\s*axis=(AR|DEC)/i)?.[1]?.toUpperCase();
-    const direction = line.match(/^#\s*direction=(CW|CCW)/i)?.[1]?.toLowerCase();
+    const axis = line.match(/^#\s*(?:axis|eje)=(AR|DEC)/i)?.[1]?.toUpperCase();
+    const direction = line.match(/^#\s*(?:direction|sentido)=(CW|CCW)/i)?.[1]?.toLowerCase();
     const origin = line.match(/^#\s*origin_steps=(-?\d+)/i)?.[1];
     const shunt = line.match(/^#\s*shunt_ohm=([\d.eE+-]+)/i)?.[1];
     const k = line.match(/^#\s*calibration_k=([\d.eE+-]+)/i)?.[1];
@@ -724,12 +796,13 @@ export function parseCsv(text: string): { samples: Sample[]; angles: AnglePoint[
   const lines = text.split(/\r?\n/).filter((l) => l.length && !l.startsWith("#"));
   if (!lines.length) return null;
   const head = lines[0].toLowerCase().split(",");
-  const iTs = head.indexOf("ts_us");
+  const iTs = Math.max(head.indexOf("ts_us"), head.indexOf("t_us"));
   const iAdc = head.indexOf("adc_raw");
   const iTb = head.indexOf("tb_ms");
-  const iAngle = head.indexOf("angle_unwrapped_deg");
+  const iTimestamp = head.indexOf("timestamp");
+  const iAngle = Math.max(head.indexOf("angle_unwrapped_deg"), head.indexOf("angle"));
   if (iTs < 0 || iAdc < 0) return null;
-  const processed = head.includes("amps");
+  const processed = head.includes("amps") || head.includes("amps_raw");
   const samples: Sample[] = [];
   const angles: AnglePoint[] = [];
   for (let i = 1; i < lines.length; i++) {
@@ -742,7 +815,7 @@ export function parseCsv(text: string): { samples: Sample[]; angles: AnglePoint[
       const amps = Number(c[head.indexOf("amps")]);
       if (isFinite(amps)) adc = Math.round(amps / ampsPerRaw(calibration));
     }
-    const tb = iTb >= 0 ? Number(c[iTb]) || 0 : 0;
+    const tb = iTb >= 0 ? Number(c[iTb]) || 0 : iTimestamp >= 0 ? Date.parse(c[iTimestamp]) || 0 : 0;
     samples.push({ ts, adc: Math.round(adc), tb });
     if (iAngle >= 0) {
       const angle = Number(c[iAngle]);

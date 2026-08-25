@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import type { FlipperApi } from "../hooks/useFlipper";
-import { circularStats, fitPolarEllipse } from "../lib/flipper";
+import { averageFftSpectra, circularStats, fitPolarEllipse, topPeaks } from "../lib/flipper";
 import { IconAlert, IconDownload, IconTrash, IconZoom } from "./icons";
 
 const AVGS = [1, 2, 5, 10, 20, 50, 100];
@@ -235,6 +235,8 @@ export default function FlipperLab({
   const [selectedPeaks, setSelectedPeaks] = useState<Peak[]>([]);
   const [hiddenExtendedSeries, setHiddenExtendedSeries] = useState<Set<string>>(() => new Set());
   const [showExtendedMean, setShowExtendedMean] = useState(true);
+  const [selectedFftSeries, setSelectedFftSeries] = useState("average");
+  const [overlayFftSeries, setOverlayFftSeries] = useState(false);
   const [movePrompt, setMovePrompt] = useState<{ angle: number; x: number; y: number } | null>(null);
   const [exportMenu, setExportMenu] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
@@ -244,6 +246,32 @@ export default function FlipperLab({
   /* Sesiones guardadas antes de incorporar perfiles/estadísticas extendidas
    * siguen siendo cargables; sencillamente no se dibujan como multipasada. */
   const extendedPasses = (flip.extendedAnalysis?.passes ?? []).filter((pass) => Boolean(pass.statistics));
+  const extendedFftSeries = useMemo(() => {
+    const passes = extendedPasses.flatMap((pass, index) => pass.spectrum ? [{
+      id: pass.id,
+      label: pass.label,
+      color: REV_COLORS[index % REV_COLORS.length],
+      spectrum: pass.spectrum,
+    }] : []);
+    const movingSpectra = passes.filter((series) => extendedPasses.find((pass) => pass.id === series.id)?.direction !== "stationary");
+    const average = averageFftSpectra((movingSpectra.length ? movingSpectra : passes).map((series) => series.spectrum));
+    return average ? [...passes, { id: "average", label: "Promedio", color: "#f0f5ff", spectrum: average }] : passes;
+  }, [extendedPasses]);
+  const selectedExtendedPass = extendedPasses.find((pass) => pass.id === selectedFftSeries);
+  const displayedFftPeaks: Peak[] = extendedFftSeries.length
+    ? selectedExtendedPass
+      ? selectedExtendedPass.peaks.slice(0, 5).map((peak) => ({
+          bin: Math.round(peak.frequencyHz / (selectedExtendedPass.spectrum?.dfHz || 1)),
+          freq: peak.frequencyHz,
+          period: 1 / peak.frequencyHz,
+          mag: peak.magnitude,
+        }))
+      : (() => {
+          const average = extendedFftSeries.find((series) => series.id === "average")?.spectrum;
+          return average ? topPeaks(Float64Array.from(average.magnitude), average.dfHz, 5) : [];
+        })()
+    : derived?.peaks ?? [];
+  const displayedFftSpeed = selectedExtendedPass?.measuredSpeedDegS ?? (extendedFftSeries.length ? null : derived?.st.feedbackSpeedDegS ?? null);
   const extendedDisplaySeries = useMemo(() => extendedPasses.flatMap((pass, passIndex) => {
     const factor = Math.max(1, Math.floor(flip.avgFactor));
     if (pass.samples?.anglesDeg?.length) {
@@ -445,6 +473,14 @@ export default function FlipperLab({
     setHiddenExtendedSeries(new Set());
     setShowExtendedMean(true);
   }, [flip.extendedAnalysis]);
+  useEffect(() => {
+    if (flip.extendedAnalysis) setSelectedPeaks([]);
+  }, [flip.extendedAnalysis]);
+  useEffect(() => {
+    if (!extendedFftSeries.some((series) => series.id === selectedFftSeries)) {
+      setSelectedFftSeries(extendedFftSeries.some((series) => series.id === "average") ? "average" : extendedFftSeries[0]?.id ?? "average");
+    }
+  }, [extendedFftSeries, selectedFftSeries]);
 
   const setTransform = (next: ChartTransform) => setTransforms((all) => ({ ...all, [view]: next }));
   const resetView = () => setTransforms((all) => ({ ...all, [view]: RESET_TRANSFORM }));
@@ -882,6 +918,33 @@ export default function FlipperLab({
     ctx.clearRect(0, 0, w, h);
     const mag = derived?.mag;
     ctx.font = "8.5px IBM Plex Mono, monospace";
+    if (extendedFftSeries.length) {
+      const visible = overlayFftSeries
+        ? extendedFftSeries
+        : extendedFftSeries.filter((series) => series.id === selectedFftSeries);
+      const spectra = visible.length ? visible : [extendedFftSeries[0]];
+      const L = 10, Bm = 18;
+      const maxHz = Math.max(...spectra.map((series) => (series.spectrum.magnitude.length - 1) * series.spectrum.dfHz));
+      let maxMagnitude = 0;
+      for (const series of spectra) for (let i = 2; i < series.spectrum.magnitude.length; i++) maxMagnitude = Math.max(maxMagnitude, series.spectrum.magnitude[i]);
+      const X = (hz: number) => L + (hz / (maxHz || 1)) * (w - L * 2);
+      const Y = (value: number) => h - Bm - Math.sqrt(value / (maxMagnitude || 1)) * (h - Bm - 12);
+      for (const series of spectra) {
+        ctx.strokeStyle = series.id === "average" ? "rgba(240,245,255,0.78)" : series.color;
+        ctx.lineWidth = series.id === "average" ? 2.4 : 1.2;
+        ctx.globalAlpha = overlayFftSeries && series.id !== "average" ? 0.65 : 1;
+        ctx.beginPath();
+        for (let i = 2; i < series.spectrum.magnitude.length; i++) {
+          const x = X(i * series.spectrum.dfHz), y = Y(series.spectrum.magnitude[i]);
+          if (i === 2) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+        }
+        ctx.stroke();
+      }
+      ctx.globalAlpha = 1;
+      ctx.fillStyle = "#42567a"; ctx.textAlign = "left"; ctx.fillText("0 Hz", L, h - 6);
+      ctx.textAlign = "right"; ctx.fillText(`${maxHz.toFixed(2)} Hz`, w - L, h - 6);
+      return;
+    }
     if (!mag || !derived) {
       ctx.fillStyle = "#42567a";
       ctx.textAlign = "center";
@@ -996,7 +1059,7 @@ export default function FlipperLab({
       { name: "graficas/polar-elipse.png", data: polar },
       { name: "graficas/cartesiana.png", data: cart },
       { name: "graficas/fft.png", data: fft },
-      { name: "datos/fft-picos.csv", data: peaksCsv },
+      ...(!flip.extendedAnalysis ? [{ name: "datos/fft-picos.csv", data: peaksCsv }] : []),
     ]);
   };
 
@@ -1013,12 +1076,12 @@ export default function FlipperLab({
       case "cartesiano":
         return <ChartCanvas draw={drawCart} className="h-[46dvh] min-h-[300px]" onPick={(x, y, cx, cy) => pickMountPosition("cartesiano", x, y, cx, cy)} {...interaction} />;
       case "fft":
-        return <ChartCanvas draw={drawFft} className="h-[46dvh] min-h-[300px]" onPick={(x) => pickFft(x)} {...interaction} />;
+        return <ChartCanvas draw={drawFft} className="h-[46dvh] min-h-[300px]" onPick={extendedFftSeries.length ? undefined : (x) => pickFft(x)} {...interaction} />;
       default:
         return <ChartCanvas draw={drawLive} className="h-[46dvh] min-h-[300px]" {...interaction} />;
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [view, derived, n, flip.tick, flip.overlayRevs, flip.capturing, flip.extendedAnalysis, extendedMeanProfile, selectedEllipse, polarLoadAnalysis, hiddenExtendedSeries, showExtendedMean, regionZoom, transforms, selectedPeaks]);
+  }, [view, derived, n, flip.tick, flip.overlayRevs, flip.capturing, flip.extendedAnalysis, extendedMeanProfile, selectedEllipse, polarLoadAnalysis, hiddenExtendedSeries, showExtendedMean, extendedFftSeries, selectedFftSeries, overlayFftSeries, regionZoom, transforms, selectedPeaks]);
 
   const selCls =
     "rounded border border-line bg-[#0c1930] px-1.5 py-1 font-mono text-[10.5px] text-fog focus:border-ion/60 focus:outline-none disabled:opacity-40";
@@ -1175,6 +1238,27 @@ export default function FlipperLab({
                 )}
               </div>
             )}
+            {view === "fft" && extendedFftSeries.length > 0 && (
+              <div className="flex flex-wrap items-center gap-1.5 rounded border border-line bg-[#0c1930] px-2 py-1.5 font-mono text-[9px]">
+                <span className="mr-1 uppercase tracking-wider text-dim">Espectro mostrado</span>
+                {extendedFftSeries.map((series) => (
+                  <button
+                    key={series.id}
+                    onClick={() => { setSelectedFftSeries(series.id); setOverlayFftSeries(false); }}
+                    className={`rounded border px-2 py-0.5 ${!overlayFftSeries && selectedFftSeries === series.id ? "border-current opacity-100" : "border-line opacity-45"}`}
+                    style={{ color: series.color }}
+                  >
+                    ● {series.label}
+                  </button>
+                ))}
+                <button
+                  onClick={() => setOverlayFftSeries((value) => !value)}
+                  className={`rounded border px-2 py-0.5 text-ion ${overlayFftSeries ? "border-ion opacity-100" : "border-line opacity-50"}`}
+                >
+                  SUPERPONER TODO
+                </button>
+              </div>
+            )}
             {chartFor}
             <p className="font-mono text-[9.5px] text-dim">Rueda: zoom · botón derecho: desplazar · Zoom rect: arrastra un área con el botón izquierdo · Restaurar: vista completa.</p>
             {(view === "polar" || view === "cartesiano") && derived?.plot && (
@@ -1186,7 +1270,9 @@ export default function FlipperLab({
             {view === "fft" && derived && (
               <div className="overflow-hidden rounded border border-line">
                 <p className="border-b border-line bg-[#0c1930] px-2 py-1.5 font-mono text-[9px] text-dim">
-                  5 picos principales automáticos + selecciones manuales · pulsa sobre el espectro para añadir
+                  {extendedFftSeries.length
+                    ? "5 picos principales del espectro seleccionado · cambia de serie o superpone todas arriba"
+                    : "5 picos principales automáticos + selecciones manuales · pulsa sobre el espectro para añadir"}
                 </p>
                 <table className="w-full font-mono text-[10px]">
                   <thead>
@@ -1200,7 +1286,7 @@ export default function FlipperLab({
                     </tr>
                   </thead>
                   <tbody>
-                    {derived.peaks.map((p, i) => (
+                    {displayedFftPeaks.map((p, i) => (
                       <tr key={`auto-${p.bin}`} className="border-t border-line/60 text-fog">
                         <td className="px-2 py-1 text-ember">A{i + 1}</td>
                         <td className="px-2 py-1 tabular-nums">{p.freq.toFixed(3)} Hz</td>
@@ -1208,8 +1294,8 @@ export default function FlipperLab({
                           {p.period >= 1 ? `${p.period.toFixed(3)} s` : `${(p.period * 1000).toFixed(1)} ms`}
                         </td>
                         <td className="px-2 py-1 tabular-nums text-ion">
-                          {derived.st.feedbackSpeedDegS
-                            ? `${(p.period * derived.st.feedbackSpeedDegS).toFixed(3)}°`
+                          {displayedFftSpeed
+                            ? `${(p.period * displayedFftSpeed).toFixed(3)}°`
                             : "—"}
                         </td>
                         <td className="px-2 py-1 text-right tabular-nums text-dim">{p.mag.toExponential(2)}</td>
@@ -1251,7 +1337,7 @@ export default function FlipperLab({
             {view === "fft" && derived && (
               <p className="font-mono text-[9.5px] text-dim">
                 Espectro · {derived.st.durS.toFixed(1)} s de señal · resolución{" "}
-                {(1 / (derived.st.durS || 1)).toFixed(3)} Hz · ventana de Hann · grados calculados con velocidad medida :j
+                {(1 / (derived.st.durS || 1)).toFixed(3)} Hz · ventana de Hann · grados calculados con el feedback de posición de la montura
               </p>
             )}
             {view === "fft" && flip.extendedAnalysis && (
