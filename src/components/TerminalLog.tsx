@@ -92,8 +92,15 @@ function EntryRow({ e, mode }: { e: LogEntry; mode: DisplayMode }) {
 
 function EmptyState({ ready, minimal, label }: { ready: boolean; minimal?: boolean; label?: string }) {
   if (minimal) return (
-    <div className="flex h-full items-center justify-center px-6 text-center">
-      <p className="font-display text-sm font-bold tracking-[0.3em] text-fog">{label ?? "MONITOR EN ESPERA"}</p>
+    <div className="flex h-full flex-col items-center justify-center gap-5 px-6 text-center">
+      <div className="relative">
+        <IconCrosshair className="spin-slow h-16 w-16 text-ember/70" />
+        <span className="absolute -inset-4 -z-10 rounded-full bg-ember/10 blur-2xl" />
+      </div>
+      <div>
+        <p className="font-display text-sm font-bold tracking-[0.3em] text-fog">{label ?? "MONITOR EN ESPERA"}</p>
+        <p className="mx-auto mt-2 max-w-sm font-mono text-xs leading-relaxed text-dim">Conecta el Flipper por BLE o USB-COM en Ajustes → Conexión Flipper para ver sus mensajes.</p>
+      </div>
     </div>
   );
   return (
