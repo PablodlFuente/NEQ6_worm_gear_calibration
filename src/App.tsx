@@ -1177,6 +1177,23 @@ export default function App() {
         deg: (targetDeg + 2) * measurementSign,
         maxDeg: 3602,
         onTargetReached: async () => {
+          /* La última consulta periódica puede quedar a 1–2° del STOP. Se
+           * toma una ancla final una vez detenido para cerrar exactamente en
+           * 360° y no recortar la corona al dibujar la vuelta. */
+          if (captureStarted && acquisitionPreviousPosition !== null) {
+            const finalAt = Date.now();
+            if (await sendRaw(`:j${axis}`, false)) {
+              const finalPosition = parsePosLine(await waitForRx(RX_TIMEOUT_MS));
+              if (finalPosition !== null) {
+                let delta = finalPosition - acquisitionPreviousPosition;
+                if (delta > MAX_POSITION_DELTA) delta -= 0x1000000;
+                else if (delta < -MAX_POSITION_DELTA) delta += 0x1000000;
+                travelledSteps += delta;
+                acquisitionPreviousPosition = finalPosition;
+                flip.recordAngle((travelledSteps * 360) / cpr, finalAt);
+              }
+            }
+          }
           if (captureStarted && !captureStopped) {
             await flip.stopCapture();
             captureStopped = true;

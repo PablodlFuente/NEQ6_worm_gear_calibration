@@ -38,6 +38,11 @@ export default function FlipperSerialConsole({ flip, view = "commands" }: { flip
         ))}
         <div ref={endRef} />
       </div>
+      <div className="flex shrink-0 items-center gap-2 border-t border-line bg-[#0a1424] p-2">
+        <span className="select-none pl-1 font-mono text-sm font-semibold text-ember">›</span>
+        <input value={command} onChange={(event) => setCommand(event.target.value)} onKeyDown={(event) => event.key === "Enter" && void send()} disabled={!flip.connected || flip.capturing} placeholder={flip.capturing ? "Captura activa…" : "INFO · SYNC · RATE 500 — Enter envía"} className="min-w-0 flex-1 bg-transparent font-mono text-[13px] text-[#e8f0ff] placeholder:text-[#44587c] focus:outline-none disabled:opacity-40" />
+        <button onClick={() => void send()} disabled={!flip.connected || flip.capturing || !command.trim()} className="flex shrink-0 items-center gap-1.5 rounded bg-ember px-3.5 py-1.5 font-display text-[11px] font-bold tracking-[0.18em] text-[#1c1204] disabled:opacity-35"><IconSend className="h-3.5 w-3.5" /> ENVIAR</button>
+      </div>
     </section>
   );
 
@@ -61,20 +66,7 @@ export default function FlipperSerialConsole({ flip, view = "commands" }: { flip
           </button>
         ))}
       </div>
-      <div className="mt-auto border-t border-line pt-2.5">
-      <p className="mb-1.5 font-mono text-[9.5px] text-dim">RATE &lt;Hz&gt; admite 10–1000.</p>
-      <div className="flex gap-1.5">
-        <input
-          value={command}
-          onChange={(event) => setCommand(event.target.value)}
-          onKeyDown={(event) => event.key === "Enter" && void send()}
-          disabled={!flip.connected || flip.capturing}
-          placeholder={flip.capturing ? "Captura activa…" : "INFO, SYNC, RATE 500…"}
-          className="min-w-0 flex-1 rounded border border-line bg-[#0c1930] px-2 py-1.5 font-mono text-[10.5px] text-fog focus:border-ion/60 focus:outline-none disabled:opacity-40"
-        />
-        <button onClick={() => void send()} disabled={!flip.connected || flip.capturing || !command.trim()} className="flex items-center gap-1 rounded bg-ion px-3 font-display text-[9.5px] font-bold text-[#04121c] disabled:opacity-35"><IconSend className="h-3 w-3" /> ENVIAR</button>
-      </div>
-      </div>
+      <div className="mt-3 border-t border-line pt-2.5 font-mono text-[10px] text-dim">RATE &lt;Hz&gt; admite 10–1000. El último tráfico y sus respuestas se ven y se envían desde el monitor izquierdo.</div>
     </section>
   );
 }
