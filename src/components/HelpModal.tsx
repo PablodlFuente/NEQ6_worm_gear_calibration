@@ -112,6 +112,12 @@ export default function HelpModal({ open, onClose }: Props) {
               concentra esa carga: cerca de 1 hay una dirección dominante; cerca de 0 la corriente es casi uniforme o hay
               sectores opuestos que se cancelan. Con R̄ baja, el ángulo resultante y la σ circular no son representativos.
             </HelpBlock>
+            <HelpBlock title="Zonas de carga en Polar">
+              El círculo naranja punteado representa la corriente media global. Los sectores sombreados tienen ancho
+              variable y cubren los intervalos donde una media angular suavizada de 5° permanece por encima de ese círculo;
+              el sector dominante se pinta algo más intenso. El radio azul punteado señala siempre la dirección de carga
+              circular. Al ocultar series desde la leyenda se recalculan zonas, dirección y elipse con las series visibles.
+            </HelpBlock>
             <HelpBlock title="Zoom, picos, elipse y exportación">
               La rueda hace zoom siempre; desplaza con el botón derecho. «Zoom rect» funciona como la lupa de Matplotlib:
               actívala y arrastra con el botón izquierdo el rectángulo que quieres ampliar. Se desactiva tras aplicarlo y

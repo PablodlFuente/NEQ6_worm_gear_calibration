@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import type { FlipperApi } from "../hooks/useFlipper";
-import { fitPolarEllipse } from "../lib/flipper";
+import { circularStats, fitPolarEllipse } from "../lib/flipper";
 import { IconAlert, IconDownload, IconTrash } from "./icons";
 
 const AVGS = [1, 2, 5, 10, 20, 50, 100];
@@ -166,6 +166,7 @@ const STAT_HELP: Record<string, string> = {
   "pico máximo / posición": "Mayor muestra instantánea y ángulo interpolado donde apareció.",
   "sector 10° de mayor media": "Entre las 36 secciones angulares, la de corriente media más alta.",
   "sector 10° de menor media": "Entre las 36 secciones angulares, la de corriente media más baja.",
+  "zona sobre la media": "Región angular continua donde el perfil suavizado permanece por encima de la corriente media global.",
   "dirección de carga circular": "Dirección del vector resultante al ponderar cada ángulo por su corriente. Sólo es representativa cuando R̄ no es baja.",
   "concentración R̄": "Asimetría angular de la carga entre 0 y 1. Cerca de 0: carga uniforme o sectores opuestos que se cancelan; cerca de 1: concentrada en una dirección.",
   "dispersión circular σ": "Dispersión angular equivalente derivada de R̄. Si R̄ está cerca de cero, tanto σ como la dirección media son poco informativas.",
@@ -179,7 +180,9 @@ const STAT_HELP: Record<string, string> = {
 };
 
 function StatCell({ k, v, tone }: { k: string; v: ReactNode; tone?: string }) {
-  const help = STAT_HELP[k] ?? (k.startsWith("Flipper ") ? "OOR cuenta lecturas fuera de rango y OVF pérdidas por desbordamiento del búfer." : undefined);
+  const help = STAT_HELP[k]
+    ?? (k.includes("± incertidumbre") ? "Media entre las vueltas de movimiento ± error estándar de esa media entre vueltas." : undefined)
+    ?? (k.startsWith("Flipper ") ? "OOR cuenta lecturas fuera de rango y OVF pérdidas por desbordamiento del búfer." : undefined);
   return (
     <div title={help} className={`flex items-baseline justify-between gap-2 rounded border border-line bg-[#0c1930] px-2 py-1.5 ${help ? "cursor-help" : ""}`}>
       <span className="text-[8.5px] uppercase tracking-wider text-dim">{k}</span>
@@ -298,33 +301,126 @@ export default function FlipperLab({
     }
     return { currentA, currentErr };
   }, [activeExtendedSeries]);
-  const extendedMeanEllipse = useMemo(() => {
-    if (!extendedMeanProfile) return null;
+  const polarProfile = useMemo(() => {
+    if (extendedDisplaySeries.length) {
+      if (!activeExtendedSeries.length) return null;
+      if (extendedMeanProfile) return extendedMeanProfile;
+      const series = activeExtendedSeries[0];
+      const sums = new Float64Array(360);
+      const sums2 = new Float64Array(360);
+      const counts = new Uint32Array(360);
+      series.angles.forEach((angle, index) => {
+        const bin = Math.min(359, Math.floor(((angle % 360) + 360) % 360));
+        const current = series.currents[index];
+        sums[bin] += current; sums2[bin] += current * current; counts[bin]++;
+      });
+      return {
+        currentA: Array.from(sums, (sum, index) => counts[index] ? sum / counts[index] : null),
+        currentErr: Array.from(sums, (sum, index) => {
+          const count = counts[index];
+          if (count < 2) return 0;
+          const variance = Math.max(0, (sums2[index] - sum * sum / count) / (count - 1));
+          return Math.sqrt(variance / count);
+        }),
+      };
+    }
+    const plot = derived?.plot;
+    if (!plot) return null;
+    const sums = new Float64Array(360);
+    const counts = new Uint32Array(360);
+    for (let i = 0; i < plot.length; i++) {
+      const bin = Math.min(359, Math.floor(((plot.angles[i] % 360) + 360) % 360));
+      sums[bin] += plot.amps[i]; counts[bin]++;
+    }
+    return { currentA: Array.from(sums, (sum, index) => counts[index] ? sum / counts[index] : null), currentErr: Array(360).fill(0) as number[] };
+  }, [extendedDisplaySeries, activeExtendedSeries, extendedMeanProfile, derived]);
+  const selectedEllipse = useMemo(() => {
+    if (!polarProfile) return null;
     const angles: number[] = [];
     const currents: number[] = [];
-    extendedMeanProfile.currentA.forEach((current, index) => {
+    polarProfile.currentA.forEach((current, index) => {
       if (current === null) return;
-      angles.push(index + 0.5);
-      currents.push(current);
+      angles.push(index + 0.5); currents.push(current);
     });
     return fitPolarEllipse(angles, currents);
-  }, [extendedMeanProfile]);
+  }, [polarProfile]);
+  const polarLoadAnalysis = useMemo(() => {
+    if (!polarProfile) return null;
+    const values = polarProfile.currentA;
+    const populated = values.filter((value): value is number => value !== null);
+    if (!populated.length) return null;
+    const globalMean = populated.reduce((sum, value) => sum + value, 0) / populated.length;
+    const smooth = values.map((_, index) => {
+      const neighbors: number[] = [];
+      for (let offset = -2; offset <= 2; offset++) {
+        const value = values[(index + offset + 360) % 360];
+        if (value !== null) neighbors.push(value);
+      }
+      return neighbors.length ? neighbors.reduce((sum, value) => sum + value, 0) / neighbors.length : null;
+    });
+    const flags = smooth.map((value) => value !== null && value > globalMean);
+    const zones: Array<{ startDeg: number; endDeg: number; widthDeg: number; meanA: number; uncertaintyA: number; excess: number }> = [];
+    const falseIndex = flags.findIndex((flag) => !flag);
+    if (falseIndex >= 0) {
+      let start: number | null = null;
+      for (let step = 1; step <= 360; step++) {
+        const index = (falseIndex + step) % 360;
+        if (flags[index] && start === null) start = index;
+        const next = (index + 1) % 360;
+        if (start !== null && (!flags[next] || step === 360)) {
+          const indices: number[] = [];
+          let cursor = start;
+          while (true) { indices.push(cursor); if (cursor === index) break; cursor = (cursor + 1) % 360; }
+          const zoneValues = indices.map((bin) => values[bin]).filter((value): value is number => value !== null);
+          const zoneErrors = indices.map((bin) => polarProfile.currentErr[bin] ?? 0);
+          if (indices.length >= 2 && zoneValues.length) {
+            zones.push({
+              startDeg: start,
+              endDeg: (index + 1) % 360,
+              widthDeg: indices.length,
+              meanA: zoneValues.reduce((sum, value) => sum + value, 0) / zoneValues.length,
+              uncertaintyA: Math.sqrt(zoneErrors.reduce((sum, error) => sum + error * error, 0)) / zoneValues.length,
+              excess: zoneValues.reduce((sum, value) => sum + Math.max(0, value - globalMean), 0),
+            });
+          }
+          start = null;
+        }
+      }
+    }
+    const angles: number[] = [];
+    const currents: number[] = [];
+    values.forEach((value, index) => { if (value !== null) { angles.push(index + 0.5); currents.push(value); } });
+    return {
+      globalMean,
+      zones,
+      dominantZone: zones.length ? zones.reduce((best, zone) => zone.excess > best.excess ? zone : best) : null,
+      circular: circularStats(angles, currents),
+    };
+  }, [polarProfile]);
   const extendedSummary = useMemo(() => {
     if (!extendedPasses.length) return null;
     const motionPasses = extendedPasses.filter((pass) => pass.direction !== "stationary");
     const passStats = (motionPasses.length ? motionPasses : extendedPasses).map((pass) => pass.statistics);
-    const average = (values: number[]) => values.reduce((sum, value) => sum + value, 0) / values.length;
-    const means = passStats.map((item) => item.meanA);
-    const meanOfMeans = average(means);
-    const betweenSd = means.length > 1
-      ? Math.sqrt(means.reduce((sum, value) => sum + (value - meanOfMeans) ** 2, 0) / (means.length - 1))
-      : 0;
+    const summarize = (values: number[]) => {
+      const mean = values.reduce((sum, value) => sum + value, 0) / values.length;
+      const variance = values.length > 1 ? values.reduce((sum, value) => sum + (value - mean) ** 2, 0) / (values.length - 1) : 0;
+      return { mean, uncertainty: Math.sqrt(variance / values.length) };
+    };
+    const directionValues = passStats.filter((item) => item.circularMeanDeg !== null && item.circularR !== null);
+    const direction = directionValues.length
+      ? circularStats(directionValues.map((item) => item.circularMeanDeg!), directionValues.map((item) => item.circularR!))
+      : null;
+    const ellipses = passStats.map((item) => item.ellipse).filter((ellipse): ellipse is NonNullable<typeof ellipse> => ellipse !== null);
     return {
-      meanA: meanOfMeans,
-      betweenSd,
-      rateHz: average(passStats.map((item) => item.effectiveRateHz)),
-      speedDegS: average(passStats.map((item) => item.measuredSpeedDegS ?? 0)),
-      circularR: average(passStats.map((item) => item.circularR ?? 0)),
+      current: summarize(passStats.map((item) => item.meanA)),
+      rate: summarize(passStats.map((item) => item.effectiveRateHz)),
+      speed: summarize(passStats.map((item) => item.measuredSpeedDegS ?? 0)),
+      circularR: summarize(passStats.map((item) => item.circularR ?? 0)),
+      direction: direction ? { mean: direction.meanDeg, uncertainty: direction.stdDeg / Math.sqrt(directionValues.length) } : null,
+      semiMajor: ellipses.length ? summarize(ellipses.map((ellipse) => ellipse.semiMajor)) : null,
+      semiMinor: ellipses.length ? summarize(ellipses.map((ellipse) => ellipse.semiMinor)) : null,
+      ellipseRatio: ellipses.length ? summarize(ellipses.map((ellipse) => ellipse.semiMajor / ellipse.semiMinor)) : null,
+      ellipseAngle: ellipses.length ? summarize(ellipses.map((ellipse) => ellipse.angleDeg)) : null,
       maxA: Math.max(...passStats.map((item) => item.maxA)),
       totalSamples: passStats.reduce((sum, item) => sum + item.n, 0),
       totalDurationS: passStats.reduce((sum, item) => sum + item.durationS, 0),
@@ -416,18 +512,19 @@ export default function FlipperLab({
     if (data) for (let i = 0; i < data.length; i++) maxI = Math.max(maxI, data.amps[i]);
     for (const series of activeExtendedSeries) for (const current of series.currents) maxI = Math.max(maxI, current);
     maxI *= 1.15;
-    const shadeSector = (angle: number, color: string) => {
-      const a0 = ((angle - 5 - 90) * Math.PI) / 180;
-      const a1 = ((angle + 5 - 90) * Math.PI) / 180;
-      ctx.fillStyle = color;
-      ctx.beginPath();
-      ctx.moveTo(cx, cy);
-      ctx.arc(cx, cy, R, a0, a1);
-      ctx.closePath();
-      ctx.fill();
-    };
-    if (derived?.minSector && !extendedDisplaySeries.length) shadeSector(derived.minSector.angle, "rgba(76,201,240,0.09)");
-    if (derived?.maxSector && !extendedDisplaySeries.length) shadeSector(derived.maxSector.angle, "rgba(245,165,36,0.12)");
+    if (polarLoadAnalysis) {
+      for (const zone of polarLoadAnalysis.zones) {
+        const a0 = ((zone.startDeg - 90) * Math.PI) / 180;
+        const a1 = ((zone.startDeg + zone.widthDeg - 90) * Math.PI) / 180;
+        const dominant = zone === polarLoadAnalysis.dominantZone;
+        ctx.fillStyle = dominant ? "rgba(245,165,36,0.14)" : "rgba(245,165,36,0.055)";
+        ctx.beginPath();
+        ctx.moveTo(cx, cy);
+        ctx.arc(cx, cy, R, a0, a1);
+        ctx.closePath();
+        ctx.fill();
+      }
+    }
     ctx.strokeStyle = "rgba(29,48,80,0.9)";
     ctx.fillStyle = "#42567a";
     ctx.font = "8.5px IBM Plex Mono, monospace";
@@ -435,6 +532,28 @@ export default function FlipperLab({
       ctx.beginPath();
       ctx.arc(cx, cy, R * f, 0, Math.PI * 2);
       ctx.stroke();
+    }
+    if (polarLoadAnalysis) {
+      const meanRadius = (polarLoadAnalysis.globalMean / maxI) * R;
+      ctx.strokeStyle = "rgba(245,165,36,0.55)";
+      ctx.lineWidth = 1.2;
+      ctx.setLineDash([3, 4]);
+      ctx.beginPath();
+      ctx.arc(cx, cy, meanRadius, 0, Math.PI * 2);
+      ctx.stroke();
+      const direction = polarLoadAnalysis.circular.meanDeg * Math.PI / 180;
+      ctx.strokeStyle = "rgba(76,201,240,0.9)";
+      ctx.lineWidth = 1.5;
+      ctx.beginPath();
+      ctx.moveTo(cx, cy);
+      ctx.lineTo(cx + Math.sin(direction) * R, cy - Math.cos(direction) * R);
+      ctx.stroke();
+      ctx.setLineDash([]);
+    }
+    if (polarLoadAnalysis) {
+      ctx.fillStyle = "rgba(76,201,240,0.9)";
+      ctx.textAlign = "left";
+      ctx.fillText(`dirección carga=${polarLoadAnalysis.circular.meanDeg.toFixed(1)}° · R̄=${polarLoadAnalysis.circular.R.toFixed(3)} · círculo medio=${polarLoadAnalysis.globalMean.toFixed(3)} A`, 6, extendedDisplaySeries.length ? 35 : 47);
     }
     ctx.textAlign = "center";
     for (let a = 0; a < 360; a += 30) {
@@ -552,23 +671,26 @@ export default function FlipperLab({
       const centerAngle = ((Math.atan2(fit.centerX, -fit.centerY) * 180) / Math.PI + 360) % 360;
       ctx.fillText(`centro x=${fit.centerX.toFixed(3)} · y=${fit.centerY.toFixed(3)} A · r=${Math.hypot(fit.centerX, fit.centerY).toFixed(3)} A @ ${centerAngle.toFixed(1)}°`, 6, 35);
     }
-    if (extendedMeanEllipse && showExtendedMean && !flip.capturing) {
+    if (selectedEllipse && extendedDisplaySeries.length && activeExtendedSeries.length && !flip.capturing) {
       const scale = R / maxI;
-      const ex = cx + extendedMeanEllipse.centerX * scale;
-      const ey = cy + extendedMeanEllipse.centerY * scale;
-      const angle = extendedMeanEllipse.angleDeg * Math.PI / 180;
+      const ex = cx + selectedEllipse.centerX * scale;
+      const ey = cy + selectedEllipse.centerY * scale;
+      const angle = selectedEllipse.angleDeg * Math.PI / 180;
       const ca = Math.cos(angle), sa = Math.sin(angle);
       ctx.strokeStyle = "rgba(181,222,255,0.72)";
       ctx.lineWidth = 1.8;
       ctx.setLineDash([5, 4]);
       ctx.beginPath();
-      ctx.ellipse(ex, ey, extendedMeanEllipse.semiMajor * scale, extendedMeanEllipse.semiMinor * scale, angle, 0, Math.PI * 2);
-      ctx.moveTo(ex - ca * extendedMeanEllipse.semiMajor * scale, ey - sa * extendedMeanEllipse.semiMajor * scale);
-      ctx.lineTo(ex + ca * extendedMeanEllipse.semiMajor * scale, ey + sa * extendedMeanEllipse.semiMajor * scale);
-      ctx.moveTo(ex + sa * extendedMeanEllipse.semiMinor * scale, ey - ca * extendedMeanEllipse.semiMinor * scale);
-      ctx.lineTo(ex - sa * extendedMeanEllipse.semiMinor * scale, ey + ca * extendedMeanEllipse.semiMinor * scale);
+      ctx.ellipse(ex, ey, selectedEllipse.semiMajor * scale, selectedEllipse.semiMinor * scale, angle, 0, Math.PI * 2);
+      ctx.moveTo(ex - ca * selectedEllipse.semiMajor * scale, ey - sa * selectedEllipse.semiMajor * scale);
+      ctx.lineTo(ex + ca * selectedEllipse.semiMajor * scale, ey + sa * selectedEllipse.semiMajor * scale);
+      ctx.moveTo(ex + sa * selectedEllipse.semiMinor * scale, ey - ca * selectedEllipse.semiMinor * scale);
+      ctx.lineTo(ex - sa * selectedEllipse.semiMinor * scale, ey + ca * selectedEllipse.semiMinor * scale);
       ctx.stroke();
       ctx.setLineDash([]);
+      ctx.fillStyle = "rgba(181,222,255,0.9)";
+      ctx.textAlign = "left";
+      ctx.fillText(`elipse selección a=${selectedEllipse.semiMajor.toFixed(3)} · b=${selectedEllipse.semiMinor.toFixed(3)} A · a/b=${(selectedEllipse.semiMajor / selectedEllipse.semiMinor).toFixed(3)} · φ=${selectedEllipse.angleDeg.toFixed(1)}°`, 6, 23);
     }
     ctx.fillStyle = "#f5a524";
     ctx.textAlign = "left";
@@ -886,7 +1008,7 @@ export default function FlipperLab({
         return <ChartCanvas draw={drawLive} className="h-[46dvh] min-h-[300px]" {...interaction} />;
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [view, derived, n, flip.tick, flip.overlayRevs, flip.capturing, flip.extendedAnalysis, extendedMeanProfile, regionZoom, transforms, selectedPeaks]);
+  }, [view, derived, n, flip.tick, flip.overlayRevs, flip.capturing, flip.extendedAnalysis, extendedMeanProfile, selectedEllipse, polarLoadAnalysis, hiddenExtendedSeries, showExtendedMean, regionZoom, transforms, selectedPeaks]);
 
   const selCls =
     "rounded border border-line bg-[#0c1930] px-1.5 py-1 font-mono text-[10.5px] text-fog focus:border-ion/60 focus:outline-none disabled:opacity-40";
@@ -1181,17 +1303,20 @@ export default function FlipperLab({
           </p>
         ) : extendedSummary ? (
           <div className="space-y-2">
-            <StatSection title="Resumen medio del test extendido" subtitle={`${extendedPasses.length}/5 fases terminadas · la σ indicada compara las medias de las fases`}>
-              <StatCell k="media ± σ" v={`${extendedSummary.meanA.toFixed(5)} ± ${extendedSummary.betweenSd.toFixed(5)} A`} tone="text-mint" />
+            <StatSection title="Resumen medio del test extendido" subtitle={`${extendedPasses.length}/5 fases terminadas · ± = incertidumbre estándar entre las vueltas`}>
+              <StatCell k="corriente media ± incertidumbre" v={`${extendedSummary.current.mean.toFixed(5)} ± ${extendedSummary.current.uncertainty.toFixed(5)} A`} tone="text-mint" />
               <StatCell k="N total" v={extendedSummary.totalSamples.toLocaleString("es-ES")} />
               <StatCell k="tiempo total adquisición" v={`${extendedSummary.totalDurationS.toFixed(1)} s`} />
-              <StatCell k="tasa ADC efectiva media" v={`${extendedSummary.rateHz.toFixed(1)} Hz`} />
-              <StatCell k="velocidad |:j| media" v={`${extendedSummary.speedDegS.toFixed(4)} °/s`} tone="text-ion" />
+              <StatCell k="tasa ADC media ± incertidumbre" v={`${extendedSummary.rate.mean.toFixed(1)} ± ${extendedSummary.rate.uncertainty.toFixed(1)} Hz`} />
+              <StatCell k="velocidad |:j| media ± incertidumbre" v={`${extendedSummary.speed.mean.toFixed(4)} ± ${extendedSummary.speed.uncertainty.toFixed(4)} °/s`} tone="text-ion" />
               <StatCell k="máximo global" v={`${extendedSummary.maxA.toFixed(4)} A`} tone="text-ember" />
-              <StatCell k="concentración R̄ media" v={extendedSummary.circularR.toFixed(4)} tone="text-ion" />
-              {extendedMeanEllipse && <StatCell k="elipse media · semiejes a / b" v={`${extendedMeanEllipse.semiMajor.toFixed(4)} / ${extendedMeanEllipse.semiMinor.toFixed(4)} A`} tone="text-ion" />}
-              {extendedMeanEllipse && <StatCell k="elipse media · cociente a/b" v={(extendedMeanEllipse.semiMajor / extendedMeanEllipse.semiMinor).toFixed(4)} tone="text-ion" />}
-              {extendedMeanEllipse && <StatCell k="elipse media · inclinación φ" v={`${extendedMeanEllipse.angleDeg.toFixed(2)}°`} tone="text-ion" />}
+              <StatCell k="concentración R̄ media ± incertidumbre" v={`${extendedSummary.circularR.mean.toFixed(4)} ± ${extendedSummary.circularR.uncertainty.toFixed(4)}`} tone="text-ion" />
+              {extendedSummary.direction && <StatCell k="dirección de carga media ± incertidumbre" v={`${extendedSummary.direction.mean.toFixed(2)}° ± ${extendedSummary.direction.uncertainty.toFixed(2)}°${extendedSummary.circularR.mean < 0.05 ? " · no representativa" : ""}`} tone="text-ion" />}
+              {polarLoadAnalysis?.dominantZone && <StatCell k="zona sobre la media" v={`${polarLoadAnalysis.dominantZone.startDeg.toFixed(0)}° → ${polarLoadAnalysis.dominantZone.endDeg.toFixed(0)}° · ancho ${polarLoadAnalysis.dominantZone.widthDeg.toFixed(0)}° · ${polarLoadAnalysis.dominantZone.meanA.toFixed(4)} ± ${polarLoadAnalysis.dominantZone.uncertaintyA.toFixed(4)} A`} tone="text-ember" />}
+              {extendedSummary.semiMajor && <StatCell k="semieje a medio ± incertidumbre" v={`${extendedSummary.semiMajor.mean.toFixed(4)} ± ${extendedSummary.semiMajor.uncertainty.toFixed(4)} A`} tone="text-ion" />}
+              {extendedSummary.semiMinor && <StatCell k="semieje b medio ± incertidumbre" v={`${extendedSummary.semiMinor.mean.toFixed(4)} ± ${extendedSummary.semiMinor.uncertainty.toFixed(4)} A`} tone="text-ion" />}
+              {extendedSummary.ellipseRatio && <StatCell k="cociente a/b medio ± incertidumbre" v={`${extendedSummary.ellipseRatio.mean.toFixed(4)} ± ${extendedSummary.ellipseRatio.uncertainty.toFixed(4)}`} tone="text-ion" />}
+              {extendedSummary.ellipseAngle && <StatCell k="inclinación φ media ± incertidumbre" v={`${extendedSummary.ellipseAngle.mean.toFixed(2)}° ± ${extendedSummary.ellipseAngle.uncertainty.toFixed(2)}°`} tone="text-ion" />}
             </StatSection>
             {extendedPasses.map((pass, index) => {
               const st = pass.statistics;
@@ -1240,11 +1365,10 @@ export default function FlipperLab({
               <StatCell k="pico máximo / posición" v={`${derived.st.maxA.toFixed(3)} A · ${derived.st.maxAngleDeg !== null ? `${derived.st.maxAngleDeg.toFixed(2)}°` : "sin ángulo"}`} tone="text-ember" />
             </StatSection>
             <StatSection title="Estadística angular" subtitle="Distribución del esfuerzo alrededor de la corona">
-              {derived.maxSector && <StatCell k="sector 10° de mayor media" v={`${(derived.maxSector.angle - 5).toFixed(0)}–${(derived.maxSector.angle + 5).toFixed(0)}° · ${derived.maxSector.mean.toFixed(4)} A`} tone="text-ember" />}
-              {derived.minSector && <StatCell k="sector 10° de menor media" v={`${(derived.minSector.angle - 5).toFixed(0)}–${(derived.minSector.angle + 5).toFixed(0)}° · ${derived.minSector.mean.toFixed(4)} A`} tone="text-ion" />}
-              {derived.st.circ && <StatCell k="dirección de carga circular" v={`${derived.st.circ.meanDeg.toFixed(2)}°${derived.st.circ.R < 0.05 ? " · no representativa" : ""}`} tone="text-ion" />}
-              {derived.st.circ && <StatCell k="concentración R̄" v={derived.st.circ.R.toFixed(4)} tone="text-ion" />}
-              {derived.st.circ && <StatCell k="dispersión circular σ" v={`${derived.st.circ.stdDeg.toFixed(2)}°`} tone="text-ion" />}
+              {polarLoadAnalysis?.dominantZone && <StatCell k="zona sobre la media" v={`${polarLoadAnalysis.dominantZone.startDeg.toFixed(0)}° → ${polarLoadAnalysis.dominantZone.endDeg.toFixed(0)}° · ancho ${polarLoadAnalysis.dominantZone.widthDeg.toFixed(0)}° · ${polarLoadAnalysis.dominantZone.meanA.toFixed(4)} A`} tone="text-ember" />}
+              {polarLoadAnalysis && <StatCell k="dirección de carga circular" v={`${polarLoadAnalysis.circular.meanDeg.toFixed(2)}°${polarLoadAnalysis.circular.R < 0.05 ? " · no representativa" : ""}`} tone="text-ion" />}
+              {polarLoadAnalysis && <StatCell k="concentración R̄" v={polarLoadAnalysis.circular.R.toFixed(4)} tone="text-ion" />}
+              {polarLoadAnalysis && <StatCell k="dispersión circular σ" v={`${polarLoadAnalysis.circular.stdDeg.toFixed(2)}°`} tone="text-ion" />}
               {derived.st.dThetaEnc !== null && <StatCell k="δθ encoder (360/CPR)" v={`${derived.st.dThetaEnc.toExponential(2)}°`} tone="text-ion" />}
             </StatSection>
             {!flip.capturing && derived.ellipse && (

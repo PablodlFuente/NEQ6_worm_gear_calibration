@@ -88,6 +88,13 @@ próxima a 1 indica una carga concentrada hacia esa dirección; próxima a 0 sig
 distribución casi uniforme o sectores opuestos que se cancelan. Con `R̄` baja, el
 ángulo asociado no debe interpretarse como una posición dominante.
 
+En Polar, el círculo naranja punteado es la corriente media global. Los quesitos
+tienen anchura variable: cubren cada intervalo continuo donde la media angular
+suavizada en 5° supera ese nivel. El radio azul punteado marca la dirección de
+carga circular. Zonas, dirección y elipse se recalculan al ocultar o mostrar
+series del test extendido. Los resúmenes medios muestran `±` la incertidumbre
+estándar calculada entre vueltas.
+
 Al terminar, Polar dibuja el ajuste elíptico y sus dos ejes; sus parámetros
 también aparecen en Estadísticas. **Exportar todo** descarga un ZIP con las
 gráficas, CSV, FFT y resumen. Comprueba que el recorrido final confirmado por

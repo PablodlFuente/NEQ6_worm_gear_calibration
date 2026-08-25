@@ -6,6 +6,9 @@
 
 Representa corriente como radio y posición como ángulo. Al finalizar se ajusta
 una elipse y se muestran centro, semiejes, inclinación, excentricidad y residuo.
+El círculo naranja punteado marca la corriente media; los sectores de anchura
+variable indican intervalos donde la media angular suavizada permanece por
+encima. El radio azul punteado señala la dirección circular de la carga.
 
 ## Cartesiano
 
