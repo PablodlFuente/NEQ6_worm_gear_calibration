@@ -136,6 +136,14 @@ test("reposiciona un ángulo relativo respetando origen y sentido", () => {
   // y, con holgura del sinfín, no dejan el mismo punto de medida.
   assert.equal(capturedAngleDeltaDeg(100_000, cpr, { axis: 1, direction: "cw", originSteps: 100_000 }, 210), 210);
   assert.equal(capturedAngleDeltaDeg(100_000, cpr, { axis: 1, direction: "ccw", originSteps: 100_000 }, 210), -210);
+  // Tras terminar una vuelta, se usa la rama equivalente recién recorrida.
+  assert.equal(capturedAngleDeltaDeg(460_000, cpr, { axis: 1, direction: "cw", originSteps: 100_000 }, 332), -28);
+  assert.equal(capturedAngleDeltaDeg(-260_000, cpr, { axis: 1, direction: "ccw", originSteps: 100_000 }, 332), 28);
+  const neq6Cpr = 9_024_000;
+  const width = 0x1000000;
+  const wrap24 = (value: number) => ((((value + width / 2) % width) + width) % width) - width / 2;
+  assert.ok(Math.abs(capturedAngleDeltaDeg(wrap24(neq6Cpr), neq6Cpr, { axis: 1, direction: "cw", originSteps: 0 }, 332)! + 28) < 1e-9);
+  assert.ok(Math.abs(capturedAngleDeltaDeg(wrap24(-neq6Cpr), neq6Cpr, { axis: 1, direction: "ccw", originSteps: 0 }, 332)! - 28) < 1e-9);
 });
 
 test("el test extendido separa periodicidad angular de frecuencia fija", () => {
@@ -181,19 +189,21 @@ test("promedio por bloques conserva x1 y calcula SEM en ambos ejes", () => {
   const x2 = averageAngleSeries(common, common, [10, 20, 30, 40], [1, 3, 5, 7], [0, 2, 4, 6], 2);
   assert.deepEqual(Array.from(x2!.amps), [2, 6]);
   assert.deepEqual(Array.from(x2!.angles), [1, 5]);
+  assert.deepEqual(Array.from(x2!.ampsStd), [Math.SQRT2, Math.SQRT2]);
   assert.deepEqual(Array.from(x2!.ampsErr), [1, 1]);
+  assert.deepEqual(Array.from(x2!.angleStd), [Math.SQRT2, Math.SQRT2]);
   assert.deepEqual(Array.from(x2!.angleErr), [1, 1]);
   assert.deepEqual(Array.from(x2!.counts), [2, 2]);
 });
 
 test("CSV procesado incluye errores X/Y y tamaño de bloque", () => {
   const csv = buildProcCsv(
-    [{ ts: 10, tb: 20, adc: 30.5, amps: 0.2, ampsErr: 0.01, unw: 45, angleErr: 0.2, rev: 0, n: 50 }],
+    [{ ts: 10, tb: 20, adc: 30.5, amps: 0.2, ampsStd: 0.07, ampsErr: 0.01, unw: 45, angleStd: 1.4, angleErr: 0.2, rev: 0, n: 50 }],
     100,
     [],
   );
-  assert.match(csv, /amps_sem,angle_unwrapped_deg,angle_sem_deg,rev,tb_ms,n_group/);
-  assert.match(csv, /0\.010000,45\.000000,0\.200000,0,20\.000,50/);
+  assert.match(csv, /amps_std,amps_sem,angle_unwrapped_deg,angle_std_deg,angle_sem_deg,rev,tb_ms,n_group/);
+  assert.match(csv, /0\.070000,0\.010000,45\.000000,1\.400000,0\.200000,0,20\.000,50/);
   const imported = parseCsv(csv);
   assert.deepEqual(imported?.angles, [{ tb: 20, deg: 45 }]);
 });

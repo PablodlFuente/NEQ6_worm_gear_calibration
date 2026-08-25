@@ -35,7 +35,9 @@ En **Test ejes**, el panel derecho contiene únicamente eje, vueltas, muestreo,
 velocidad, velocidad programada/medida, muestras por grado, progreso, inicio y parada. Al pulsar inicio se borra la vista actual,
 el eje recorre 2° en sentido contrario al seleccionado y después invierte el giro para alcanzar su régimen. La captura
 ADC comienza únicamente cuando el feedback `:j` confirma el cruce por 0°; el
-motor no se detiene allí. La gráfica de la izquierda crece durante la adquisición.
+motor no se detiene allí. Al completar el ángulo útil se detiene el ADC, el motor
+recorre 2° adicionales a la misma velocidad y sólo entonces frena; esos grados
+de salida no aparecen en el perfil. La gráfica de la izquierda crece durante la adquisición.
 
 La carrerilla usa un GOTO corto. La medición usa movimiento continuo, sin destino
 interno: configura primero el modo `:G`, después el periodo `:I`, arranca con
@@ -57,7 +59,9 @@ Las vistas Polar y Cartesiano se actualizan durante la captura. `bloque ×1`
 representa todas las muestras que ya tienen ángulo; `bloque ×50`, por ejemplo,
 genera un punto por cada 50 muestras consecutivas. En Cartesiano aparecen barras
 de error estándar tanto horizontales (ángulo) como verticales (corriente). El
-CSV procesado exporta esas mismas medias, errores y el tamaño de cada bloque.
+El CSV principal conserva las muestras individuales. Otro CSV exporta el
+promedio seleccionado junto con STD y SEM de corriente y ángulo; sigue siendo
+una vista recalculable y no sustituye el dato original.
 La tabla FFT añade «cada (montura)»: periodo × velocidad medida, expresado en
 grados, para localizar la separación angular de cada repetición dominante.
 El eje FFT muestra el espectro completo hasta Nyquist. La tabla básica conserva los
@@ -96,8 +100,9 @@ series del test extendido. Los resúmenes medios muestran `±` la incertidumbre
 estándar calculada entre vueltas.
 
 Al terminar, Polar dibuja el ajuste elíptico y sus dos ejes; sus parámetros
-también aparecen en Estadísticas. **Exportar todo** descarga un ZIP con las
-gráficas, CSV, FFT y resumen. Comprueba que el recorrido final confirmado por
+también aparecen en Estadísticas. **Exportar** descarga un ZIP identificado por
+eje y tipo con medidas individuales, promedios, gráficas, FFT y un resumen TXT
+de estadísticas y frecuencias mecánicas. Comprueba que el recorrido final confirmado por
 `:j` sea el objetivo completo: una captura incompleta ya no se etiqueta como
 terminada.
 
@@ -115,4 +120,4 @@ registro parcial se conserva para diagnóstico.
 - Ajusta el worm-gear en incrementos pequeños, repite con la misma velocidad y
   compara sesiones crudas. No ajustes basándote solo en datos promediados.
 
-Exporta siempre el CSV crudo antes de una intervención mecánica importante.
+Exporta siempre el CSV de medidas antes de una intervención mecánica importante.

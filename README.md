@@ -18,7 +18,8 @@ excentricidad, rozamiento o zonas de carga irregular del conjunto sinfín-corona
 - Flipper Zero por BLE o por su segundo puerto USB-COM.
 - Gráficas en vivo, Polar, Cartesiano, FFT y estadísticas.
 - Promedio por bloques con tamaño libre, barras SEM, elipse polar, zoom y pan.
-- Exportación ZIP con CSV crudo/procesado, FFT, PNG y resumen JSON.
+- Exportación ZIP con medidas individuales y promediadas (STD/SEM), FFT por
+  pasada/revolución, resumen legible, análisis comparativo y gráficas PNG.
 - Registro local JSONL de acciones, mensajes y tráfico serie.
 
 ## Requisitos
@@ -61,15 +62,17 @@ npm run check
 
 1. Libera el recorrido y comprueba cables, frenos y equilibrio.
 2. En **Ajustes**, conecta la montura a 9600 8N1.
-3. En **Montura**, ejecuta **Escanear montura**.
+3. Comprueba en **Ajustes** que el diagnóstico automático detecta CPR y timer.
 4. En **Test ejes**, selecciona AR/DEC, CW/CCW, vueltas, ADC y velocidad.
 5. Empieza con 1 vuelta, 500 Hz y una velocidad segura para la instalación.
-6. Pulsa **Iniciar test sincronizado**.
+6. Pulsa **Iniciar test básico** o, para comparar velocidades y sentidos,
+   **Iniciar test extendido**.
 
 El eje se mueve primero 2° en el sentido opuesto mediante un GOTO corto. Después
 invierte el sentido y usa velocidad continua estable; la adquisición comienza
-cuando `:j` confirma el cruce por 0°. Al completar el recorrido observado se
-detiene con `:K`. Una velocidad como 0,199°/s permanece en modo lento; el modo
+cuando `:j` confirma el cruce por 0°. Al completar el recorrido útil se detiene
+el ADC; el motor conserva velocidad otros 2° y frena fuera de la captura con
+`:K`. Una velocidad como 0,199°/s permanece en modo lento; el modo
 rápido se reserva para velocidades que lo necesitan, hasta el límite nominal
 de 800× sideral (unos 3,34°/s en la NEQ6).
 
@@ -111,7 +114,11 @@ porque son paradas inmediatas.
 
 ## Documentación
 
-- [Guía detallada / Wiki](wiki/Home.md)
+- [Wiki técnica y educativa](wiki/Home.md)
+- [Arquitectura y modelo de medida](wiki/Arquitectura-y-modelo-de-medida.md)
+- [Protocolo y movimiento](wiki/Protocolo-y-movimiento.md)
+- [Análisis avanzado](wiki/Analisis-de-datos.md)
+- [Formato de datos y exportación](wiki/Formato-de-datos-y-exportacion.md)
 - [Procedimiento de calibración](docs/TEST_PROCEDURE.md)
 - [Montaje y firmware del Flipper](docs/FLIPPER_SETUP.md)
 - [Protocolo del logger](docs/FLIPPER_PROTOCOL.md)
@@ -123,3 +130,18 @@ porque son paradas inmediatas.
 El sistema es funcional, pero cualquier cambio de movimiento debe validarse
 primero sin carga y con recorrido corto. El Flipper es el logger actual; puede
 sustituirse por un ADC/microcontrolador USB-COM compatible.
+
+## Licencia, responsabilidad y asistencia
+
+El proyecto usa [GNU Affero General Public License v3.0](LICENSE), únicamente
+versión 3 (`AGPL-3.0-only`). Permite usar, estudiar, modificar, redistribuir y
+comercializar el software, pero exige conservar la licencia, los avisos y la
+referencia al [proyecto original](https://github.com/PablodlFuente/NEQ6_worm_gear_calibration).
+Los servicios de red modificados deben ofrecer su código fuente correspondiente.
+
+El software se proporciona tal cual y sin garantía. El usuario asume los riesgos
+eléctricos, mecánicos y operativos. La parada web no sustituye un corte físico
+de alimentación. Consulta el [aviso completo](NOTICE.md).
+
+La programación, revisión y documentación han sido asistidas por OpenAI Codex;
+esto no implica certificación, garantía ni respaldo de OpenAI.

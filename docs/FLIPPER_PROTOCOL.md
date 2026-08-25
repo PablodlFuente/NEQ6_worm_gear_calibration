@@ -46,13 +46,14 @@ pueden cambiar en Ajustes. La web los conserva en cada sesión y CSV.
 conversión oficial HAL calibrada. `ovf` cuenta ticks o muestras perdidos porque
 la cola/ring estaba llena. `n` cuenta muestras válidas incorporadas al ring.
 
-El CSV procesado incluye `amps_sem`, `angle_sem_deg` y `n_group`. Al volver a
-importarlo se restauran también los ángulos, por lo que las vistas Polar y
-Cartesiano se pueden reconstruir sin la montura conectada.
+El CSV actual conserva una fila por muestra real con
+`t_us,timestamp,adc_raw,amps_raw,angle,rev`. El promedio visual no altera estas
+filas. La cabecera comentada documenta columnas, eje, sentido y calibración. Al
+importarlo se restauran muestras y ángulos, por lo que Polar y Cartesiano pueden
+reconstruirse sin la montura conectada.
 
-Los CSV crudo y procesado incluyen comentarios `axis`, `direction` y
-`origin_steps`. La sesión IndexedDB y `resumen.json` conservan los mismos
-metadatos para reconstruir un ángulo relativo como posición absoluta `:j`.
+La sesión IndexedDB conserva además buffers, metadatos y análisis extendido para
+reconstruir la posición relativa y los espectros disponibles.
 
 ## Sincronización
 

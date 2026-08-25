@@ -1184,7 +1184,7 @@ export default function App() {
           /* La última consulta periódica puede quedar a 1–2° del STOP. Se
            * toma una ancla final una vez detenido para cerrar exactamente en
            * 360° y no recortar la corona al dibujar la vuelta. */
-          if (captureStarted && acquisitionPreviousPosition !== null) {
+          if (captureStarted && !captureStopped && acquisitionPreviousPosition !== null) {
             const finalAt = Date.now();
             if (await sendRaw(`:j${axis}`, false)) {
               const finalPosition = parsePosLine(await waitForRx(RX_TIMEOUT_MS));
@@ -1257,6 +1257,15 @@ export default function App() {
             message: "Adquiriendo corriente y posición…",
             elapsedSec: testStartedAt ? (performance.now() - testStartedAt) / 1000 : 0,
           }));
+          /* La marcha continua cubre 360° medidos + 2° de salida. El ADC se
+           * detiene al cruzar el recorrido solicitado, mientras el motor aún
+           * mantiene su velocidad; la frenada posterior queda fuera del
+           * perfil y no introduce el pico de los últimos grados. */
+          if (!captureStopped && Math.abs(travelledSteps) >= totalSteps) {
+            await flip.stopCapture();
+            captureStopped = true;
+            setAxisTest((state) => ({ ...state, message: "Captura completa; finalizando 2° de salida…" }));
+          }
         },
       });
     } finally {
@@ -1428,7 +1437,7 @@ export default function App() {
       axis,
       speed: Number.isFinite(configuredSpeed) && configuredSpeed > 0 ? configuredSpeed : 0.5,
       deg: deltaDeg,
-      maxDeg: 360,
+      maxDeg: 360.01,
       /* El :S recibe el destino reconstruido desde el :j que se guardó como
        * origen de la captura; no depende de la coordenada ecuatorial de la UI. */
       relativeGoto: false,

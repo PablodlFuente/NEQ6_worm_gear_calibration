@@ -259,14 +259,6 @@ export default function SidePanel({
                   <span className="tabular-nums text-ion">×{profile.ratio1}</span>
                 </div>
               )}
-              {profile.timer !== undefined && profile.cpr1 !== undefined && (
-                <div className="col-span-2 flex items-baseline justify-between gap-2 border-t border-line pt-1.5">
-                  <span className="text-dim">máx. modo lento</span>
-                  <span className="tabular-nums text-fog">
-                    {((profile.timer * 360) / profile.cpr1).toFixed(2)}°/s
-                  </span>
-                </div>
-              )}
             </div>
           )}
         </section>

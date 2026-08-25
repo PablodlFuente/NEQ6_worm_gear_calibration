@@ -179,7 +179,7 @@ const STAT_HELP: Record<string, string> = {
   "elipse · excentricidad / RMS": "Forma de la elipse y residuo del ajuste; un RMS menor indica mejor ajuste.",
   "corriente media": "Promedio entre las vueltas del test extendido; el valor ± es la incertidumbre estándar entre vueltas.",
   "tasa ADC media": "Frecuencia efectiva media recibida por el Flipper; el valor ± es su incertidumbre entre pasadas.",
-  "velocidad |:j| media": "Velocidad angular absoluta media medida con el feedback :j; el valor ± es su incertidumbre entre pasadas.",
+  "velocidad media": "Velocidad angular absoluta media medida con el feedback :j; el valor ± es su incertidumbre entre pasadas.",
   "concentración R̄ media": "Concentración angular media entre pasadas, de 0 (uniforme/cancelada) a 1 (una dirección dominante).",
   "dirección de carga media": "Dirección media del vector de carga ponderado por corriente; si R̄ es pequeña no es representativa.",
   "semieje a medio": "Semieje mayor medio del ajuste elíptico; ± expresa la variación entre pasadas.",
@@ -272,7 +272,9 @@ export default function FlipperLab({
         })()
     : derived?.peaks ?? [];
   const displayedFftSpeed = selectedExtendedPass?.measuredSpeedDegS ?? (extendedFftSeries.length ? null : derived?.st.feedbackSpeedDegS ?? null);
-  const extendedDisplaySeries = useMemo(() => extendedPasses.flatMap((pass, passIndex) => {
+  const extendedDisplaySeries = useMemo(() => extendedPasses
+    .filter((pass) => pass.direction !== "stationary")
+    .flatMap((pass, passIndex) => {
     const factor = Math.max(1, Math.floor(flip.avgFactor));
     if (pass.samples?.anglesDeg?.length) {
       const length = Math.min(pass.samples.anglesDeg.length, pass.samples.currentA.length);
@@ -311,8 +313,8 @@ export default function FlipperLab({
       });
       return [{ id: pass.id, label: `${pass.label} · sesión antigua`, color: REV_COLORS[passIndex % REV_COLORS.length], angles, currents, angleErr: currents.map(() => 0), currentErr: currents.map(() => 0) }];
     }
-    return [];
-  }), [extendedPasses, flip.avgFactor]);
+      return [];
+    }), [extendedPasses, flip.avgFactor]);
   const activeExtendedSeries = extendedDisplaySeries.filter((series) => !hiddenExtendedSeries.has(series.id));
   const extendedMeanProfile = useMemo(() => {
     if (activeExtendedSeries.length < 2) return null;
@@ -1233,7 +1235,7 @@ export default function FlipperLab({
                     onClick={() => setShowExtendedMean((visible) => !visible)}
                     className={`rounded border border-fog px-2 py-0.5 text-fog transition-opacity ${showExtendedMean ? "opacity-80" : "opacity-35"}`}
                   >
-                    ━ PROMEDIO ± SEM
+                    ━ PROMEDIO
                   </button>
                 )}
               </div>
@@ -1396,7 +1398,7 @@ export default function FlipperLab({
               <StatCell k="N total" v={extendedSummary.totalSamples.toLocaleString("es-ES")} />
               <StatCell k="tiempo total adquisición" v={`${extendedSummary.totalDurationS.toFixed(1)} s`} />
               <StatCell k="tasa ADC media" v={`${extendedSummary.rate.mean.toFixed(1)} ± ${extendedSummary.rate.uncertainty.toFixed(1)} Hz`} />
-              <StatCell k="velocidad |:j| media" v={`${extendedSummary.speed.mean.toFixed(4)} ± ${extendedSummary.speed.uncertainty.toFixed(4)} °/s`} tone="text-ion" />
+              <StatCell k="velocidad media" v={`${extendedSummary.speed.mean.toFixed(4)} ± ${extendedSummary.speed.uncertainty.toFixed(4)} °/s`} tone="text-ion" />
               <StatCell k="máximo global" v={`${extendedSummary.maxA.toFixed(4)} A`} tone="text-ember" />
               <StatCell k="concentración R̄ media" v={`${extendedSummary.circularR.mean.toFixed(4)} ± ${extendedSummary.circularR.uncertainty.toFixed(4)}`} tone="text-ion" />
               {extendedSummary.direction && <StatCell k="dirección de carga media" v={`${extendedSummary.direction.mean.toFixed(2)}° ± ${extendedSummary.direction.uncertainty.toFixed(2)}°${extendedSummary.circularR.mean < 0.05 ? " · no representativa" : ""}`} tone="text-ion" />}

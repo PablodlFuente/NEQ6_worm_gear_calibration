@@ -22,7 +22,7 @@ const TERMS = [
   ["R̄ circular", "Concentración de la carga en una dirección entre 0 y 1; se calcula ponderando cada ángulo por la corriente."],
   ["OOR / OVF", "Muestras fuera de rango / desbordamientos del búfer del firmware."],
   ["RTT / jitter", "Tiempo de ida y vuelta / variación temporal usados al sincronizar navegador y Flipper."],
-  ["CSV", "Archivo tabular exportable; el crudo conserva las muestras y el procesado conserva medias y errores."],
+  ["CSV", "Archivo tabular exportable; medidas.csv conserva cada conversión ADC con tiempo, corriente, ángulo y revolución."],
   ["IDLE / REC", "Adquisición parada / adquisición activa."],
   ["PA7 / A7", "Entrada analógica del Flipper conectada al shunt."],
   ["Shunt", "Resistencia conocida (0,323 Ω) cuya caída de tensión permite calcular la corriente."],
@@ -55,101 +55,7 @@ export default function HelpModal({ open, onClose }: Props) {
         </header>
 
         <div className="overflow-y-auto p-4 font-mono text-[10.5px] leading-relaxed text-dim">
-          <div className="hidden grid gap-3 md:grid-cols-2">
-            <HelpBlock title="Flujo recomendado">
-              En Ajustes conecta la montura; el escaneo de parámetros se ejecuta automáticamente. Conecta el Flipper por BLE o USB-COM,
-              sincroniza su reloj y abre «Test ejes». Elige CW o CCW. El test mueve primero 2° en el sentido contrario,
-              invierte el giro y sólo inicia el ADC cuando <Code>:j</Code> confirma el cruce por 0°, ya con el motor en régimen.
-            </HelpBlock>
-            <HelpBlock title="Tres velocidades distintas">
-              <b className="text-fog">Solicitada</b>: la que escribes. <b className="text-fog">Programada real</b>:
-              la posible tras redondear T1 y respetar T1≥6. <b className="text-fog">Medida :j</b>: desplazamiento
-              angular dividido por el tiempo entre lecturas reales del controlador; es la referencia experimental.
-            </HelpBlock>
-            <HelpBlock title="Modo de motor y frenado">
-              Jog y Test usan velocidad continua: modo lento a velocidades como 0,199°/s y rápido sólo cuando T1 lento
-              ya no alcanza. GOTO se reserva para llegar a una posición concreta; programa destino y frenado <Code>:M</Code>.
-              El modo <Code>:G</Code> se selecciona siempre antes de T1 y con el motor completamente parado.
-            </HelpBlock>
-            <HelpBlock title="Jog, GOTO y 800×">
-              <b className="text-fog">Jog</b> mueve mientras mantienes una flecha y se para al soltar. <b className="text-fog">GOTO</b>
-              conoce un destino y frena allí. En EQMOD, 800 significa 800 veces la velocidad sideral: unos 3,34°/s en
-              la NEQ6; su preset 4 suele ser 800× y la velocidad 9 de SynScan es la máxima.
-            </HelpBlock>
-            <HelpBlock title="De dónde sale el ángulo">
-              Cada punto de posición ancla procede de la respuesta <Code>:j</Code> de la montura, con el offset
-              0x800000 retirado y el contador de 24 bits desenvuelto. Como el ADC muestrea mucho más rápido, el
-              ángulo de cada muestra se interpola en el tiempo entre dos anclas <Code>:j</Code>. No se integra la
-              velocidad solicitada ni se inventa el final. En la NEQ6 paso a paso, <Code>:j</Code> es el contador
-              interno de pasos, no un encoder mecánico: no puede detectar una pérdida física de pasos.
-            </HelpBlock>
-            <HelpBlock title="Muestras por grado">
-              Antes del test se muestra la estimación <Code>Hz ADC / °·s⁻¹ programados</Code>. Durante y después se
-              calcula el valor medido usando sólo muestras situadas entre anclas de feedback y el recorrido angular
-              observado. Una tasa alta o una velocidad baja aportan más muestras por grado.
-            </HelpBlock>
-            <HelpBlock title="Tasa ADC solicitada y efectiva">
-              La tasa solicitada es la orden enviada al Flipper; la efectiva se calcula con sus timestamps. Si difieren,
-              revisa OVF y el transporte. El firmware v3.1 elimina una conversión lenta que limitaba 1000 Hz a unos
-              320 Hz. BLE puede rendir menos que USB-COM; reduce la tasa si aparecen desbordamientos.
-            </HelpBlock>
-            <HelpBlock title="Promedio y barras de error">
-              ×1 conserva cada muestra. ×N agrupa N muestras consecutivas y representa su media. En cartesiano,
-              las barras Y son el SEM de la corriente y las X el SEM del ángulo; el CSV procesado guarda ambos,
-              además de N real por grupo. El crudo nunca se modifica.
-            </HelpBlock>
-            <HelpBlock title="Cómo leer la FFT">
-              La frecuencia indica repeticiones por segundo y el periodo su separación temporal. «Cada °» convierte
-              ese periodo a recorrido de la montura mediante la velocidad medida por <Code>:j</Code>: por ejemplo,
-              2 s a 0,4 °/s equivalen a una repetición cada 0,8°. Un pico aislado no identifica por sí mismo una pieza:
-              puede ser una periodicidad mecánica, conmutación del motor, resonancia, ruido eléctrico o un armónico.
-              Picos cercanos a 2f, 3f… suelen ser armónicos de una misma repetición; bandas laterales pueden indicar modulación.
-            </HelpBlock>
-            <HelpBlock title="Estadística circular">
-              Trata los 0° y 360° como el mismo punto y pondera cada posición por la corriente. La
-              <b className="text-fog"> dirección de carga</b> es hacia donde apunta el vector resultante: indica el sector
-              dominante de la asimetría, no necesariamente el pico máximo. <b className="text-fog">R̄</b> mide cuánto se
-              concentra esa carga: cerca de 1 hay una dirección dominante; cerca de 0 la corriente es casi uniforme o hay
-              sectores opuestos que se cancelan. Con R̄ baja, el ángulo resultante y la σ circular no son representativos.
-            </HelpBlock>
-            <HelpBlock title="Zonas de carga en Polar">
-              El círculo naranja punteado representa la corriente media global. Los sectores sombreados tienen ancho
-              variable y cubren los intervalos donde una media angular suavizada de 5° permanece por encima de ese círculo;
-              el sector dominante se pinta algo más intenso. El radio azul punteado señala siempre la dirección de carga
-              circular. Al ocultar series desde la leyenda se recalculan zonas, dirección y elipse con las series visibles.
-            </HelpBlock>
-            <HelpBlock title="Zoom, picos, elipse y exportación">
-              La rueda hace zoom siempre; desplaza con el botón derecho. «Zoom rect» funciona como la lupa de Matplotlib:
-              actívala y arrastra con el botón izquierdo el rectángulo que quieres ampliar. Se desactiva tras aplicarlo y
-              Restaurar recupera la vista completa. La FFT básica destaca cinco picos
-              automáticos y permite añadir/quitar otros manuales. Pulsa un punto Polar/Cartesiano para reposicionar.
-              I RMS es el valor eficaz móvil de medio segundo. Al terminar, Polar muestra la elipse y sus ejes.
-              «Exportar todo» crea un ZIP con PNG, CSV crudo/procesado, espectro FFT, picos y resumen JSON.
-            </HelpBlock>
-            <HelpBlock title="Revoluciones y metadatos">
-              «Superponer revs» representa cada vuelta completa con un color distinto para comparar repetibilidad.
-              Eje, sentido CW/CCW y origen <Code>:j</Code> se guardan en sesión, CSV y resumen exportado; son necesarios
-              para que «mover a esta posición» traduzca el ángulo relativo al destino absoluto correcto.
-            </HelpBlock>
-            <HelpBlock title="Test básico y extendido">
-              El básico realiza una pasada con los parámetros elegidos. El extendido ejecuta cinco fases: 20 s de ruido con
-              motores parados y cuatro vueltas, a la velocidad seleccionada y su 50 %, ambas en CW y CCW. En la lenta reduce
-              también los Hz del ADC para conservar las muestras por grado. Después compara picos FFT: periodo angular repetible sugiere origen mecánico;
-              frecuencia temporal fija sugiere electrónica/muestreo; los múltiplos enteros se marcan como armónicos. Cada
-              coincidencia reúne señales compatibles entre pasadas y el listado desplegable conserva hasta 40 picos por pasada.
-            </HelpBlock>
-            <HelpBlock title="Calibración ADC">
-              En Ajustes puedes cambiar la resistencia del shunt y el factor K. Los valores iniciales son 0,323 Ω y
-              1,0025189, pero no están fijados en el análisis: se guardan con cada sesión y exportación.
-            </HelpBlock>
-            <HelpBlock title="Consolas serie">
-              La pestaña «Serial» permite elegir «Serial montura» para el protocolo SkyWatcher o «Serial Flipper»
-              para ver respuestas y enviar INFO, SYNC o RATE al logger. Al abrir el puerto de la montura se ejecuta
-              automáticamente el escaneo de firmware, CPR, temporizador y ratio.
-            </HelpBlock>
-          </div>
-
-          <a href="https://github.com/PablodlFuente/NEQ6_worm_gear_calibration/wiki" target="_blank" rel="noreferrer" className="mb-4 flex items-center justify-center rounded border border-ion/50 bg-ion/10 px-3 py-2 font-display text-[10px] font-bold tracking-[0.16em] text-ion hover:bg-ion/20">ABRIR WIKI DEL PROYECTO</a>
+          <a href="https://github.com/PablodlFuente/NEQ6_worm_gear_calibration/tree/HEAD/wiki" target="_blank" rel="noreferrer" className="mb-4 flex items-center justify-center rounded border border-ion/50 bg-ion/10 px-3 py-2 font-display text-[10px] font-bold tracking-[0.16em] text-ion hover:bg-ion/20">ABRIR DOCUMENTACIÓN TÉCNICA</a>
           <h3 className="mb-2 font-display text-[11px] font-bold uppercase tracking-[0.18em] text-ember">Siglas y términos</h3>
           <dl className="grid overflow-hidden rounded border border-line md:grid-cols-[150px_1fr]">
             {TERMS.map(([term, meaning]) => (
@@ -164,16 +70,12 @@ export default function HelpModal({ open, onClose }: Props) {
             Seguridad: deja libre el recorrido, usa STOP ante cualquier riesgo y no cambies comandos de la «zona roja».
             Verifica masa común y que la tensión en PA7 permanezca dentro del rango admisible del Flipper.
           </p>
+          <p className="mt-2 rounded border border-line p-3 text-dim">
+            Software sin garantía: el usuario asume los riesgos eléctricos, mecánicos y operativos. La programación y
+            documentación han sido asistidas por OpenAI Codex. Consulta licencia y disclaimer en la documentación técnica.
+          </p>
         </div>
       </section>
     </div>
   );
-}
-
-function HelpBlock({ title, children }: { title: string; children: React.ReactNode }) {
-  return <section className="rounded border border-line bg-[#0a1424]/70 p-3"><h3 className="mb-1.5 font-display text-[10.5px] font-bold uppercase tracking-[0.14em] text-fog">{title}</h3><p>{children}</p></section>;
-}
-
-function Code({ children }: { children: React.ReactNode }) {
-  return <code className="rounded bg-[#101f38] px-1 text-ember">{children}</code>;
 }

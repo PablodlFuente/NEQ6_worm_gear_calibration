@@ -232,12 +232,19 @@ export function capturedAngleDeltaDeg(
   if (!cpr || metadata.originSteps === null || metadata.direction === null) return null;
   const normalized = ((angleDeg % 360) + 360) % 360;
   const sign = metadata.direction === "cw" ? 1 : -1;
-  /* La fase del gráfico pertenece a la revolución capturada: 210° no es
-   * intercambiable por -150°. No se normaliza al camino más corto porque
-   * eso cambia el sentido de aproximación y deja el punto en otra rama de
-   * holgura. El destino se calcula desde el feedback :j que fijó el origen. */
-  const target = metadata.originSteps + sign * (normalized * cpr) / 360;
-  return ((target - currentSteps) * 360) / cpr;
+  /* :j y :S usan un contador modular de 24 bits. En la NEQ6 una vuelta del
+   * eje puede superar media escala del contador, de modo que restar dos
+   * lecturas firmadas produce falsos desplazamientos >360°. Reconstruimos el
+   * destino de la revolución capturada, lo envolvemos como hace la placa y
+   * desenvolvemos sólo la diferencia final. */
+  const width = 0x1000000;
+  const half = width / 2;
+  const targetUnwrapped = metadata.originSteps + sign * (normalized * cpr) / 360;
+  const target = ((((targetUnwrapped + half) % width) + width) % width) - half;
+  let deltaSteps = target - currentSteps;
+  if (deltaSteps > half) deltaSteps -= width;
+  else if (deltaSteps < -half) deltaSteps += width;
+  return (deltaSteps * 360) / cpr;
 }
 
 export interface Session {
@@ -569,8 +576,10 @@ export interface AveragedSeries {
   tb: Float64Array;
   adc: Float64Array;
   amps: Float64Array;
+  ampsStd: Float64Array; /* desviación típica dentro del bloque */
   ampsErr: Float64Array; /* error estándar de la media */
   angles: Float64Array; /* grados desenvueltos */
+  angleStd: Float64Array; /* desviación típica dentro del bloque */
   angleErr: Float64Array; /* error estándar de la media */
   revs: Int32Array;
   counts: Uint16Array;
@@ -601,8 +610,10 @@ export function averageAngleSeries(
     tb: new Float64Array(groups),
     adc: new Float64Array(groups),
     amps: new Float64Array(groups),
+    ampsStd: new Float64Array(groups),
     ampsErr: new Float64Array(groups),
     angles: new Float64Array(groups),
+    angleStd: new Float64Array(groups),
     angleErr: new Float64Array(groups),
     revs: new Int32Array(groups),
     counts: new Uint16Array(groups),
@@ -638,9 +649,11 @@ export function averageAngleSeries(
     out.tb[group] = sumTb / m;
     out.adc[group] = sumAdc / m;
     out.amps[group] = sumA / m;
-    out.ampsErr[group] = Math.sqrt(varianceA / m);
+    out.ampsStd[group] = Math.sqrt(varianceA);
+    out.ampsErr[group] = out.ampsStd[group] / Math.sqrt(m);
     out.angles[group] = sumAngle / m;
-    out.angleErr[group] = Math.sqrt(varianceAngle / m);
+    out.angleStd[group] = Math.sqrt(varianceAngle);
+    out.angleErr[group] = out.angleStd[group] / Math.sqrt(m);
     out.counts[group] = m;
     group++;
     count = 0;
@@ -717,8 +730,10 @@ export function buildProcCsv(
     tb: number;
     adc: number;
     amps: number;
+    ampsStd: number;
     ampsErr: number;
     unw: number;
+    angleStd: number;
     angleErr: number;
     rev: number;
     n: number;
@@ -732,10 +747,10 @@ export function buildProcCsv(
     `# neq6-logger procesado · rate=${rate}Hz\n` +
     metadataHeader(metadata, calibration) +
     statsTxt.map((s) => `# ${s}\n`).join("") +
-    "ts_us,adc_raw,amps,amps_sem,angle_unwrapped_deg,angle_sem_deg,rev,tb_ms,n_group\n";
+    "ts_us,adc_raw,amps,amps_std,amps_sem,angle_unwrapped_deg,angle_std_deg,angle_sem_deg,rev,tb_ms,n_group\n";
   const body = rows.map(
     (r) =>
-      `${r.ts.toFixed(3)},${r.adc.toFixed(3)},${r.amps.toFixed(6)},${r.ampsErr.toFixed(6)},${r.unw.toFixed(6)},${r.angleErr.toFixed(6)},${r.rev},${r.tb.toFixed(3)},${r.n}`,
+      `${r.ts.toFixed(3)},${r.adc.toFixed(3)},${r.amps.toFixed(6)},${r.ampsStd.toFixed(6)},${r.ampsErr.toFixed(6)},${r.unw.toFixed(6)},${r.angleStd.toFixed(6)},${r.angleErr.toFixed(6)},${r.rev},${r.tb.toFixed(3)},${r.n}`,
   );
   return head + body.join("\n") + "\n";
 }

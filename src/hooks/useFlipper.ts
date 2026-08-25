@@ -644,8 +644,10 @@ export function useFlipper({ cpr1 }: Props) {
       tb: derived.plot!.tb[i],
       adc: derived.plot!.adc[i],
       amps: derived.plot!.amps[i],
+      ampsStd: derived.plot!.ampsStd[i],
       ampsErr: derived.plot!.ampsErr[i],
       unw: derived.plot!.angles[i],
+      angleStd: derived.plot!.angleStd[i],
       angleErr: derived.plot!.angleErr[i],
       rev: derived.plot!.revs[i],
       n: derived.plot!.counts[i],
@@ -658,6 +660,125 @@ export function useFlipper({ cpr1 }: Props) {
         : "velocidad_feedback=no_disponible",
     ];
     return buildProcCsv(rows, rate, statsTxt, captureMetadataRef.current, calibrationRef.current);
+  };
+
+  const extendedPassAveragesCsv = (pass: ExtendedPassResult): string | null => {
+    const factor = Math.max(1, Math.floor(avgFactor));
+    const length = Math.min(pass.samples.anglesDeg.length, pass.samples.currentA.length);
+    const groups = Math.floor(length / factor);
+    if (!groups) return null;
+    const lines = [
+      `# pasada=${pass.label}`,
+      `# promedio_bloque=${factor}`,
+      "# std: desviación típica muestral dentro del bloque; sem: incertidumbre estándar de la media",
+      "angle_mean_deg,angle_std_deg,angle_sem_deg,amps_mean,amps_std,amps_sem,n_group",
+    ];
+    for (let group = 0; group < groups; group++) {
+      const start = group * factor;
+      const angles = pass.samples.anglesDeg.slice(start, start + factor);
+      const currents = pass.samples.currentA.slice(start, start + factor);
+      const angleMean = mean(angles);
+      const currentMean = mean(currents);
+      const angleStd = factor > 1 ? std(angles) : 0;
+      const currentStd = factor > 1 ? std(currents) : 0;
+      lines.push([
+        angleMean.toFixed(9), angleStd.toFixed(9), (angleStd / Math.sqrt(factor)).toFixed(9),
+        currentMean.toFixed(9), currentStd.toFixed(9), (currentStd / Math.sqrt(factor)).toFixed(9), factor,
+      ].join(","));
+    }
+    return `${lines.join("\n")}\n`;
+  };
+
+  const extendedMeanProfileCsv = (analysis: ExtendedAnalysis): string | null => {
+    const moving = analysis.passes.filter((pass) => pass.direction !== "stationary" && pass.profile?.currentA?.length);
+    if (!moving.length) return null;
+    const lines = [
+      "# promedio angular entre las series móviles del test extendido",
+      "# std: dispersión entre series; sem: incertidumbre estándar de la media entre series",
+      "angle_deg,amps_mean,amps_std,amps_sem,n_series",
+    ];
+    for (let bin = 0; bin < 360; bin++) {
+      const values = moving.flatMap((pass) => {
+        const value = pass.profile?.currentA[bin];
+        return value === null || value === undefined || !Number.isFinite(value) ? [] : [value];
+      });
+      if (!values.length) continue;
+      const sd = values.length > 1 ? std(values) : 0;
+      lines.push(`${(bin + 0.5).toFixed(1)},${mean(values).toFixed(9)},${sd.toFixed(9)},${(sd / Math.sqrt(values.length)).toFixed(9)},${values.length}`);
+    }
+    return `${lines.join("\n")}\n`;
+  };
+
+  const summaryText = (axis: string, isExtended: boolean): string => {
+    const metadata = captureMetadataRef.current;
+    const lines = [
+      "NEQ6 · RESUMEN DEL ENSAYO",
+      "==========================",
+      `Generado: ${new Date().toISOString()}`,
+      `Tipo: ${isExtended ? "test extendido" : "test básico"}`,
+      `Eje: ${axis}`,
+      `Sentido de la última captura: ${metadata.direction?.toUpperCase() ?? "sin movimiento"}`,
+      `Calibración ADC: R=${calibrationRef.current.shuntOhm} Ω · K=${calibrationRef.current.k}`,
+      `Promedio seleccionado: bloques de ${Math.max(1, Math.floor(avgFactor))} muestra(s)`,
+      "",
+    ];
+    if (!isExtended && derived) {
+      lines.push(
+        "ESTADÍSTICAS BÁSICAS",
+        "--------------------",
+        `Muestras: ${derived.st.n}`,
+        `Duración: ${derived.st.durS.toFixed(3)} s`,
+        `Tasa ADC efectiva: ${derived.st.rateEst.toFixed(3)} Hz`,
+        `Corriente media: ${derived.st.mean.toFixed(6)} ± ${derived.st.sem.toFixed(6)} A`,
+        `Desviación típica: ${derived.st.sd.toFixed(6)} A`,
+        `Mediana: ${derived.st.median.toFixed(6)} A`,
+        `Máximo: ${derived.st.maxA.toFixed(6)} A${derived.st.maxAngleDeg === null ? "" : ` a ${derived.st.maxAngleDeg.toFixed(3)}°`}`,
+        `Recorrido con feedback: ${derived.st.angleSpanDeg.toFixed(3)}°`,
+        `Velocidad de feedback: ${derived.st.feedbackSpeedDegS?.toFixed(6) ?? "no disponible"} °/s`,
+        `Muestras por grado: ${derived.st.samplesPerDeg?.toFixed(3) ?? "no disponible"}`,
+        "",
+        "ESTADÍSTICA CIRCULAR",
+        "--------------------",
+        derived.st.circ
+          ? `Dirección de carga: ${derived.st.circ.meanDeg.toFixed(3)}° · R̄=${derived.st.circ.R.toFixed(6)} · σ=${derived.st.circ.stdDeg.toFixed(3)}°`
+          : "No disponible",
+        "",
+        "FFT · PICOS AUTOMÁTICOS",
+        "-----------------------",
+      );
+      if (derived.peaks.length) {
+        for (const peak of derived.peaks) {
+          const mountDeg = derived.st.feedbackSpeedDegS ? peak.period * derived.st.feedbackSpeedDegS : null;
+          lines.push(`${peak.freq.toFixed(6)} Hz · periodo ${peak.period.toFixed(6)} s${mountDeg === null ? "" : ` · cada ${mountDeg.toFixed(6)}°`}`);
+        }
+      } else lines.push("No disponible");
+    }
+    if (isExtended && extendedAnalysis) {
+      lines.push("ESTADÍSTICAS POR FASE", "---------------------");
+      for (const pass of extendedAnalysis.passes) {
+        const st = pass.statistics;
+        lines.push(
+          "",
+          `[${pass.label}]`,
+          `N=${st.n} · duración=${st.durationS.toFixed(3)} s · ADC=${st.effectiveRateHz.toFixed(3)} Hz`,
+          `I media=${st.meanA.toFixed(6)} ± ${st.semA.toFixed(6)} A · σ=${st.sdA.toFixed(6)} A · mediana=${st.medianA.toFixed(6)} A`,
+          `máximo=${st.maxA.toFixed(6)} A${st.maxAngleDeg === null ? "" : ` a ${st.maxAngleDeg.toFixed(3)}°`} · velocidad=${st.measuredSpeedDegS?.toFixed(6) ?? "n/a"} °/s`,
+        );
+      }
+      const mechanical = extendedAnalysis.groups.filter((group) => group.classification === "mecánica" || group.classification === "tren motor");
+      lines.push("", "FRECUENCIAS MECÁNICAS / TREN MOTOR", "-----------------------------------");
+      if (mechanical.length) {
+        for (const group of mechanical) lines.push(
+          `${group.representativeHz.toFixed(6)} Hz · ${group.representativeDeg?.toFixed(6) ?? "n/a"}° · ${group.classification} · ${group.reason}`,
+        );
+      } else lines.push("No se clasificaron frecuencias mecánicas con evidencia suficiente.");
+      lines.push("", "CLASIFICACIÓN FFT COMPLETA", "--------------------------");
+      for (const group of extendedAnalysis.groups) lines.push(
+        `${group.representativeHz.toFixed(6)} Hz · ${group.representativeDeg?.toFixed(6) ?? "n/a"}° · ${group.classification} · pasadas: ${group.passes.join(" | ")}`,
+      );
+    }
+    lines.push("", "Nota: la clasificación espectral es una inferencia comparativa, no identifica por sí sola una pieza mecánica concreta.", "");
+    return lines.join("\n");
   };
 
   const exportRaw = () => {
@@ -695,6 +816,8 @@ export function useFlipper({ cpr1 }: Props) {
     } else {
       files.push({ name: `${root}/medidas/medidas.csv`, data: measurementCsvText("basic") });
     }
+    const processed = processedCsvText();
+    if (!isExtended && processed) files.push({ name: `${root}/datos-promediados/promedios.csv`, data: processed });
     if (!isExtended && derived.mag) {
       const speed = derived.st.feedbackSpeedDegS;
       const direction = captureMetadataRef.current.direction?.toUpperCase() ?? "unknown";
@@ -708,6 +831,8 @@ export function useFlipper({ cpr1 }: Props) {
     }
     if (extendedAnalysis) {
       for (const pass of extendedAnalysis.passes) {
+        const passAverages = extendedPassAveragesCsv(pass);
+        if (passAverages) files.push({ name: `${root}/datos-promediados/${pass.id}.csv`, data: passAverages });
         if (!pass.spectrum) continue;
         let csv = `# pasada=${pass.label}\n# eje=${axis}\n# sentido=${pass.direction.toUpperCase()}\nfrequency_hz,period_s,period_mount_deg,magnitude\n`;
         for (let i = 1; i < pass.spectrum.magnitude.length; i++) {
@@ -735,9 +860,12 @@ export function useFlipper({ cpr1 }: Props) {
         files.push({ name: `${root}/fft/espectro-promedio.csv`, data: csv });
       }
       let comparison = "grupo,clasificacion,frecuencia_hz,periodicidad_grados,pasadas,armonico_de_hz,evidencia\n";
-      for (const group of extendedAnalysis.groups) comparison += `${group.id},${group.classification},${group.representativeHz.toFixed(9)},${group.representativeDeg?.toFixed(9) ?? ""},\"${group.passes.join(" | ")}\",${group.harmonicOfHz?.toFixed(9) ?? ""},\"${group.reason.replaceAll('"', '""')}\"\n`;
+      for (const group of extendedAnalysis.groups) comparison += `${group.id},${group.classification},${group.representativeHz.toFixed(9)},${group.representativeDeg?.toFixed(9) ?? ""},\"${group.passes.join(" | ")}\",${group.harmonicOfHz?.toFixed(9) ?? ""},\"${group.reason.replace(/"/g, '""')}\"\n`;
       files.push({ name: `${root}/fft/analisis-comparativo.csv`, data: comparison });
+      const meanProfile = extendedMeanProfileCsv(extendedAnalysis);
+      if (meanProfile) files.push({ name: `${root}/datos-promediados/promedio-series.csv`, data: meanProfile });
     }
+    files.push({ name: `${root}/resumen-estadisticas-y-fft.txt`, data: summaryText(axis, isExtended) });
     files.push(...extraFiles.map((file) => ({ name: `${root}/${file.name.replace(/^datos\//, "fft/")}`, data: file.data })));
     downloadBlob(`${root}.zip`, buildZip(files));
     setNotice("Exportación preparada: medidas sin agrupar, gráficas y análisis FFT.");
@@ -767,7 +895,7 @@ export function useFlipper({ cpr1 }: Props) {
           result.push({ name: `${base}/fft/espectro-${pass.id}.csv`, data: csv });
         }
         let comparison = "grupo,clasificacion,frecuencia_hz,periodicidad_grados,pasadas,evidencia\n";
-        for (const group of session.extendedAnalysis.groups) comparison += `${group.id},${group.classification},${group.representativeHz.toFixed(9)},${group.representativeDeg?.toFixed(9) ?? ""},\"${group.passes.join(" | ")}\",\"${group.reason.replaceAll('"', '""')}\"\n`;
+        for (const group of session.extendedAnalysis.groups) comparison += `${group.id},${group.classification},${group.representativeHz.toFixed(9)},${group.representativeDeg?.toFixed(9) ?? ""},\"${group.passes.join(" | ")}\",\"${group.reason.replace(/"/g, '""')}\"\n`;
         result.push({ name: `${base}/fft/analisis-comparativo.csv`, data: comparison });
       }
       return result;

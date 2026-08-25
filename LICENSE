@@ -1,0 +1,29 @@
+GNU AFFERO GENERAL PUBLIC LICENSE
+Version 3, 19 November 2007
+
+Copyright (C) 2026 Pablo de la Fuente
+
+This project is licensed under the GNU Affero General Public License,
+version 3 only (AGPL-3.0-only).
+
+You may use, study, copy, modify, distribute and charge for copies of this
+software under the terms of the GNU Affero General Public License version 3.
+Modified versions and network services based on this software must provide
+their corresponding source code under the same license. Copyright notices,
+license notices and the following project attribution must be preserved:
+
+    Original project: NEQ6 Worm Gear Calibration
+    Author: Pablo de la Fuente
+    Source: https://github.com/PablodlFuente/NEQ6_worm_gear_calibration
+
+The complete, controlling license text is published by the Free Software
+Foundation at:
+
+    https://www.gnu.org/licenses/agpl-3.0.txt
+
+SPDX-License-Identifier: AGPL-3.0-only
+
+This program is distributed in the hope that it will be useful, but WITHOUT
+ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS
+FOR A PARTICULAR PURPOSE. See the GNU Affero General Public License version 3
+for the complete terms.

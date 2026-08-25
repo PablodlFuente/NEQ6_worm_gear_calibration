@@ -1,6 +1,7 @@
 {
   "name": "neq6-worm-gear-calibration",
   "private": true,
+  "license": "AGPL-3.0-only",
   "type": "module",
   "scripts": {
     "dev": "vite",
