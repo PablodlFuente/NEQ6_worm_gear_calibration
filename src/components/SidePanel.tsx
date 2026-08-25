@@ -223,7 +223,7 @@ export default function SidePanel({
           <Head>Montura detectada</Head>
           {!profile.cpr1 && !profile.timer && !profile.fw ? (
             <p className="mt-2 font-mono text-[10.5px] leading-relaxed text-dim">
-              Aún sin datos. Lanza «Escanear montura» (pestaña Montura) o envía{" "}
+              Aún sin datos. Lanza «Escanear montura» (Serial → Serial montura) o envía{" "}
               <span className="text-[#ffc46b]">:e1</span>, <span className="text-[#ffc46b]">:a1</span>… para
               identificar firmware, resolución y temporización.
             </p>

@@ -21,7 +21,7 @@ cinco picos automáticos; M1… son selecciones manuales eliminables. La columna
 angular es `periodo × velocidad medida :j`.
 
 En el test extendido se comparan hasta 40 máximos locales por cada una de las
-cuatro pasadas. Las coincidencias reúnen picos que conservan aproximadamente la
+cuatro vueltas más una fase de ruido con motores parados. Las coincidencias reúnen picos que conservan aproximadamente la
 frecuencia temporal o la periodicidad angular. Las curvas se mantienen por color
 y una línea blanca muestra el perfil medio entre pasadas.
 

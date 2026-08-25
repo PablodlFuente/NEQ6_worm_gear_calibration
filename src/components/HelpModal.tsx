@@ -57,7 +57,7 @@ export default function HelpModal({ open, onClose }: Props) {
         <div className="overflow-y-auto p-4 font-mono text-[10.5px] leading-relaxed text-dim">
           <div className="grid gap-3 md:grid-cols-2">
             <HelpBlock title="Flujo recomendado">
-              En Ajustes conecta la montura y ejecuta «Escanear montura». Conecta el Flipper por BLE o USB-COM,
+              En Ajustes conecta la montura; el escaneo de parámetros se ejecuta automáticamente. Conecta el Flipper por BLE o USB-COM,
               sincroniza su reloj y abre «Test ejes». Elige CW o CCW. El test mueve primero 2° en el sentido contrario,
               invierte el giro y sólo inicia el ADC cuando <Code>:j</Code> confirma el cruce por 0°, ya con el motor en régimen.
             </HelpBlock>
@@ -126,14 +126,20 @@ export default function HelpModal({ open, onClose }: Props) {
               para que «mover a esta posición» traduzca el ángulo relativo al destino absoluto correcto.
             </HelpBlock>
             <HelpBlock title="Test básico y extendido">
-              El básico realiza una pasada con los parámetros elegidos. El extendido ejecuta cuatro: velocidad seleccionada
-              y su 50 %, ambas en CW y CCW. Después agrupa picos FFT: periodo angular repetible sugiere origen mecánico;
+              El básico realiza una pasada con los parámetros elegidos. El extendido ejecuta cinco fases: 20 s de ruido con
+              motores parados y cuatro vueltas, a la velocidad seleccionada y su 50 %, ambas en CW y CCW. En la lenta reduce
+              también los Hz del ADC para conservar las muestras por grado. Después compara picos FFT: periodo angular repetible sugiere origen mecánico;
               frecuencia temporal fija sugiere electrónica/muestreo; los múltiplos enteros se marcan como armónicos. Cada
               coincidencia reúne señales compatibles entre pasadas y el listado desplegable conserva hasta 40 picos por pasada.
             </HelpBlock>
             <HelpBlock title="Calibración ADC">
               En Ajustes puedes cambiar la resistencia del shunt y el factor K. Los valores iniciales son 0,323 Ω y
               1,0025189, pero no están fijados en el análisis: se guardan con cada sesión y exportación.
+            </HelpBlock>
+            <HelpBlock title="Consolas serie">
+              La pestaña «Serial» permite elegir «Serial montura» para el protocolo SkyWatcher o «Serial Flipper»
+              para ver respuestas y enviar INFO, SYNC o RATE al logger. Al abrir el puerto de la montura se ejecuta
+              automáticamente el escaneo de firmware, CPR, temporizador y ratio.
             </HelpBlock>
           </div>
 

@@ -63,7 +63,7 @@ npm run check
 2. En **Ajustes**, conecta la montura a 9600 8N1.
 3. En **Montura**, ejecuta **Escanear montura**.
 4. En **Test ejes**, selecciona AR/DEC, CW/CCW, vueltas, ADC y velocidad.
-5. Empieza con 1 vuelta, 100 Hz y 0,2–0,5 °/s.
+5. Empieza con 1 vuelta, 500 Hz y una velocidad segura para la instalación.
 6. Pulsa **Iniciar test sincronizado**.
 
 El eje se mueve primero 2° en el sentido opuesto mediante un GOTO corto. Después

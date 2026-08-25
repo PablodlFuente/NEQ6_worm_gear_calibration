@@ -173,7 +173,7 @@ export default function App() {
     axis: 1,
     direction: "cw",
     revolutions: "1",
-    sampleRate: 100,
+    sampleRate: 500,
     speed: "3.34",
   });
   const [axisTest, setAxisTest] = useState<AxisTestState>({
@@ -185,7 +185,7 @@ export default function App() {
     elapsedSec: 0,
     actualDurationSec: null,
   });
-  const [extendedTest, setExtendedTest] = useState<ExtendedTestState>({ running: false, pass: 0, total: 4, message: "" });
+  const [extendedTest, setExtendedTest] = useState<ExtendedTestState>({ running: false, pass: 0, total: 5, message: "" });
   const [helpOpen, setHelpOpen] = useState(false);
 
   /* pestaña activa + ancho del panel lateral */
@@ -211,6 +211,7 @@ export default function App() {
   const moveCancelRef = useRef(false);
   const axisTestCancelRef = useRef(false);
   const extendedTestCancelRef = useRef(false);
+  const previousSerialStatusRef = useRef<"closed" | "connecting" | "open">("closed");
   const jogRef = useRef<{ axis: 1 | 2 } | null>(null);
   const barRef = useRef<CommandBarHandle>(null);
   const encoder = (encoderRef.current ??= new TextEncoder());
@@ -379,7 +380,7 @@ export default function App() {
       logFault("Web Serial necesita un contexto seguro: sirve esta página por HTTPS o localhost.");
     } else {
       logSys("Web Serial disponible · NEQ6: 9600 8N1, protocolo MC (el de EQDIRect/EQASCOM).");
-      logSys("Abre Ajustes → Conexión montura, elige tu conversor UART-USB y luego ejecuta «Escanear montura».");
+      logSys("Abre Ajustes → Conexión montura y elige el conversor UART-USB; el escaneo se inicia al conectar.");
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -419,7 +420,7 @@ export default function App() {
     try {
       await serial.requestAndOpen(settings);
       logSys(`Puerto abierto · ${baudString}`);
-      logSys("Listo: lanza «Escanear montura» (pestaña Montura) o envía :e1.");
+      logSys("Puerto listo: iniciando automáticamente «Escanear montura».");
     } catch (e) {
       const err = e as { name?: string; message?: string };
       if (err.name === "NotFoundError") logSys("Selección de puerto cancelada.");
@@ -518,6 +519,16 @@ export default function App() {
   const cancelDiag = () => {
     autoCancelRef.current = true;
   };
+
+  useEffect(() => {
+    const previous = previousSerialStatusRef.current;
+    previousSerialStatusRef.current = status;
+    if (status !== "open" || previous === "open") return;
+    const timer = window.setTimeout(() => void runDiag(), 180);
+    return () => window.clearTimeout(timer);
+    // runDiag usa el estado del render en el que el puerto ya está abierto.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [status]);
 
   /* ── parada / home ────────────────────────────────────── */
   const stopMove = (hard: boolean) => {
@@ -639,7 +650,7 @@ export default function App() {
     const cpr = axis === 2 ? profile.cpr2 : profile.cpr1;
     const timer = profile.timer;
     if (!cpr || !timer) {
-      logFault("Faltan CPR/timer: ejecuta antes «Escanear montura» (pestaña Montura).");
+      logFault("Faltan CPR/timer: ejecuta «Escanear montura» en Serial → Serial montura.");
       return;
     }
     const speed = parseFloat(mvInputs.speed.replace(",", ".")) || 0.5;
@@ -788,7 +799,7 @@ export default function App() {
     const cpr = axis === 2 ? profile.cpr2 : profile.cpr1;
     const timer = profile.timer;
     if (!cpr || !timer) {
-      logFault("Faltan CPR/timer: ejecuta «Escanear montura» (pestaña Montura) con el puerto abierto.");
+      logFault("Faltan CPR/timer: ejecuta «Escanear montura» en Serial → Serial montura con el puerto abierto.");
       return false;
     }
 
@@ -1260,11 +1271,16 @@ export default function App() {
     const fast = Number(axisTestInputs.speed.replace(",", "."));
     if (!(fast > 0)) return;
     const slow = Math.max(0.01, fast / 2);
+    const fastRate = axisTestInputs.sampleRate;
+    /* Hz/velocidad constante => aproximadamente las mismas muestras por grado
+     * en las dos velocidades. */
+    const slowRate = Math.max(10, Math.min(1000, Math.round(fastRate * slow / fast)));
     const passes = [
-      { id: "fast-cw", label: `rápida CW · ${fast.toFixed(3)}°/s`, direction: "cw" as const, speed: fast },
-      { id: "fast-ccw", label: `rápida CCW · ${fast.toFixed(3)}°/s`, direction: "ccw" as const, speed: fast },
-      { id: "slow-cw", label: `lenta CW · ${slow.toFixed(3)}°/s`, direction: "cw" as const, speed: slow },
-      { id: "slow-ccw", label: `lenta CCW · ${slow.toFixed(3)}°/s`, direction: "ccw" as const, speed: slow },
+      { id: "noise", label: `ruido · motores parados · ${fastRate} Hz`, direction: "stationary" as const, speed: 0, sampleRate: fastRate, stationary: true as const },
+      { id: "fast-cw", label: `rápida CW · ${fast.toFixed(3)}°/s · ${fastRate} Hz`, direction: "cw" as const, speed: fast, sampleRate: fastRate, stationary: false as const },
+      { id: "fast-ccw", label: `rápida CCW · ${fast.toFixed(3)}°/s · ${fastRate} Hz`, direction: "ccw" as const, speed: fast, sampleRate: fastRate, stationary: false as const },
+      { id: "slow-cw", label: `lenta CW · ${slow.toFixed(3)}°/s · ${slowRate} Hz`, direction: "cw" as const, speed: slow, sampleRate: slowRate, stationary: false as const },
+      { id: "slow-ccw", label: `lenta CCW · ${slow.toFixed(3)}°/s · ${slowRate} Hz`, direction: "ccw" as const, speed: slow, sampleRate: slowRate, stationary: false as const },
     ];
     extendedTestCancelRef.current = false;
     flip.setExtendedAnalysis(null);
@@ -1274,9 +1290,27 @@ export default function App() {
     for (let index = 0; index < passes.length; index++) {
       if (extendedTestCancelRef.current) break;
       const pass = passes[index];
-      setExtendedTest({ running: true, pass: index + 1, total: passes.length, message: `Pasada ${index + 1}/4 · ${pass.label}` });
-      const inputs: AxisTestInputs = { ...axisTestInputs, direction: pass.direction, speed: String(pass.speed) };
-      const ok = await startAxisTest(inputs, true);
+      setExtendedTest({ running: true, pass: index + 1, total: passes.length, message: `Fase ${index + 1}/${passes.length} · ${pass.label}` });
+      let ok = false;
+      if (pass.stationary) {
+        flip.clearData();
+        flip.setCaptureMetadata({ axis: axisTestInputs.axis, direction: null, originSteps: null });
+        ok = await flip.startCapture(pass.sampleRate);
+        if (ok) {
+          const noiseDurationMs = 20_000;
+          const started = performance.now();
+          while (!extendedTestCancelRef.current && performance.now() - started < noiseDurationMs) {
+            const remaining = Math.max(0, (noiseDurationMs - (performance.now() - started)) / 1000);
+            setExtendedTest({ running: true, pass: index + 1, total: passes.length, message: `Midiendo ruido con motores parados · ${remaining.toFixed(0)} s` });
+            await sleep(250);
+          }
+          await flip.stopCapture();
+          ok = !extendedTestCancelRef.current;
+        }
+      } else {
+        const inputs: AxisTestInputs = { ...axisTestInputs, direction: pass.direction, speed: String(pass.speed), sampleRate: pass.sampleRate };
+        ok = await startAxisTest(inputs, true);
+      }
       if (!ok || extendedTestCancelRef.current) break;
       const result = flip.snapshotExtendedPass(pass.id, pass.label, pass.direction, pass.speed);
       if (result) {

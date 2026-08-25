@@ -119,6 +119,19 @@ test("el test extendido separa periodicidad angular de frecuencia fija", () => {
   assert.equal(groups.find((group) => Math.abs(group.representativeHz - 7) < 0.1)?.classification, "eléctrica/muestreo");
 });
 
+test("un pico presente con motores parados se clasifica como eléctrico", () => {
+  const groups = classifyExtendedPeaks([
+    { id: "noise", label: "motores parados", direction: "stationary", requestedSpeedDegS: 0, measuredSpeedDegS: null, peaks: [
+      { frequencyHz: 50, periodMountDeg: null, magnitude: 4 },
+    ] },
+    { id: "fast", label: "rápida CW", direction: "cw", requestedSpeedDegS: 3, measuredSpeedDegS: 3, peaks: [
+      { frequencyHz: 49.9, periodMountDeg: 3 / 49.9, magnitude: 8 },
+    ] },
+  ]);
+  assert.equal(groups[0].classification, "eléctrica/muestreo");
+  assert.match(groups[0].reason, /motores parados/i);
+});
+
 test("la estadística circular ponderada apunta hacia la carga dominante", () => {
   const circular = circularStats([0, 90, 180, 270], [10, 1, 1, 1]);
   assert.ok(circular.R > 0.6);

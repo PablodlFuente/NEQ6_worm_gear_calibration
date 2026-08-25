@@ -70,15 +70,25 @@ export interface ExtendedAngularProfile {
   currentA: (number | null)[];
 }
 
+export interface ExtendedAngularSamples {
+  /** Ángulo desenvuelto procedente de :j para cada muestra posicionada. */
+  anglesDeg: number[];
+  /** Corriente calibrada correspondiente, sin promedio implícito. */
+  currentA: number[];
+}
+
 export interface ExtendedPassResult {
   id: string;
   label: string;
-  direction: "cw" | "ccw";
+  direction: "cw" | "ccw" | "stationary";
   requestedSpeedDegS: number;
   measuredSpeedDegS: number | null;
   peaks: ExtendedPeak[];
   statistics: ExtendedPassStatistics;
-  profile: ExtendedAngularProfile;
+  /** Datos nuevos: bloque × se aplica dinámicamente en la interfaz. */
+  samples: ExtendedAngularSamples;
+  /** Compatibilidad con sesiones creadas por versiones anteriores. */
+  profile?: ExtendedAngularProfile;
 }
 
 export interface ExtendedPeakGroup {
@@ -131,8 +141,12 @@ export function classifyExtendedPeaks(
       relativeDifference(a.peak.periodMountDeg, b.peak.periodMountDeg) <= 0.08));
     const hzStable = differentSpeeds && members.some((a) => members.some((b) =>
       a.pass.id !== b.pass.id && relativeDifference(a.peak.frequencyHz, b.peak.frequencyHz) <= 0.05));
-    const bothDirections = new Set(members.map((member) => member.pass.direction)).size > 1;
-    const classification = degreeStable
+    const stationaryPresent = members.some((member) => member.pass.direction === "stationary");
+    const motionDirections = new Set(members.map((member) => member.pass.direction).filter((direction) => direction !== "stationary"));
+    const bothDirections = motionDirections.size > 1;
+    const classification = stationaryPresent
+      ? "eléctrica/muestreo"
+      : degreeStable
       ? bothDirections ? "mecánica" : "tren motor"
       : hzStable ? "eléctrica/muestreo" : "incierta";
     const representativeHz = median(members.map((member) => member.peak.frequencyHz));
@@ -154,7 +168,9 @@ export function classifyExtendedPeaks(
       representativeDeg: degreeValues.length ? median(degreeValues) : null,
       passes: [...new Set(members.map((member) => member.pass.label))],
       harmonicOfHz,
-      reason: degreeStable
+      reason: stationaryPresent
+        ? "Presente también con los motores parados: origen eléctrico, del ADC o del transporte."
+        : degreeStable
         ? bothDirections
           ? "Periodo angular estable entre velocidades y presente en ambos sentidos."
           : "La frecuencia escala con la velocidad; falta confirmación en ambos sentidos."

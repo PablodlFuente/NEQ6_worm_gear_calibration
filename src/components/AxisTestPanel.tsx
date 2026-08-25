@@ -196,7 +196,7 @@ export default function AxisTestPanel({
         <span className="text-dim">tiempo estimado</span>
         <span className="text-right tabular-nums text-fog">{estimatedDurationSec ? formatTime(estimatedDurationSec) : "—"}</span>
         <span className="text-dim">tiempo extendido ≈</span>
-        <span className="text-right tabular-nums text-fog">{estimatedDurationSec ? formatTime(estimatedDurationSec * 6) : "—"}</span>
+        <span className="text-right tabular-nums text-fog">{estimatedDurationSec ? formatTime(estimatedDurationSec * 6 + 20) : "—"}</span>
         <span className="text-dim">tiempo {state.running ? "transcurrido" : "real"}</span>
         <span className="text-right tabular-nums text-ion">
           {state.running
@@ -245,7 +245,7 @@ export default function AxisTestPanel({
           <button
             onClick={onStartExtended}
             disabled={!ready}
-            title="Cuatro pasadas: velocidad seleccionada y 50 %, en CW y CCW"
+            title="Cinco fases: ruido con motores parados y cuatro vueltas a dos velocidades, CW y CCW"
             className="flex w-full items-center justify-center gap-2 rounded border border-ion/60 bg-ion/10 px-3 py-2.5 font-display text-[11px] font-bold tracking-[0.18em] text-ion transition-all hover:bg-ion/20 disabled:cursor-not-allowed disabled:opacity-35"
           >
             <IconPlay className="h-4 w-4" /> INICIAR TEST EXTENDIDO

@@ -55,6 +55,8 @@ export function useFlipper({ cpr1 }: Props) {
   const [avgFactor, setAvgFactor] = useState(1);
   const [overlayRevs, setOverlayRevs] = useState(true);
   const [notice, setNotice] = useState<string | null>(null);
+  const [consoleLines, setConsoleLines] = useState<Array<{ id: number; time: number; direction: "tx" | "rx"; text: string }>>([]);
+  const consoleIdRef = useRef(0);
   const [deviceInfo, setDeviceInfo] = useState<{
     version: string;
     requestedHz: number;
@@ -121,6 +123,7 @@ export function useFlipper({ cpr1 }: Props) {
   };
 
   const onLine = (line: string) => {
+    setConsoleLines((current) => [...current.slice(-299), { id: ++consoleIdRef.current, time: Date.now(), direction: "rx", text: line }]);
     if (pendingLineRef.current) {
       const resolve = pendingLineRef.current;
       pendingLineRef.current = null;
@@ -158,6 +161,7 @@ export function useFlipper({ cpr1 }: Props) {
 
   const sendCmdNow = (cmd: string, timeout = 900): Promise<string | null> =>
     new Promise((resolve) => {
+      setConsoleLines((current) => [...current.slice(-299), { id: ++consoleIdRef.current, time: Date.now(), direction: "tx", text: cmd }]);
       let done = false;
       const timer = window.setTimeout(() => {
         if (!done) {
@@ -307,6 +311,12 @@ export function useFlipper({ cpr1 }: Props) {
     return () => window.clearInterval(iv);
   }, [capturing]);
 
+  useEffect(() => {
+    if (!notice) return;
+    const timer = window.setTimeout(() => setNotice(null), 5_000);
+    return () => window.clearTimeout(timer);
+  }, [notice]);
+
   const recordAngle = (deg: number, tb = Date.now()) => {
     /* startAxisTest limpia la serie antes de cada prueba. No descartamos un
      * feedback :j válido por una transición asíncrona de React/START: ese era
@@ -331,7 +341,7 @@ export function useFlipper({ cpr1 }: Props) {
   const snapshotExtendedPass = (
     id: string,
     label: string,
-    direction: "cw" | "ccw",
+    direction: "cw" | "ccw" | "stationary",
     requestedSpeedDegS: number,
   ): ExtendedPassResult | null => {
     const n = adcRef.current.length;
@@ -358,7 +368,7 @@ export function useFlipper({ cpr1 }: Props) {
       const angle = angleAt(angles, tbRef.current[i]);
       if (angle === null) continue;
       const phase = ((angle % 360) + 360) % 360;
-      positionedAngles.push(phase);
+      positionedAngles.push(angle);
       positionedCurrents.push(amps[i]);
       const bin = Math.min(359, Math.floor(phase));
       binSum[bin] += amps[i];
@@ -404,6 +414,10 @@ export function useFlipper({ cpr1 }: Props) {
         circularR: circular?.R ?? null,
         circularStdDeg: circular?.stdDeg ?? null,
         ellipse: positionedAngles.length >= 12 ? fitPolarEllipse(positionedAngles, positionedCurrents) : null,
+      },
+      samples: {
+        anglesDeg: positionedAngles,
+        currentA: positionedCurrents,
       },
       profile: {
         anglesDeg: Array.from({ length: 360 }, (_, index) => index + 0.5),
@@ -812,6 +826,9 @@ export function useFlipper({ cpr1 }: Props) {
     snapshotExtendedPass,
     resetExtendedArchive,
     archiveExtendedPass,
+    consoleLines,
+    clearConsole: () => setConsoleLines([]),
+    sendConsoleCommand: (command: string) => sendCmd(command.trim()),
     tick,
   };
 }

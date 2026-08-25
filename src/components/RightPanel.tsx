@@ -1,3 +1,4 @@
+import { useState } from "react";
 import SidePanel, { type AutoState } from "./SidePanel";
 import DrivePanel, { type MoveInputs, type MoveState } from "./DrivePanel";
 import JogPad from "./JogPad";
@@ -7,6 +8,7 @@ import type { SerialSettings, SerialStatus } from "../hooks/useSerial";
 import type { FlipperApi } from "../hooks/useFlipper";
 import type { DecodedState } from "./DecoderPanel";
 import { IconCrosshair, IconSettings, IconTelescope, IconZap } from "./icons";
+import FlipperSerialConsole from "./FlipperSerialConsole";
 
 export type Tab = "mov" | "montura" | "ajustes" | "test";
 
@@ -52,7 +54,7 @@ interface Props {
 
 const TABS: { id: Tab; label: string; icon: (p: { className?: string }) => React.ReactNode }[] = [
   { id: "mov", label: "Movimiento", icon: (p) => <IconCrosshair {...p} /> },
-  { id: "montura", label: "Montura", icon: (p) => <IconZap {...p} /> },
+  { id: "montura", label: "Serial", icon: (p) => <IconZap {...p} /> },
   { id: "test", label: "Test ejes", icon: (p) => <IconTelescope {...p} /> },
   { id: "ajustes", label: "Ajustes", icon: (p) => <IconSettings {...p} /> },
 ];
@@ -60,6 +62,7 @@ const TABS: { id: Tab; label: string; icon: (p: { className?: string }) => React
 export default function RightPanel(props: Props) {
   const { tab, onTab } = props;
   const open = props.status === "open";
+  const [serialTarget, setSerialTarget] = useState<"mount" | "flipper">("mount");
 
   return (
     <aside className="flex min-h-0 flex-col lg:overflow-hidden">
@@ -107,25 +110,40 @@ export default function RightPanel(props: Props) {
         )}
 
         {tab === "montura" && (
-          <SidePanel
-            mode="montura"
-            flip={props.flip}
-            supported={props.supported}
-            status={props.status}
-            settings={props.settings}
-            onSettings={props.onSettings}
-            portInfo={props.portInfo}
-            authorized={props.authorized}
-            onOpenAuthorized={props.onOpenAuthorized}
-            onConnect={props.onConnect}
-            onDisconnect={props.onDisconnect}
-            onQuick={props.onQuick}
-            decoded={props.decoded}
-            profile={props.profile}
-            auto={props.auto}
-            onRunDiag={props.onRunDiag}
-            onCancelDiag={props.onCancelDiag}
-          />
+          <div className="flex flex-col gap-2">
+            <div className="flex overflow-hidden rounded border border-line bg-[#0c1930]">
+              {(["mount", "flipper"] as const).map((target) => (
+                <button
+                  key={target}
+                  onClick={() => setSerialTarget(target)}
+                  className={`flex-1 px-2 py-2 font-display text-[9.5px] font-bold uppercase tracking-[0.14em] ${serialTarget === target ? "bg-ember/15 text-ember shadow-[inset_0_-2px_0_rgba(245,165,36,0.8)]" : "text-dim hover:text-fog"}`}
+                >
+                  {target === "mount" ? "Serial montura" : "Serial Flipper"}
+                </button>
+              ))}
+            </div>
+            {serialTarget === "mount" ? (
+              <SidePanel
+                mode="montura"
+                flip={props.flip}
+                supported={props.supported}
+                status={props.status}
+                settings={props.settings}
+                onSettings={props.onSettings}
+                portInfo={props.portInfo}
+                authorized={props.authorized}
+                onOpenAuthorized={props.onOpenAuthorized}
+                onConnect={props.onConnect}
+                onDisconnect={props.onDisconnect}
+                onQuick={props.onQuick}
+                decoded={props.decoded}
+                profile={props.profile}
+                auto={props.auto}
+                onRunDiag={props.onRunDiag}
+                onCancelDiag={props.onCancelDiag}
+              />
+            ) : <FlipperSerialConsole flip={props.flip} />}
+          </div>
         )}
 
         {tab === "ajustes" && (

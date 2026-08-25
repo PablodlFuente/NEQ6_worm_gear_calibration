@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import type { FlipperApi } from "../hooks/useFlipper";
+import { fitPolarEllipse } from "../lib/flipper";
 import { IconAlert, IconDownload, IconTrash } from "./icons";
 
 const AVGS = [1, 2, 5, 10, 20, 50, 100];
@@ -220,6 +221,8 @@ export default function FlipperLab({
     stats: RESET_TRANSFORM,
   });
   const [selectedPeaks, setSelectedPeaks] = useState<Peak[]>([]);
+  const [hiddenExtendedSeries, setHiddenExtendedSeries] = useState<Set<string>>(() => new Set());
+  const [showExtendedMean, setShowExtendedMean] = useState(true);
   const [movePrompt, setMovePrompt] = useState<{ angle: number; x: number; y: number } | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
 
@@ -227,22 +230,89 @@ export default function FlipperLab({
   const n = stats.n;
   /* Sesiones guardadas antes de incorporar perfiles/estadísticas extendidas
    * siguen siendo cargables; sencillamente no se dibujan como multipasada. */
-  const extendedPasses = (flip.extendedAnalysis?.passes ?? []).filter(
-    (pass) => Boolean(pass.profile?.currentA && pass.statistics),
-  );
+  const extendedPasses = (flip.extendedAnalysis?.passes ?? []).filter((pass) => Boolean(pass.statistics));
+  const extendedDisplaySeries = useMemo(() => extendedPasses.flatMap((pass, passIndex) => {
+    const factor = Math.max(1, Math.floor(flip.avgFactor));
+    if (pass.samples?.anglesDeg?.length) {
+      const length = Math.min(pass.samples.anglesDeg.length, pass.samples.currentA.length);
+      const groups = Math.floor(length / factor);
+      const angles: number[] = [];
+      const currents: number[] = [];
+      const angleErr: number[] = [];
+      const currentErr: number[] = [];
+      for (let group = 0; group < groups; group++) {
+        const start = group * factor;
+        let sumAngle = 0, sumAngle2 = 0, sumCurrent = 0, sumCurrent2 = 0;
+        for (let j = 0; j < factor; j++) {
+          const angle = pass.samples.anglesDeg[start + j];
+          const current = pass.samples.currentA[start + j];
+          sumAngle += angle; sumAngle2 += angle * angle;
+          sumCurrent += current; sumCurrent2 += current * current;
+        }
+        const meanAngle = sumAngle / factor;
+        const meanCurrent = sumCurrent / factor;
+        const varianceAngle = factor > 1 ? Math.max(0, (sumAngle2 - sumAngle * sumAngle / factor) / (factor - 1)) : 0;
+        const varianceCurrent = factor > 1 ? Math.max(0, (sumCurrent2 - sumCurrent * sumCurrent / factor) / (factor - 1)) : 0;
+        angles.push(meanAngle);
+        currents.push(meanCurrent);
+        angleErr.push(Math.sqrt(varianceAngle / factor));
+        currentErr.push(Math.sqrt(varianceCurrent / factor));
+      }
+      return [{ id: pass.id, label: pass.label, color: REV_COLORS[passIndex % REV_COLORS.length], angles, currents, angleErr, currentErr }];
+    }
+    if (pass.profile?.currentA?.length) {
+      const currents: number[] = [];
+      const angles: number[] = [];
+      pass.profile.currentA.forEach((value, index) => {
+        if (value === null) return;
+        currents.push(value);
+        angles.push(pass.profile!.anglesDeg[index] ?? index + 0.5);
+      });
+      return [{ id: pass.id, label: `${pass.label} · sesión antigua`, color: REV_COLORS[passIndex % REV_COLORS.length], angles, currents, angleErr: currents.map(() => 0), currentErr: currents.map(() => 0) }];
+    }
+    return [];
+  }), [extendedPasses, flip.avgFactor]);
+  const activeExtendedSeries = extendedDisplaySeries.filter((series) => !hiddenExtendedSeries.has(series.id));
   const extendedMeanProfile = useMemo(() => {
-    if (extendedPasses.length < 2) return null;
-    const size = Math.max(...extendedPasses.map((pass) => pass.profile.currentA.length));
-    return Array.from({ length: size }, (_, index) => {
-      const values = extendedPasses
-        .map((pass) => pass.profile.currentA[index])
-        .filter((value): value is number => value !== null && Number.isFinite(value));
-      return values.length ? values.reduce((sum, value) => sum + value, 0) / values.length : null;
+    if (activeExtendedSeries.length < 2) return null;
+    const bySeries = activeExtendedSeries.map((series) => {
+      const sums = new Float64Array(360);
+      const counts = new Uint32Array(360);
+      series.angles.forEach((angle, index) => {
+        const phase = ((angle % 360) + 360) % 360;
+        const bin = Math.min(359, Math.floor(phase));
+        sums[bin] += series.currents[index];
+        counts[bin]++;
+      });
+      return Array.from(sums, (sum, index) => counts[index] ? sum / counts[index] : null);
     });
-  }, [extendedPasses]);
+    const currentA: (number | null)[] = [];
+    const currentErr: number[] = [];
+    for (let bin = 0; bin < 360; bin++) {
+      const values = bySeries.map((series) => series[bin]).filter((value): value is number => value !== null);
+      if (!values.length) { currentA.push(null); currentErr.push(0); continue; }
+      const average = values.reduce((sum, value) => sum + value, 0) / values.length;
+      const variance = values.length > 1 ? values.reduce((sum, value) => sum + (value - average) ** 2, 0) / (values.length - 1) : 0;
+      currentA.push(average);
+      currentErr.push(Math.sqrt(variance / values.length));
+    }
+    return { currentA, currentErr };
+  }, [activeExtendedSeries]);
+  const extendedMeanEllipse = useMemo(() => {
+    if (!extendedMeanProfile) return null;
+    const angles: number[] = [];
+    const currents: number[] = [];
+    extendedMeanProfile.currentA.forEach((current, index) => {
+      if (current === null) return;
+      angles.push(index + 0.5);
+      currents.push(current);
+    });
+    return fitPolarEllipse(angles, currents);
+  }, [extendedMeanProfile]);
   const extendedSummary = useMemo(() => {
     if (!extendedPasses.length) return null;
-    const passStats = extendedPasses.map((pass) => pass.statistics);
+    const motionPasses = extendedPasses.filter((pass) => pass.direction !== "stationary");
+    const passStats = (motionPasses.length ? motionPasses : extendedPasses).map((pass) => pass.statistics);
     const average = (values: number[]) => values.reduce((sum, value) => sum + value, 0) / values.length;
     const means = passStats.map((item) => item.meanA);
     const meanOfMeans = average(means);
@@ -264,6 +334,11 @@ export default function FlipperLab({
   useEffect(() => {
     if (!n) setSelectedPeaks([]);
   }, [n]);
+  useEffect(() => {
+    if (flip.extendedAnalysis) return;
+    setHiddenExtendedSeries(new Set());
+    setShowExtendedMean(true);
+  }, [flip.extendedAnalysis]);
 
   const setTransform = (next: ChartTransform) => setTransforms((all) => ({ ...all, [view]: next }));
   const resetView = () => setTransforms((all) => ({ ...all, [view]: RESET_TRANSFORM }));
@@ -331,7 +406,7 @@ export default function FlipperLab({
     const cy = h / 2;
     const R = Math.min(w, h) / 2 - 22;
     const data = derived?.plot;
-    if (!data && !extendedPasses.length) {
+    if (!data && !extendedDisplaySeries.length) {
       ctx.fillStyle = "#42567a";
       ctx.textAlign = "center";
       ctx.fillText("necesita ángulo de la montura durante la captura", w / 2, h / 2);
@@ -339,9 +414,7 @@ export default function FlipperLab({
     }
     let maxI = 0.05;
     if (data) for (let i = 0; i < data.length; i++) maxI = Math.max(maxI, data.amps[i]);
-    for (const pass of extendedPasses) {
-      for (const current of pass.profile.currentA) if (current !== null) maxI = Math.max(maxI, current);
-    }
+    for (const series of activeExtendedSeries) for (const current of series.currents) maxI = Math.max(maxI, current);
     maxI *= 1.15;
     const shadeSector = (angle: number, color: string) => {
       const a0 = ((angle - 5 - 90) * Math.PI) / 180;
@@ -353,8 +426,8 @@ export default function FlipperLab({
       ctx.closePath();
       ctx.fill();
     };
-    if (derived?.minSector && !extendedPasses.length) shadeSector(derived.minSector.angle, "rgba(76,201,240,0.09)");
-    if (derived?.maxSector && !extendedPasses.length) shadeSector(derived.maxSector.angle, "rgba(245,165,36,0.12)");
+    if (derived?.minSector && !extendedDisplaySeries.length) shadeSector(derived.minSector.angle, "rgba(76,201,240,0.09)");
+    if (derived?.maxSector && !extendedDisplaySeries.length) shadeSector(derived.maxSector.angle, "rgba(245,165,36,0.12)");
     ctx.strokeStyle = "rgba(29,48,80,0.9)";
     ctx.fillStyle = "#42567a";
     ctx.font = "8.5px IBM Plex Mono, monospace";
@@ -394,38 +467,50 @@ export default function FlipperLab({
       }
       ctx.stroke();
     };
-    const plotProfile = (currents: (number | null)[], color: string, width: number) => {
+    const plotSeries = (angles: number[], currents: number[], color: string, width: number) => {
       ctx.strokeStyle = color;
       ctx.lineWidth = width;
       ctx.beginPath();
       let started = false;
-      for (let i = 0; i < currents.length; i++) {
+      let previousPhase: number | null = null;
+      for (let i = 0; i < Math.min(angles.length, currents.length); i++) {
         const current = currents[i];
-        if (current === null) { started = false; continue; }
-        const phase = i + 0.5;
+        const phase = ((angles[i] % 360) + 360) % 360;
         const angle = (phase * Math.PI) / 180;
         const radius = (current / maxI) * R;
         const x = cx + Math.sin(angle) * radius;
         const y = cy - Math.cos(angle) * radius;
-        started ? ctx.lineTo(x, y) : ctx.moveTo(x, y);
+        if (!started || (previousPhase !== null && Math.abs(phase - previousPhase) > 180)) ctx.moveTo(x, y);
+        else ctx.lineTo(x, y);
         started = true;
+        previousPhase = phase;
       }
-      if (currents[0] !== null && currents[currents.length - 1] !== null) ctx.closePath();
       ctx.stroke();
     };
-    if (extendedPasses.length) {
-      extendedPasses.forEach((pass, index) => plotProfile(pass.profile.currentA, REV_COLORS[index % REV_COLORS.length], 1.35));
-      if (flip.capturing) plot("rgba(245,165,36,0.75)", 1);
-      if (extendedMeanProfile) plotProfile(extendedMeanProfile, "rgba(240,245,255,0.98)", 3);
-      ctx.textAlign = "right";
-      extendedPasses.forEach((pass, index) => {
-        ctx.fillStyle = REV_COLORS[index % REV_COLORS.length];
-        ctx.fillText(pass.label, w - 8, 11 + index * 11);
-      });
-      if (extendedMeanProfile) {
-        ctx.fillStyle = "#f0f5ff";
-        ctx.fillText("PROMEDIO", w - 8, 11 + extendedPasses.length * 11);
+    const plotMean = () => {
+      if (!extendedMeanProfile || !showExtendedMean) return;
+      const angles = extendedMeanProfile.currentA.map((_, index) => index + 0.5);
+      const currents = extendedMeanProfile.currentA.map((value) => value ?? NaN);
+      plotSeries(angles.filter((_, index) => Number.isFinite(currents[index])), currents.filter(Number.isFinite), "rgba(240,245,255,0.62)", 2.4);
+      ctx.strokeStyle = "rgba(240,245,255,0.55)";
+      ctx.lineWidth = 1;
+      for (let i = 0; i < currents.length; i += 10) {
+        const current = currents[i];
+        const error = extendedMeanProfile.currentErr[i];
+        if (!Number.isFinite(current) || !(error > 0)) continue;
+        const angle = ((i + 0.5) * Math.PI) / 180;
+        const r0 = ((current - error) / maxI) * R;
+        const r1 = ((current + error) / maxI) * R;
+        ctx.beginPath();
+        ctx.moveTo(cx + Math.sin(angle) * r0, cy - Math.cos(angle) * r0);
+        ctx.lineTo(cx + Math.sin(angle) * r1, cy - Math.cos(angle) * r1);
+        ctx.stroke();
       }
+    };
+    if (extendedDisplaySeries.length) {
+      activeExtendedSeries.forEach((series) => plotSeries(series.angles, series.currents, series.color, 1.35));
+      if (flip.capturing) plot("rgba(245,165,36,0.75)", 1);
+      plotMean();
     } else if (flip.overlayRevs && data) {
       const lastRev = data.revs[data.length - 1] ?? 0;
       for (let rev = 0; rev <= Math.min(lastRev, 11); rev++) {
@@ -438,7 +523,7 @@ export default function FlipperLab({
       }
     } else plot("rgba(245,165,36,0.95)", 1.6);
     const fit = derived?.ellipse;
-    if (fit && !flip.capturing && !extendedPasses.length) {
+    if (fit && !flip.capturing && !extendedDisplaySeries.length) {
       const scale = R / maxI;
       const ex = cx + fit.centerX * scale;
       const ey = cy + fit.centerY * scale;
@@ -467,6 +552,24 @@ export default function FlipperLab({
       const centerAngle = ((Math.atan2(fit.centerX, -fit.centerY) * 180) / Math.PI + 360) % 360;
       ctx.fillText(`centro x=${fit.centerX.toFixed(3)} · y=${fit.centerY.toFixed(3)} A · r=${Math.hypot(fit.centerX, fit.centerY).toFixed(3)} A @ ${centerAngle.toFixed(1)}°`, 6, 35);
     }
+    if (extendedMeanEllipse && showExtendedMean && !flip.capturing) {
+      const scale = R / maxI;
+      const ex = cx + extendedMeanEllipse.centerX * scale;
+      const ey = cy + extendedMeanEllipse.centerY * scale;
+      const angle = extendedMeanEllipse.angleDeg * Math.PI / 180;
+      const ca = Math.cos(angle), sa = Math.sin(angle);
+      ctx.strokeStyle = "rgba(181,222,255,0.72)";
+      ctx.lineWidth = 1.8;
+      ctx.setLineDash([5, 4]);
+      ctx.beginPath();
+      ctx.ellipse(ex, ey, extendedMeanEllipse.semiMajor * scale, extendedMeanEllipse.semiMinor * scale, angle, 0, Math.PI * 2);
+      ctx.moveTo(ex - ca * extendedMeanEllipse.semiMajor * scale, ey - sa * extendedMeanEllipse.semiMajor * scale);
+      ctx.lineTo(ex + ca * extendedMeanEllipse.semiMajor * scale, ey + sa * extendedMeanEllipse.semiMajor * scale);
+      ctx.moveTo(ex + sa * extendedMeanEllipse.semiMinor * scale, ey - ca * extendedMeanEllipse.semiMinor * scale);
+      ctx.lineTo(ex - sa * extendedMeanEllipse.semiMinor * scale, ey + ca * extendedMeanEllipse.semiMinor * scale);
+      ctx.stroke();
+      ctx.setLineDash([]);
+    }
     ctx.fillStyle = "#f5a524";
     ctx.textAlign = "left";
     ctx.fillText(`max ${maxI.toFixed(3)} A · ${data?.length.toLocaleString("es-ES") ?? 0} puntos actuales`, 6, 11);
@@ -480,7 +583,7 @@ export default function FlipperLab({
     const T = 10;
     const Rg = 10;
     const data = derived?.plot;
-    if (!data && !extendedPasses.length) {
+    if (!data && !extendedDisplaySeries.length) {
       ctx.fillStyle = "#42567a";
       ctx.font = "9px IBM Plex Mono, monospace";
       ctx.textAlign = "center";
@@ -493,22 +596,26 @@ export default function FlipperLab({
       minI = Math.min(minI, data.amps[i] - data.ampsErr[i]);
       maxI = Math.max(maxI, data.amps[i] + data.ampsErr[i]);
     }
-    for (const pass of extendedPasses) for (const current of pass.profile.currentA) {
-      if (current === null) continue;
-      minI = Math.min(minI, current);
-      maxI = Math.max(maxI, current);
+    for (const series of activeExtendedSeries) for (let i = 0; i < series.currents.length; i++) {
+      minI = Math.min(minI, series.currents[i] - series.currentErr[i]);
+      maxI = Math.max(maxI, series.currents[i] + series.currentErr[i]);
     }
+    if (extendedMeanProfile) extendedMeanProfile.currentA.forEach((current, index) => {
+      if (current === null) return;
+      minI = Math.min(minI, current - extendedMeanProfile.currentErr[index]);
+      maxI = Math.max(maxI, current + extendedMeanProfile.currentErr[index]);
+    });
     if (!Number.isFinite(minI) || !Number.isFinite(maxI)) return;
     const span = Math.max(0.01, maxI - minI);
     minI = Math.max(0, minI - span * 0.12);
     maxI += span * 0.12;
     const X = (a: number) => L + (a / 360) * (w - L - Rg);
     const Y = (v: number) => h - Bm - ((v - minI) / (maxI - minI || 1)) * (h - T - Bm);
-    if (derived?.minSector && !extendedPasses.length) {
+    if (derived?.minSector && !extendedDisplaySeries.length) {
       ctx.fillStyle = "rgba(76,201,240,0.09)";
       ctx.fillRect(X(derived.minSector.angle - 5), T, X(derived.minSector.angle + 5) - X(derived.minSector.angle - 5), h - T - Bm);
     }
-    if (derived?.maxSector && !extendedPasses.length) {
+    if (derived?.maxSector && !extendedDisplaySeries.length) {
       ctx.fillStyle = "rgba(245,165,36,0.12)";
       ctx.fillRect(X(derived.maxSector.angle - 5), T, X(derived.maxSector.angle + 5) - X(derived.maxSector.angle - 5), h - T - Bm);
     }
@@ -527,7 +634,7 @@ export default function FlipperLab({
     }
     ctx.textAlign = "center";
     for (let a = 0; a <= 360; a += 60) ctx.fillText(`${a}°`, X(a), h - 7);
-    if (data && data.factor > 1 && !extendedPasses.length) {
+    if (data && data.factor > 1) {
       ctx.strokeStyle = "rgba(76,201,240,0.85)";
       ctx.lineWidth = 1;
       for (let i = 0; i < data.length; i++) {
@@ -577,34 +684,60 @@ export default function FlipperLab({
       }
       ctx.stroke();
     };
-    const plotProfile = (currents: (number | null)[], color: string, width: number) => {
+    const plotSeries = (series: { angles: number[]; currents: number[]; angleErr: number[]; currentErr: number[] }, color: string, width: number, errors: boolean) => {
       ctx.strokeStyle = color;
       ctx.lineWidth = width;
       ctx.beginPath();
       let started = false;
-      for (let i = 0; i < currents.length; i++) {
-        const current = currents[i];
-        if (current === null) { started = false; continue; }
-        const x = X(i + 0.5);
+      let previousPhase: number | null = null;
+      for (let i = 0; i < series.currents.length; i++) {
+        const current = series.currents[i];
+        const phase = ((series.angles[i] % 360) + 360) % 360;
+        const x = X(phase);
         const y = Y(current);
-        started ? ctx.lineTo(x, y) : ctx.moveTo(x, y);
+        if (!started || (previousPhase !== null && Math.abs(phase - previousPhase) > 180)) ctx.moveTo(x, y);
+        else ctx.lineTo(x, y);
         started = true;
+        previousPhase = phase;
       }
       ctx.stroke();
+      if (!errors) return;
+      ctx.lineWidth = 0.8;
+      for (let i = 0; i < series.currents.length; i++) {
+        const phase = ((series.angles[i] % 360) + 360) % 360;
+        const x = X(phase), y = Y(series.currents[i]);
+        const y0 = Y(series.currents[i] - series.currentErr[i]);
+        const y1 = Y(series.currents[i] + series.currentErr[i]);
+        const x0 = X(Math.max(0, phase - series.angleErr[i]));
+        const x1 = X(Math.min(360, phase + series.angleErr[i]));
+        ctx.beginPath(); ctx.moveTo(x, y0); ctx.lineTo(x, y1); ctx.moveTo(x0, y); ctx.lineTo(x1, y); ctx.stroke();
+      }
     };
-    if (extendedPasses.length) {
-      extendedPasses.forEach((pass, index) => plotProfile(pass.profile.currentA, REV_COLORS[index % REV_COLORS.length], 1.4));
+    if (extendedDisplaySeries.length) {
+      activeExtendedSeries.forEach((series) => plotSeries(series, series.color, 1.4, flip.avgFactor > 1));
       if (flip.capturing) plotRevision("rgba(245,165,36,0.75)");
-      if (extendedMeanProfile) plotProfile(extendedMeanProfile, "rgba(240,245,255,0.98)", 3);
-      ctx.font = "8.5px IBM Plex Mono, monospace";
-      ctx.textAlign = "right";
-      extendedPasses.forEach((pass, index) => {
-        ctx.fillStyle = REV_COLORS[index % REV_COLORS.length];
-        ctx.fillText(pass.label, w - 12, 12 + index * 11);
-      });
-      if (extendedMeanProfile) {
-        ctx.fillStyle = "#f0f5ff";
-        ctx.fillText("PROMEDIO", w - 12, 12 + extendedPasses.length * 11);
+      if (extendedMeanProfile && showExtendedMean) {
+        const meanSeries = {
+          angles: extendedMeanProfile.currentA.map((_, index) => index + 0.5),
+          currents: extendedMeanProfile.currentA.map((value) => value ?? NaN),
+          angleErr: extendedMeanProfile.currentA.map(() => 0),
+          currentErr: extendedMeanProfile.currentErr,
+        };
+        const valid = meanSeries.currents.map(Number.isFinite);
+        const compact = {
+          angles: meanSeries.angles.filter((_, index) => valid[index]),
+          currents: meanSeries.currents.filter(Number.isFinite),
+          angleErr: meanSeries.angleErr.filter((_, index) => valid[index]),
+          currentErr: meanSeries.currentErr.filter((_, index) => valid[index]),
+        };
+        plotSeries(compact, "rgba(240,245,255,0.62)", 2.4, false);
+        ctx.strokeStyle = "rgba(240,245,255,0.6)";
+        for (let i = 0; i < compact.currents.length; i += 10) {
+          const x = X(compact.angles[i]);
+          const y0 = Y(compact.currents[i] - compact.currentErr[i]);
+          const y1 = Y(compact.currents[i] + compact.currentErr[i]);
+          ctx.beginPath(); ctx.moveTo(x, y0); ctx.lineTo(x, y1); ctx.moveTo(x - 2, y0); ctx.lineTo(x + 2, y0); ctx.moveTo(x - 2, y1); ctx.lineTo(x + 2, y1); ctx.stroke();
+        }
       }
     } else if (flip.overlayRevs && data) {
       const lastRev = data.revs[data.length - 1] ?? 0;
@@ -806,7 +939,6 @@ export default function FlipperLab({
               min={1}
               max={100000}
               step={1}
-              list="average-factor-presets"
               aria-label="Muestras por bloque de promedio"
               value={flip.avgFactor}
               onChange={(event) => {
@@ -815,9 +947,16 @@ export default function FlipperLab({
               }}
               className={`${selCls} w-20 tabular-nums`}
             />
-            <datalist id="average-factor-presets">
-              {AVGS.map((value) => <option key={value} value={value} />)}
-            </datalist>
+            <select
+              aria-label="Valores habituales de bloque"
+              value=""
+              onChange={(event) => event.target.value && flip.setAvgFactor(Number(event.target.value))}
+              className={`${selCls} w-8 px-1`}
+              title="Valores habituales"
+            >
+              <option value="">▾</option>
+              {AVGS.map((value) => <option key={value} value={value}>{value}</option>)}
+            </select>
           </label>
           <label className="hidden cursor-pointer items-center gap-1.5 font-mono text-[10px] text-dim md:flex">
             <input
@@ -882,6 +1021,36 @@ export default function FlipperLab({
       <div className="min-h-0 flex-1 overflow-y-auto p-3">
         {view !== "stats" ? (
           <div className="flex min-h-[300px] flex-col gap-2">
+            {(view === "polar" || view === "cartesiano") && extendedDisplaySeries.length > 0 && (
+              <div className="flex flex-wrap items-center gap-1.5 rounded border border-line bg-[#0c1930] px-2 py-1.5 font-mono text-[9px]">
+                <span className="mr-1 uppercase tracking-wider text-dim">Series · pulsa para ocultar/mostrar</span>
+                {extendedDisplaySeries.map((series) => {
+                  const hidden = hiddenExtendedSeries.has(series.id);
+                  return (
+                    <button
+                      key={series.id}
+                      onClick={() => setHiddenExtendedSeries((current) => {
+                        const next = new Set(current);
+                        hidden ? next.delete(series.id) : next.add(series.id);
+                        return next;
+                      })}
+                      className={`rounded border px-2 py-0.5 transition-opacity ${hidden ? "border-line opacity-35" : "border-current"}`}
+                      style={{ color: series.color }}
+                    >
+                      ● {series.label}
+                    </button>
+                  );
+                })}
+                {extendedMeanProfile && (
+                  <button
+                    onClick={() => setShowExtendedMean((visible) => !visible)}
+                    className={`rounded border border-fog px-2 py-0.5 text-fog transition-opacity ${showExtendedMean ? "opacity-80" : "opacity-35"}`}
+                  >
+                    ━ PROMEDIO ± SEM
+                  </button>
+                )}
+              </div>
+            )}
             {chartFor}
             <p className="font-mono text-[9.5px] text-dim">Rueda: zoom · botón derecho: desplazar · Zoom rect: arrastra un área con el botón izquierdo · Restaurar: vista completa.</p>
             {(view === "polar" || view === "cartesiano") && derived?.plot && (
@@ -964,7 +1133,7 @@ export default function FlipperLab({
             {view === "fft" && flip.extendedAnalysis && (
               <div className="overflow-hidden rounded border border-ion/35">
                 <p className="border-b border-line bg-ion/5 px-2 py-1.5 font-display text-[9.5px] font-bold uppercase tracking-[0.14em] text-ion">
-                  Comparación del test extendido · {flip.extendedAnalysis.passes.length}/4 pasadas
+                  Comparación del test extendido · {flip.extendedAnalysis.passes.length}/5 fases
                 </p>
                 <p className="border-b border-line px-2 py-1.5 font-mono text-[9px] text-dim">
                   Cada coincidencia reúne picos de distintas pasadas que conservan aproximadamente sus Hz o su periodicidad en grados. Se analizan hasta 40 máximos locales por pasada, no sólo los cinco destacados en la gráfica.
@@ -1012,7 +1181,7 @@ export default function FlipperLab({
           </p>
         ) : extendedSummary ? (
           <div className="space-y-2">
-            <StatSection title="Resumen medio del test extendido" subtitle={`${extendedPasses.length}/4 pasadas terminadas · la σ indicada compara las medias de las pasadas`}>
+            <StatSection title="Resumen medio del test extendido" subtitle={`${extendedPasses.length}/5 fases terminadas · la σ indicada compara las medias de las fases`}>
               <StatCell k="media ± σ" v={`${extendedSummary.meanA.toFixed(5)} ± ${extendedSummary.betweenSd.toFixed(5)} A`} tone="text-mint" />
               <StatCell k="N total" v={extendedSummary.totalSamples.toLocaleString("es-ES")} />
               <StatCell k="tiempo total adquisición" v={`${extendedSummary.totalDurationS.toFixed(1)} s`} />
@@ -1020,6 +1189,9 @@ export default function FlipperLab({
               <StatCell k="velocidad |:j| media" v={`${extendedSummary.speedDegS.toFixed(4)} °/s`} tone="text-ion" />
               <StatCell k="máximo global" v={`${extendedSummary.maxA.toFixed(4)} A`} tone="text-ember" />
               <StatCell k="concentración R̄ media" v={extendedSummary.circularR.toFixed(4)} tone="text-ion" />
+              {extendedMeanEllipse && <StatCell k="elipse media · semiejes a / b" v={`${extendedMeanEllipse.semiMajor.toFixed(4)} / ${extendedMeanEllipse.semiMinor.toFixed(4)} A`} tone="text-ion" />}
+              {extendedMeanEllipse && <StatCell k="elipse media · cociente a/b" v={(extendedMeanEllipse.semiMajor / extendedMeanEllipse.semiMinor).toFixed(4)} tone="text-ion" />}
+              {extendedMeanEllipse && <StatCell k="elipse media · inclinación φ" v={`${extendedMeanEllipse.angleDeg.toFixed(2)}°`} tone="text-ion" />}
             </StatSection>
             {extendedPasses.map((pass, index) => {
               const st = pass.statistics;
