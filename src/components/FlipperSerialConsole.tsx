@@ -4,7 +4,7 @@ import { IconSend } from "./icons";
 
 type View = "monitor" | "commands";
 
-export default function FlipperSerialConsole({ flip, view = "commands" }: { flip: FlipperApi; view?: View }) {
+export default function FlipperSerialConsole({ flip, view = "commands", onInsertCommand }: { flip: FlipperApi; view?: View; onInsertCommand?: (command: string) => void }) {
   const [command, setCommand] = useState("");
   const endRef = useRef<HTMLDivElement>(null);
   const lines = flip.consoleLines ?? [];
@@ -70,18 +70,17 @@ export default function FlipperSerialConsole({ flip, view = "commands" }: { flip
       </header>
       <p className="mt-2 font-mono text-[10px] leading-relaxed text-dim">Canal de control ASCII del registrador. Durante una captura, usa la pestaña Test ejes.</p>
       <div className="mt-3 grid grid-cols-2 gap-1.5">
-        {["INFO", "SYNC", "START", "STOP", "RATE 500"].map((preset) => (
+        {["INFO", "SYNC", "START", "STOP", "RATE <Hz>"].map((preset) => (
           <button
             key={preset}
-            disabled={!flip.connected || flip.capturing && preset !== "STOP"}
-            onClick={() => void flip.sendConsoleCommand(preset)}
+            disabled={preset !== "RATE <Hz>" && (!flip.connected || flip.capturing && preset !== "STOP")}
+            onClick={() => preset === "RATE <Hz>" ? onInsertCommand?.("RATE ") : void flip.sendConsoleCommand(preset)}
             className={`rounded border border-line bg-[#0c1930] px-2 py-[7px] font-mono text-[10px] text-fog transition-colors hover:border-ion/60 hover:bg-[#122240] hover:text-ion disabled:opacity-35 ${preset.startsWith("RATE") ? "col-span-2" : ""}`}
           >
             {preset}
           </button>
         ))}
       </div>
-      <div className="mt-3 border-t border-line pt-2.5 font-mono text-[10px] text-dim">RATE &lt;Hz&gt; admite 10–1000. El último tráfico y sus respuestas se ven y se envían desde el monitor izquierdo.</div>
     </section>
     </div>
   );

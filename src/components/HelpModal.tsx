@@ -55,7 +55,7 @@ export default function HelpModal({ open, onClose }: Props) {
         </header>
 
         <div className="overflow-y-auto p-4 font-mono text-[10.5px] leading-relaxed text-dim">
-          <div className="grid gap-3 md:grid-cols-2">
+          <div className="hidden grid gap-3 md:grid-cols-2">
             <HelpBlock title="Flujo recomendado">
               En Ajustes conecta la montura; el escaneo de parámetros se ejecuta automáticamente. Conecta el Flipper por BLE o USB-COM,
               sincroniza su reloj y abre «Test ejes». Elige CW o CCW. El test mueve primero 2° en el sentido contrario,
@@ -149,7 +149,8 @@ export default function HelpModal({ open, onClose }: Props) {
             </HelpBlock>
           </div>
 
-          <h3 className="mb-2 mt-5 font-display text-[11px] font-bold uppercase tracking-[0.18em] text-ember">Siglas y términos</h3>
+          <a href="https://github.com/PablodlFuente/NEQ6_worm_gear_calibration/wiki" target="_blank" rel="noreferrer" className="mb-4 flex items-center justify-center rounded border border-ion/50 bg-ion/10 px-3 py-2 font-display text-[10px] font-bold tracking-[0.16em] text-ion hover:bg-ion/20">ABRIR WIKI DEL PROYECTO</a>
+          <h3 className="mb-2 font-display text-[11px] font-bold uppercase tracking-[0.18em] text-ember">Siglas y términos</h3>
           <dl className="grid overflow-hidden rounded border border-line md:grid-cols-[150px_1fr]">
             {TERMS.map(([term, meaning]) => (
               <div key={term} className="contents">

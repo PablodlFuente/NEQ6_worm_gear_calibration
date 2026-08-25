@@ -49,6 +49,7 @@ interface Props {
   onStartAxisTest: () => void;
   onStartExtendedTest: () => void;
   onStopAxisTest: () => void;
+  onInsertFlipperCommand: (command: string) => void;
   serialTarget: "mount" | "flipper";
   onSerialTarget: (target: "mount" | "flipper") => void;
 }
@@ -143,7 +144,7 @@ export default function RightPanel(props: Props) {
                 onRunDiag={props.onRunDiag}
                 onCancelDiag={props.onCancelDiag}
               />
-            ) : <FlipperSerialConsole flip={props.flip} view="commands" />}
+            ) : <FlipperSerialConsole flip={props.flip} view="commands" onInsertCommand={props.onInsertFlipperCommand} />}
           </div>
         )}
 

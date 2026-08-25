@@ -1551,7 +1551,6 @@ export default function App() {
               <span className="w-16 text-right tabular-nums text-ember">{fmtBytes(counters.tx)}</span>
             </div>
           </div>
-          <StatusPill status={status} label={portLabel(portInfo)} />
           <button
             onClick={() => setHelpOpen(true)}
             className="rounded border border-line bg-[#0c1930] px-3.5 py-2 font-display text-[11px] font-bold tracking-[0.16em] text-fog transition-colors hover:border-ember/50 hover:text-ember"
@@ -1701,6 +1700,10 @@ export default function App() {
             onStartAxisTest={() => void startAxisTest(axisTestInputs, false)}
             onStartExtendedTest={() => void startExtendedAxisTest()}
             onStopAxisTest={stopAxisTest}
+            onInsertFlipperCommand={(command) => {
+              setFlipCmd(command);
+              barRef.current?.focus();
+            }}
           />
         </div>
       </main>
@@ -1709,7 +1712,7 @@ export default function App() {
       <footer className="flex h-8 shrink-0 items-center gap-4 border-t border-line bg-[#0a1424] px-4 font-mono text-[10.5px] text-dim">
         <span className="tabular-nums text-ion/80">UT {utc}</span>
         <span className="hidden tabular-nums sm:inline">AR {axisPosition.ar !== undefined && profile.cpr1 ? `${((axisPosition.ar * 360) / profile.cpr1).toFixed(3)}°` : "—"} · DEC {axisPosition.dec !== undefined && profile.cpr2 ? `${((axisPosition.dec * 360) / profile.cpr2).toFixed(3)}°` : "—"}</span>
-        <a className="ml-auto text-dim transition-colors hover:text-ion" href="https://github.com/PablodlFuente/" target="_blank" rel="noreferrer">Pablo de la Fuente · GitHub</a>
+        <a className="ml-auto text-dim transition-colors hover:text-ion" href="https://github.com/PablodlFuente?tab=repositories" target="_blank" rel="noreferrer">Pablo de la Fuente · GitHub</a>
       </footer>
       <HelpModal open={helpOpen} onClose={() => setHelpOpen(false)} />
     </div>
