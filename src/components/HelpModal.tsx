@@ -55,7 +55,7 @@ export default function HelpModal({ open, onClose }: Props) {
         </header>
 
         <div className="overflow-y-auto p-4 font-mono text-[10.5px] leading-relaxed text-dim">
-          <a href="https://github.com/PablodlFuente/NEQ6_worm_gear_calibration/tree/HEAD/wiki" target="_blank" rel="noreferrer" className="mb-4 flex items-center justify-center rounded border border-ion/50 bg-ion/10 px-3 py-2 font-display text-[10px] font-bold tracking-[0.16em] text-ion hover:bg-ion/20">ABRIR DOCUMENTACIÓN TÉCNICA</a>
+          <a href="https://github.com/PablodlFuente/NEQ6_worm_gear_calibration/wiki" target="_blank" rel="noreferrer" className="mb-4 flex items-center justify-center rounded border border-ion/50 bg-ion/10 px-3 py-2 font-display text-[10px] font-bold tracking-[0.16em] text-ion hover:bg-ion/20">ABRIR DOCUMENTACIÓN TÉCNICA</a>
           <h3 className="mb-2 font-display text-[11px] font-bold uppercase tracking-[0.18em] text-ember">Siglas y términos</h3>
           <dl className="grid overflow-hidden rounded border border-line md:grid-cols-[150px_1fr]">
             {TERMS.map(([term, meaning]) => (

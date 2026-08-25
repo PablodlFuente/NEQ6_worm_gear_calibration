@@ -28,6 +28,9 @@ function ChartCanvas({
   transform,
   onTransform,
   onPick,
+  onCursor,
+  onCursorLeave,
+  cursorLabel,
   regionZoom,
   onRegionZoomDone,
 }: {
@@ -36,6 +39,9 @@ function ChartCanvas({
   transform: ChartTransform;
   onTransform: (next: ChartTransform) => void;
   onPick?: (x: number, y: number, clientX: number, clientY: number) => void;
+  onCursor?: (x: number, y: number, width: number, height: number) => void;
+  onCursorLeave?: () => void;
+  cursorLabel?: string;
   regionZoom: boolean;
   onRegionZoomDone: () => void;
 }) {
@@ -81,6 +87,13 @@ function ChartCanvas({
     }
   };
   const pointerMove = (event: React.PointerEvent<HTMLCanvasElement>) => {
+    const rect = event.currentTarget.getBoundingClientRect();
+    onCursor?.(
+      (event.clientX - rect.left - transform.x) / transform.scale,
+      (event.clientY - rect.top - transform.y) / transform.scale,
+      rect.width,
+      rect.height,
+    );
     if (!drag.current) return;
     const dx = event.clientX - drag.current.x;
     const dy = event.clientY - drag.current.y;
@@ -138,9 +151,15 @@ function ChartCanvas({
         onPointerMove={pointerMove}
         onPointerUp={pointerUp}
         onPointerCancel={() => (drag.current = null)}
+        onPointerLeave={onCursorLeave}
         onWheel={wheel}
         onContextMenu={(event) => event.preventDefault()}
       />
+      {cursorLabel && (
+        <output className="pointer-events-none absolute right-2 top-2 rounded border border-line bg-[#081120]/90 px-1.5 py-1 font-mono text-[9px] tabular-nums text-fog">
+          {cursorLabel}
+        </output>
+      )}
       {selection && (
         <div
           className="pointer-events-none absolute border border-ion bg-ion/10"
@@ -239,6 +258,7 @@ export default function FlipperLab({
   const [overlayFftSeries, setOverlayFftSeries] = useState(false);
   const [movePrompt, setMovePrompt] = useState<{ angle: number; x: number; y: number } | null>(null);
   const [exportMenu, setExportMenu] = useState(false);
+  const [cursorLabel, setCursorLabel] = useState("");
   const fileRef = useRef<HTMLInputElement>(null);
 
   const { derived, stats } = flip;
@@ -486,6 +506,57 @@ export default function FlipperLab({
 
   const setTransform = (next: ChartTransform) => setTransforms((all) => ({ ...all, [view]: next }));
   const resetView = () => setTransforms((all) => ({ ...all, [view]: RESET_TRANSFORM }));
+
+  const updateCursor = (x: number, y: number, w: number, h: number) => {
+    const clamp = (value: number, lower: number, upper: number) => Math.min(upper, Math.max(lower, value));
+    if (view === "polar") {
+      let maxI = 0.05;
+      if (derived?.plot) for (let i = 0; i < derived.plot.length; i++) maxI = Math.max(maxI, derived.plot.amps[i]);
+      for (const series of activeExtendedSeries) for (const current of series.currents) maxI = Math.max(maxI, current);
+      maxI *= 1.15;
+      const radius = Math.min(w, h) / 2 - 22;
+      const dx = x - w / 2;
+      const dy = y - h / 2;
+      const angle = ((Math.atan2(dx, -dy) * 180) / Math.PI + 360) % 360;
+      const current = Math.max(0, Math.hypot(dx, dy) / Math.max(radius, 1) * maxI);
+      setCursorLabel(`θ ${angle.toFixed(1)}° · I ${current.toFixed(3)} A`);
+      return;
+    }
+    if (view === "cartesiano") {
+      let minI = Infinity;
+      let maxI = -Infinity;
+      if (derived?.plot) for (let i = 0; i < derived.plot.length; i++) {
+        minI = Math.min(minI, derived.plot.amps[i] - derived.plot.ampsErr[i]);
+        maxI = Math.max(maxI, derived.plot.amps[i] + derived.plot.ampsErr[i]);
+      }
+      for (const series of activeExtendedSeries) for (let i = 0; i < series.currents.length; i++) {
+        minI = Math.min(minI, series.currents[i] - series.currentErr[i]);
+        maxI = Math.max(maxI, series.currents[i] + series.currentErr[i]);
+      }
+      if (!Number.isFinite(minI) || !Number.isFinite(maxI)) return;
+      const span = Math.max(0.01, maxI - minI);
+      minI = Math.max(0, minI - span * 0.12);
+      maxI += span * 0.12;
+      const angle = clamp(((x - 46) / Math.max(1, w - 56)) * 360, 0, 360);
+      const current = minI + ((h - 20 - y) / Math.max(1, h - 30)) * (maxI - minI);
+      setCursorLabel(`θ ${angle.toFixed(2)}° · I ${current.toFixed(3)} A`);
+      return;
+    }
+    if (view === "fft") {
+      const left = 10;
+      const maxHz = extendedFftSeries.length
+        ? Math.max(...extendedFftSeries.map((series) => (series.spectrum.magnitude.length - 1) * series.spectrum.dfHz))
+        : derived?.mag ? (derived.mag.length - 1) * derived.df : 0;
+      const frequency = clamp(((x - left) / Math.max(1, w - left * 2)) * maxHz, 0, maxHz);
+      setCursorLabel(`f ${frequency.toFixed(maxHz < 10 ? 3 : 2)} Hz`);
+      return;
+    }
+    const width = Math.min(n, 2400);
+    const first = Math.max(0, n - width);
+    const sample = clamp(Math.round(first + ((x - 4) / Math.max(1, w - 8)) * Math.max(0, width - 1)), first, Math.max(first, n - 1));
+    const current = n ? flip.adcToAmps(flip.buffers.adcRef.current[sample]) : 0;
+    setCursorLabel(`muestra ${sample + 1} · I ${current.toFixed(3)} A`);
+  };
 
   /* ── dibujo: vivo ────────────────────────────────────── */
   const drawLive = (ctx: CanvasRenderingContext2D, w: number, h: number) => {
@@ -920,6 +991,22 @@ export default function FlipperLab({
     ctx.clearRect(0, 0, w, h);
     const mag = derived?.mag;
     ctx.font = "8.5px IBM Plex Mono, monospace";
+    const drawFrequencyTicks = (maxHz: number, X: (hz: number) => number) => {
+      const ticks = 6;
+      ctx.strokeStyle = "rgba(29,48,80,0.9)";
+      ctx.fillStyle = "#42567a";
+      ctx.lineWidth = 1;
+      ctx.textAlign = "center";
+      for (let tick = 0; tick <= ticks; tick++) {
+        const hz = maxHz * tick / ticks;
+        const x = X(hz);
+        ctx.beginPath();
+        ctx.moveTo(x, h - 18);
+        ctx.lineTo(x, h - 14);
+        ctx.stroke();
+        ctx.fillText(`${hz.toFixed(maxHz < 10 ? 2 : 1)}`, x, h - 6);
+      }
+    };
     if (extendedFftSeries.length) {
       const visible = overlayFftSeries
         ? extendedFftSeries
@@ -943,8 +1030,8 @@ export default function FlipperLab({
         ctx.stroke();
       }
       ctx.globalAlpha = 1;
-      ctx.fillStyle = "#42567a"; ctx.textAlign = "left"; ctx.fillText("0 Hz", L, h - 6);
-      ctx.textAlign = "right"; ctx.fillText(`${maxHz.toFixed(2)} Hz`, w - L, h - 6);
+      drawFrequencyTicks(maxHz, X);
+      ctx.fillStyle = "#42567a"; ctx.textAlign = "right"; ctx.fillText("Hz", w - L, 10);
       return;
     }
     if (!mag || !derived) {
@@ -960,7 +1047,8 @@ export default function FlipperLab({
     const usable = mag.length;
     let mx = 0;
     for (let i = 2; i < usable; i++) if (mag[i] > mx) mx = mag[i];
-    const X = (i: number) => L + (i / usable) * (w - L * 2);
+    const maxHz = (usable - 1) * derived.df;
+    const X = (i: number) => L + (i / Math.max(1, usable - 1)) * (w - L * 2);
     const Y = (v: number) => h - Bm - Math.sqrt(v / (mx || 1)) * (h - Bm - 12);
     ctx.fillStyle = "rgba(76,201,240,0.5)";
     const bw = Math.max(1, (w - L * 2) / usable - 0.5);
@@ -968,11 +1056,10 @@ export default function FlipperLab({
       const y = Y(mag[i]);
       ctx.fillRect(X(i), y, bw, h - Bm - y);
     }
+    drawFrequencyTicks(maxHz, (hz) => X(hz / derived.df));
     ctx.fillStyle = "#42567a";
-    ctx.textAlign = "left";
-    ctx.fillText("0 Hz", L, h - 6);
     ctx.textAlign = "right";
-    ctx.fillText(`${(usable * derived.df).toFixed(2)} Hz`, w - L, h - 6);
+    ctx.fillText("Hz", w - L, 10);
     for (const p of derived.peaks) {
       if (p.bin >= usable) continue;
       ctx.fillStyle = "#f5a524";
@@ -1069,6 +1156,9 @@ export default function FlipperLab({
     const interaction = {
       transform: transforms[view],
       onTransform: setTransform,
+      onCursor: updateCursor,
+      onCursorLeave: () => setCursorLabel(""),
+      cursorLabel,
       regionZoom,
       onRegionZoomDone: () => setRegionZoom(false),
     };
@@ -1083,7 +1173,7 @@ export default function FlipperLab({
         return <ChartCanvas draw={drawLive} className="h-[46dvh] min-h-[300px]" {...interaction} />;
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [view, derived, n, flip.tick, flip.overlayRevs, flip.capturing, flip.extendedAnalysis, extendedMeanProfile, selectedEllipse, polarLoadAnalysis, hiddenExtendedSeries, showExtendedMean, extendedFftSeries, selectedFftSeries, overlayFftSeries, regionZoom, transforms, selectedPeaks]);
+  }, [view, derived, n, flip.tick, flip.overlayRevs, flip.capturing, flip.extendedAnalysis, extendedMeanProfile, selectedEllipse, polarLoadAnalysis, hiddenExtendedSeries, showExtendedMean, extendedFftSeries, selectedFftSeries, overlayFftSeries, regionZoom, transforms, selectedPeaks, cursorLabel]);
 
   const selCls =
     "rounded border border-line bg-[#0c1930] px-1.5 py-1 font-mono text-[10.5px] text-fog focus:border-ion/60 focus:outline-none disabled:opacity-40";
@@ -1262,13 +1352,6 @@ export default function FlipperLab({
               </div>
             )}
             {chartFor}
-            <p className="font-mono text-[9.5px] text-dim">Rueda: zoom · botón derecho: desplazar · Zoom rect: arrastra un área con el botón izquierdo · Restaurar: vista completa.</p>
-            {(view === "polar" || view === "cartesiano") && derived?.plot && (
-              <p className="font-mono text-[9.5px] text-dim">
-                ×1 representa cada muestra con ángulo · ×N representa la media de bloques consecutivos de N
-                {view === "cartesiano" && flip.avgFactor > 1 ? " · barras X/Y = error estándar (SEM)" : ""}
-              </p>
-            )}
             {view === "fft" && derived && (
               <div className="overflow-hidden rounded border border-line">
                 <p className="border-b border-line bg-[#0c1930] px-2 py-1.5 font-mono text-[9px] text-dim">

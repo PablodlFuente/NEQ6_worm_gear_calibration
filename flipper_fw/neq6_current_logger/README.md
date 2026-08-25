@@ -35,5 +35,5 @@ La conversión de rango se realiza con la función oficial
 por `0.323`. Las muestras fuera de 0-2,5 A se cuentan como `OOR` y no se envían.
 La trama conserva `adc_raw` para no cambiar el protocolo existente.
 
-Consulta `../../docs/FLIPPER_SETUP.md` para instalación, emparejamiento y
+Consulta `../../wiki/Configuracion-del-Flipper.md` para instalación, emparejamiento y
 diagnóstico.

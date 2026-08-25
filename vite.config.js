@@ -43,10 +43,10 @@ function localAuditLog() {
           response.end();
         });
       });
-      server.middlewares.use("/docs/SkyWatcher_EQ6_Protocolo_Completo_Referenciado_FINAL.pdf", async (_request, response) => {
+      server.middlewares.use("/docs/SkyWatcher_EQ6_Protocolo_investigacion.pdf", async (_request, response) => {
         try {
           response.setHeader("Content-Type", "application/pdf");
-          response.end(await readFile(resolve(process.cwd(), "docs", "SkyWatcher_EQ6_Protocolo_Completo_Referenciado_FINAL.pdf")));
+          response.end(await readFile(resolve(process.cwd(), "docs", "SkyWatcher_EQ6_Protocolo_investigacion.pdf")));
         } catch { response.statusCode = 404; response.end(); }
       });
     },

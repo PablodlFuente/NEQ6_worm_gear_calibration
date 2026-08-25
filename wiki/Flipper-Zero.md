@@ -3,8 +3,11 @@
 ## Función del prototipo
 
 El Flipper se usa como ADC y transporte temporal durante el desarrollo. No
-forma parte del lazo de control del motor. Una futura placa ADC/microcontrolador
-puede reemplazarlo si conserva el contrato de muestras y comandos.
+forma parte del lazo de control del motor. Se eligió porque era el dispositivo
+disponible durante las vacaciones en que se montó el prototipo; una placa ADC o
+microcontrolador puede reemplazarlo si conserva el contrato de muestras y
+comandos. Entre las alternativas previstas están un ESP32 con ADC externo, un
+Arduino Mini u otra placa con ADC propio o externo.
 
 ## Entrada y calibración
 
@@ -79,6 +82,6 @@ un cargador RPC seguro.
 
 ## Referencias internas
 
-- [Montaje detallado](https://github.com/PablodlFuente/NEQ6_worm_gear_calibration/blob/HEAD/docs/FLIPPER_SETUP.md)
-- [Protocolo completo del logger](https://github.com/PablodlFuente/NEQ6_worm_gear_calibration/blob/HEAD/docs/FLIPPER_PROTOCOL.md)
+- [Montaje detallado](Configuracion-del-Flipper.md)
+- [Protocolo completo del logger](Protocolo-del-logger-Flipper.md)
 - [Firmware](https://github.com/PablodlFuente/NEQ6_worm_gear_calibration/tree/HEAD/flipper_fw/neq6_current_logger)

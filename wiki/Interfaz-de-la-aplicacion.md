@@ -1,7 +1,7 @@
 # Guía visual de la interfaz
 
 Esta guía documenta la versión de la interfaz incluida en el repositorio. Para
-la teoría de medida y la interpretación estadística consulta `../wiki/`.
+la teoría de medida y la interpretación estadística consulta la [página de inicio](Home.md).
 
 ## Movimiento
 

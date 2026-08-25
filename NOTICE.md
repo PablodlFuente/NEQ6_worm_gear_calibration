@@ -17,8 +17,7 @@ términos. Se permiten uso, estudio, modificación, redistribución y uso
 comercial. Las versiones modificadas deben conservar la misma licencia, los
 avisos de copyright y la referencia al proyecto original. Si una versión
 modificada se usa para prestar un servicio a través de una red, sus usuarios
-deben poder obtener el código fuente correspondiente conforme a la sección 13
-de la AGPL.
+deben poder obtener el código fuente correspondiente
 
 ## Exclusión de responsabilidad
 
@@ -39,7 +38,5 @@ sustituye un corte físico de alimentación.
 
 ## Asistencia de programación
 
-La programación, revisión y documentación del proyecto han sido asistidas por
-OpenAI Codex. Esa asistencia no implica certificación, garantía, validación de
-seguridad ni respaldo del proyecto por parte de OpenAI. Las decisiones de uso y
-publicación corresponden al titular y a los contribuidores humanos.
+El diseño, lógica y características del programa es de desarrollo humano. La codificación, revisión y documentación del proyecto han sido asistidas por
+OpenAI Codex y Qwen3.8. Durante todo el desarrollo se mantiene supervisión humana.

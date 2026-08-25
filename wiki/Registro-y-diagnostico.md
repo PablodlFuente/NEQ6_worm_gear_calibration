@@ -104,4 +104,4 @@ cd flipper_fw\neq6_current_logger
 ..\..\.tools\ufbt-venv\Scripts\ufbt.exe
 ```
 
-Consulta también [`docs/TROUBLESHOOTING.md`](https://github.com/PablodlFuente/NEQ6_worm_gear_calibration/blob/HEAD/docs/TROUBLESHOOTING.md).
+Consulta también [Resolución de problemas](Resolucion-de-problemas.md).

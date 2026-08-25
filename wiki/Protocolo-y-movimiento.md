@@ -83,6 +83,6 @@ no demuestra por sí sola una vuelta mecánica completa.
 
 ## Referencias
 
-- [R1: protocolo completo incluido](https://github.com/PablodlFuente/NEQ6_worm_gear_calibration/blob/HEAD/docs/SkyWatcher_EQ6_Protocolo_Completo_Referenciado_FINAL.pdf)
+- [R1: protocolo completo incluido](https://github.com/PablodlFuente/NEQ6_worm_gear_calibration/blob/HEAD/docs/SkyWatcher_EQ6_Protocolo_investigacion.pdf)
 - [R2: INDI skywatcherAPI.h](https://github.com/indilib/indi/blob/master/drivers/telescope/skywatcherAPI.h)
 - [R3: INDI skywatcherAPI.cpp](https://github.com/indilib/indi/blob/master/drivers/telescope/skywatcherAPI.cpp)

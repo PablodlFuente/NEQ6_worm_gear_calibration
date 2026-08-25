@@ -407,7 +407,7 @@ export default function SidePanel({
             <IconBook className="h-3.5 w-3.5" /> Protocolo completo
           </Head>
           <p className="mt-2 font-mono text-[10px] leading-relaxed text-dim">Consulta la referencia completa de comandos Sky-Watcher antes de enviar órdenes manuales.</p>
-          <a href="/docs/SkyWatcher_EQ6_Protocolo_Completo_Referenciado_FINAL.pdf" target="_blank" rel="noreferrer" className="mt-2 flex items-center justify-center gap-2 rounded border border-ion/50 bg-ion/10 px-3 py-2 font-display text-[10px] font-bold tracking-[0.16em] text-ion transition-colors hover:bg-ion/20">
+          <a href="/docs/SkyWatcher_EQ6_Protocolo_investigacion.pdf" target="_blank" rel="noreferrer" className="mt-2 flex items-center justify-center gap-2 rounded border border-ion/50 bg-ion/10 px-3 py-2 font-display text-[10px] font-bold tracking-[0.16em] text-ion transition-colors hover:bg-ion/20">
             <IconBook className="h-3.5 w-3.5" /> ABRIR PDF DEL PROTOCOLO
           </a>
         </section>

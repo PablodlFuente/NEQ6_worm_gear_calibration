@@ -72,4 +72,4 @@ tipo de test; los CSV guardan sentido, calibración y muestras individuales. Añ
 en tu cuaderno de laboratorio la configuración mecánica que el software no puede
 observar.
 
-Consulta también el [procedimiento operativo del repositorio](https://github.com/PablodlFuente/NEQ6_worm_gear_calibration/blob/HEAD/docs/TEST_PROCEDURE.md).
+Consulta también el [procedimiento operativo](Procedimiento-operativo-de-calibracion.md).

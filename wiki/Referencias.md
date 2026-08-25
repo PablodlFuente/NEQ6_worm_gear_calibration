@@ -9,7 +9,7 @@ modos y secuencias de movimiento en pp. 4-5; velocidad y offset de posición en
 p. 7; el enlace transaccional y checklist en pp. 9-10; el addendum corrige el
 estado y los errores en pp. 12-13.
 
-<https://github.com/PablodlFuente/NEQ6_worm_gear_calibration/blob/HEAD/docs/SkyWatcher_EQ6_Protocolo_Completo_Referenciado_FINAL.pdf>
+<https://github.com/PablodlFuente/NEQ6_worm_gear_calibration/blob/HEAD/docs/SkyWatcher_EQ6_Protocolo_investigacion.pdf>
 
 **[R2]** INDI, `skywatcherAPI.h`: enumeración de comandos, estado y parámetros
 de eje.
@@ -28,10 +28,10 @@ de montura.
 
 ## Proyecto
 
-- [Procedimiento de calibración](https://github.com/PablodlFuente/NEQ6_worm_gear_calibration/blob/HEAD/docs/TEST_PROCEDURE.md)
-- [Montaje y firmware del Flipper](https://github.com/PablodlFuente/NEQ6_worm_gear_calibration/blob/HEAD/docs/FLIPPER_SETUP.md)
-- [Protocolo del logger](https://github.com/PablodlFuente/NEQ6_worm_gear_calibration/blob/HEAD/docs/FLIPPER_PROTOCOL.md)
-- [Diagnóstico](https://github.com/PablodlFuente/NEQ6_worm_gear_calibration/blob/HEAD/docs/TROUBLESHOOTING.md)
+- [Procedimiento de calibración](Procedimiento-operativo-de-calibracion.md)
+- [Montaje y firmware del Flipper](Configuracion-del-Flipper.md)
+- [Protocolo del logger](Protocolo-del-logger-Flipper.md)
+- [Diagnóstico](Resolucion-de-problemas.md)
 - [Pruebas automatizadas](https://github.com/PablodlFuente/NEQ6_worm_gear_calibration/tree/HEAD/tests)
 
 ## Licencia y plataforma

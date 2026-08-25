@@ -77,4 +77,4 @@ pueden recalcularse sin alterar las muestras originales.
 - Adquisición, sincronización y exportación: [`src/hooks/useFlipper.ts`](https://github.com/PablodlFuente/NEQ6_worm_gear_calibration/blob/HEAD/src/hooks/useFlipper.ts)
 - Interpolación, estadística y CSV: [`src/lib/flipper.ts`](https://github.com/PablodlFuente/NEQ6_worm_gear_calibration/blob/HEAD/src/lib/flipper.ts)
 - Secuencias de movimiento: [`src/App.tsx`](https://github.com/PablodlFuente/NEQ6_worm_gear_calibration/blob/HEAD/src/App.tsx)
-- Referencia del protocolo MC: [PDF, pp. 2-10](https://github.com/PablodlFuente/NEQ6_worm_gear_calibration/blob/HEAD/docs/SkyWatcher_EQ6_Protocolo_Completo_Referenciado_FINAL.pdf)
+- Referencia del protocolo MC: [PDF, pp. 2-10](https://github.com/PablodlFuente/NEQ6_worm_gear_calibration/blob/HEAD/docs/SkyWatcher_EQ6_Protocolo_investigacion.pdf)
