@@ -24,13 +24,14 @@ import {
 import { capturedAngleDeltaDeg, classifyExtendedPeaks } from "./lib/flipper";
 import TerminalLog, { type DisplayMode, type EntryKind, type LogEntry } from "./components/TerminalLog";
 import CommandBar, { type CommandBarHandle } from "./components/CommandBar";
-import RightPanel, { type SerialTarget, type Tab } from "./components/RightPanel";
+import RightPanel, { type Tab } from "./components/RightPanel";
 import FlipperLab from "./components/FlipperLab";
 import { type AutoState } from "./components/SidePanel";
 import { IDLE_MOVE, type MoveInputs, type MoveState } from "./components/DrivePanel";
 import type { AxisTestInputs, AxisTestState, ExtendedTestState } from "./components/AxisTestPanel";
 import type { DecodedState } from "./components/DecoderPanel";
 import HelpModal from "./components/HelpModal";
+import FlipperSerialConsole from "./components/FlipperSerialConsole";
 import {
   IconActivity,
   IconAlert,
@@ -190,7 +191,7 @@ export default function App() {
 
   /* pestaña activa + ancho del panel lateral */
   const [tab, setTab] = useState<Tab>("mov");
-  const [serialTarget, setSerialTarget] = useState<SerialTarget>("mount");
+  const [serialTarget, setSerialTarget] = useState<"mount" | "flipper">("mount");
   const [sideW, setSideW] = useState<number>(() => {
     const v = Number(localStorage.getItem("neq6-sidew"));
     return v >= 300 && v <= 760 ? v : 380;
@@ -1375,17 +1376,15 @@ export default function App() {
     const configuredSpeed = Number(axisTestInputs.speed.replace(",", "."));
     logSys(
       `Reposicionando ${axis === 1 ? "AR" : "DEC"} al punto ${normalized.toFixed(2)}° ` +
-      `de la captura ${metadata.direction.toUpperCase()} con destino absoluto :S ` +
-      `(recorrido más corto: ${deltaDeg >= 0 ? "+" : "−"}${Math.abs(deltaDeg).toFixed(2)}°).`,
+      `de la captura ${metadata.direction.toUpperCase()} con destino absoluto :S.`,
     );
     await runMove({
       axis,
       speed: Number.isFinite(configuredSpeed) && configuredSpeed > 0 ? configuredSpeed : 0.5,
       deg: deltaDeg,
       maxDeg: 360,
-      /* :H depende del estado de sentido que conserva el controlador. :S con
-       * el destino calculado desde :j evita que una coordenada ecuatorial se
-       * convierta en un incremento relativo con signo inesperado. */
+      /* El :S recibe el destino reconstruido desde el :j que se guardó como
+       * origen de la captura; no depende de la coordenada ecuatorial de la UI. */
       relativeGoto: false,
     });
   };
@@ -1514,6 +1513,8 @@ export default function App() {
               canMoveToAngle={status === "open" && !move.running && !axisTest.running && !extendedTest.running && !auto.running}
               onMoveToAngle={(angle) => void moveToCapturedAngle(angle)}
             />
+          ) : tab === "montura" && serialTarget === "flipper" ? (
+            <FlipperSerialConsole flip={flip} view="monitor" />
           ) : (
             <section
               className="brackets rise relative flex h-[56dvh] min-h-0 flex-1 flex-col overflow-hidden rounded-md border border-line bg-panel shadow-[inset_0_1px_0_rgba(255,255,255,0.04),0_10px_34px_rgba(0,0,0,0.4)] lg:h-auto"
@@ -1521,11 +1522,9 @@ export default function App() {
             >
               <div className="flex shrink-0 items-center gap-2 border-b border-line bg-[#0a1424] px-3 py-2">
                 <IconTerminal className="h-4 w-4 shrink-0 text-ember" />
-                <span className="font-display text-[11px] font-bold tracking-[0.24em] text-fog">
-                  {serialTarget === "flipper" ? "MONITOR SERIE · FLIPPER" : "MONITOR SERIE · MONTURA"}
-                </span>
+                <span className="font-display text-[11px] font-bold tracking-[0.24em] text-fog">MONITOR SERIE</span>
                 <span className="rounded border border-line px-1.5 py-px font-mono text-[10px] text-dim">
-                  {(serialTarget === "flipper" ? flip.consoleLines.length : entries.length)} lín
+                  {entries.length} lín
                 </span>
                 <div className="ml-auto flex items-center gap-1.5">
                   <div className="flex overflow-hidden rounded border border-line">
@@ -1548,7 +1547,7 @@ export default function App() {
                   >
                     <IconScroll className="h-3.5 w-3.5" />
                   </ToolBtn>
-                  <ToolBtn title="Limpiar monitor" onClick={serialTarget === "flipper" ? flip.clearConsole : clearLog}>
+                  <ToolBtn title="Limpiar monitor" onClick={clearLog}>
                     <IconTrash className="h-3.5 w-3.5" />
                   </ToolBtn>
                   <ToolBtn title="Exportar registro (.txt)" onClick={exportLog}>
@@ -1557,36 +1556,18 @@ export default function App() {
                 </div>
               </div>
 
-              <TerminalLog
-                entries={serialTarget === "flipper"
-                  ? flip.consoleLines.map((line) => ({
-                      id: 2_000_000 + line.id,
-                      time: new Date(line.time).toLocaleTimeString("es-ES", { hour12: false }),
-                      kind: line.direction,
-                      text: line.text,
-                    }))
-                  : entries}
-                mode={displayMode}
-                autoscroll={autoscroll}
-                ready={serialTarget === "flipper" ? flip.connected : apiOk && secure}
-              />
+              <TerminalLog entries={entries} mode={displayMode} autoscroll={autoscroll} ready={apiOk && secure} />
 
-              {serialTarget === "mount" ? (
-                <CommandBar
-                  ref={barRef}
-                  value={cmd}
-                  onChange={setCmd}
-                  disabled={status !== "open"}
-                  onSend={(c) => void sendRaw(c)}
-                  termination={termination}
-                  onTermination={setTermination}
-                  history={history}
-                />
-              ) : (
-                <div className="border-t border-line bg-[#091426] px-3 py-2 font-mono text-[10px] text-dim">
-                  Los comandos del Flipper están en el panel derecho: `INFO`, `SYNC`, `RATE`, `START` y `STOP`.
-                </div>
-              )}
+              <CommandBar
+                ref={barRef}
+                value={cmd}
+                onChange={setCmd}
+                disabled={status !== "open"}
+                onSend={(c) => void sendRaw(c)}
+                termination={termination}
+                onTermination={setTermination}
+                history={history}
+              />
             </section>
           )}
         </div>

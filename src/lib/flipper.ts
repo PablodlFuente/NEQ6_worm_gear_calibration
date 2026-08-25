@@ -198,9 +198,12 @@ export function capturedAngleDeltaDeg(
   if (!cpr || metadata.originSteps === null || metadata.direction === null) return null;
   const normalized = ((angleDeg % 360) + 360) % 360;
   const sign = metadata.direction === "cw" ? 1 : -1;
-  const base = metadata.originSteps + sign * (normalized * cpr) / 360;
-  const nearest = base + Math.round((currentSteps - base) / cpr) * cpr;
-  return ((nearest - currentSteps) * 360) / cpr;
+  /* La fase del gráfico pertenece a la revolución capturada: 210° no es
+   * intercambiable por -150°. No se normaliza al camino más corto porque
+   * eso cambia el sentido de aproximación y deja el punto en otra rama de
+   * holgura. El destino se calcula desde el feedback :j que fijó el origen. */
+  const target = metadata.originSteps + sign * (normalized * cpr) / 360;
+  return ((target - currentSteps) * 360) / cpr;
 }
 
 export interface Session {

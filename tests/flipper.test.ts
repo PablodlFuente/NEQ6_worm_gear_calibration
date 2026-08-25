@@ -102,6 +102,10 @@ test("reposiciona un ángulo relativo respetando origen y sentido", () => {
   const cpr = 360_000;
   assert.equal(capturedAngleDeltaDeg(110_000, cpr, { axis: 1, direction: "cw", originSteps: 100_000 }, 20), 10);
   assert.equal(capturedAngleDeltaDeg(90_000, cpr, { axis: 1, direction: "ccw", originSteps: 100_000 }, 20), -10);
+  // La fase 210° no puede acortarse a -150°: son aproximaciones distintas
+  // y, con holgura del sinfín, no dejan el mismo punto de medida.
+  assert.equal(capturedAngleDeltaDeg(100_000, cpr, { axis: 1, direction: "cw", originSteps: 100_000 }, 210), 210);
+  assert.equal(capturedAngleDeltaDeg(100_000, cpr, { axis: 1, direction: "ccw", originSteps: 100_000 }, 210), -210);
 });
 
 test("el test extendido separa periodicidad angular de frecuencia fija", () => {

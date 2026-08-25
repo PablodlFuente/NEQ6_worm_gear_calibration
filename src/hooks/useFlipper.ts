@@ -263,9 +263,8 @@ export function useFlipper({ cpr1 }: Props) {
     const generation = ++captureGenerationRef.current;
     sampleClockOffsetRef.current = null;
     setRate(requestedRate);
-    /* INFO.ovf es acumulado desde el arranque del firmware. Guardamos la
-     * lectura anterior para distinguir pérdidas históricas de las producidas
-     * en esta captura concreta. */
+    /* INFO.ovf se acumula desde que arranca el firmware. Conservamos la
+     * base de la captura para que la alarma identifique pérdidas nuevas. */
     overflowBaselineRef.current = deviceInfo?.overflow ?? null;
     setDeviceInfo(null);
     setNotice(null);
