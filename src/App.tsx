@@ -762,7 +762,6 @@ export default function App() {
           await waitForRx(RX_TIMEOUT_MS);
           stopSent = true;
         }
-        await request.onTargetReached?.();
         break;
       }
       await sleep(request.onPosition ? 120 : 180);
@@ -773,7 +772,11 @@ export default function App() {
       await waitForRx(RX_TIMEOUT_MS);
       stopSent = true;
     }
-    if (status === "open" && stopSent) await waitAxisStopped(axis, 12000);
+    let stopped = false;
+    if (status === "open" && stopSent) stopped = await waitAxisStopped(axis, 12000);
+    /* La posición final sólo existe cuando :f confirma que terminó la rampa
+     * de frenado. Consultarla justo después de :K recortaba 1–2° del perfil. */
+    if (reached && stopped) await request.onTargetReached?.();
     if (communicationError) logFault("Se perdió el feedback :j durante el movimiento continuo; se envió STOP.");
     else if (!reached && !moveCancelRef.current) logFault("El movimiento continuo no alcanzó el recorrido antes del timeout; se envió STOP.");
     else if (reached) logSys(`Recorrido continuo confirmado por :j: ${Math.abs(deg).toFixed(2)}°.`);
@@ -1170,6 +1173,7 @@ export default function App() {
     let captureStopped = false;
     let captureFailed = false;
     let testStartedAt: number | null = null;
+    let captureOriginPosition: number | null = null;
     try {
       moveSuccess = await runContinuousMove({
         axis,
@@ -1224,6 +1228,7 @@ export default function App() {
             }
             testStartedAt = performance.now();
             acquisitionPreviousPosition = steps;
+            captureOriginPosition = steps;
             flip.setCaptureMetadata({
               axis,
               direction: testInputs.direction,
@@ -1258,11 +1263,31 @@ export default function App() {
       if (captureStarted && !captureStopped) await flip.stopCapture();
     }
 
+    /* Tras detener y cerrar la adquisición, elimina el pequeño sobrepaso de
+     * la rampa y vuelve al mismo contador absoluto del que partió la medida. */
+    let returnedToOrigin = true;
+    if (moveSuccess && captureOriginPosition !== null && !axisTestCancelRef.current) {
+      if (await sendRaw(`:j${axis}`, false)) {
+        const current = parsePosLine(await waitForRx(RX_TIMEOUT_MS));
+        if (current !== null) {
+          const expected = wrapPosition24(captureOriginPosition + measurementSign * totalSteps);
+          let correctionSteps = expected - current;
+          if (correctionSteps > MAX_POSITION_DELTA) correctionSteps -= 0x1000000;
+          else if (correctionSteps < -MAX_POSITION_DELTA) correctionSteps += 0x1000000;
+          const correctionDeg = (correctionSteps * 360) / cpr;
+          if (Math.abs(correctionDeg) > 0.002) {
+            setAxisTest((state) => ({ ...state, message: `Volviendo al origen: ${correctionDeg.toFixed(3)}°…` }));
+            returnedToOrigin = await runMove({ axis, speed, deg: correctionDeg, maxDeg: 5 });
+          }
+        } else returnedToOrigin = false;
+      } else returnedToOrigin = false;
+    }
+
     const cancelled = axisTestCancelRef.current;
     const actualDurationSec = testStartedAt ? (performance.now() - testStartedAt) / 1000 : 0;
     const measuredDeg = (Math.abs(travelledSteps) * 360) / cpr;
     const feedbackComplete = measuredDeg >= targetDeg * 0.995;
-    const success = moveSuccess && captureStarted && feedbackComplete;
+    const success = moveSuccess && captureStarted && feedbackComplete && returnedToOrigin;
     if (moveSuccess && !feedbackComplete) {
       logFault(
         `Movimiento detenido en ${measuredDeg.toFixed(2)}° de ${targetDeg.toFixed(2)}° según :j. ` +

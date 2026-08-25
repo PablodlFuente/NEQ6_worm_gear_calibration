@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import type { FlipperApi } from "../hooks/useFlipper";
 import { IconSend } from "./icons";
 
@@ -8,6 +8,15 @@ export default function FlipperSerialConsole({ flip, view = "commands" }: { flip
   const [command, setCommand] = useState("");
   const endRef = useRef<HTMLDivElement>(null);
   const lines = flip.consoleLines ?? [];
+  const decoded = useMemo(() => {
+    const line = [...lines].reverse().find((item) => item.direction === "rx")?.text ?? "";
+    const info = line.match(/^INFO\s+(\S+)\s+r=(\d+)\s+a=(\d+)\s+c=(\d+)\s+oor=(\d+)\s+ovf=(\d+)\s+n=(\d+)$/);
+    if (info) return { title: `INFO · firmware ${info[1]}`, fields: [["RATE solicitada", `${info[2]} Hz`], ["RATE efectiva", `${info[3]} Hz`], ["captura", info[4] === "1" ? "activa" : "parada"], ["OOR / OVF", `${info[5]} / ${info[6]}`], ["muestras", info[7]]] };
+    if (line.startsWith("SYNC ")) return { title: "SYNC", fields: [["timestamp Flipper", `${line.slice(5)} µs`]] };
+    if (line === "OK") return { title: "OK", fields: [["resultado", "comando aceptado"]] };
+    if (line.startsWith("ERR")) return { title: "ERROR", fields: [["respuesta", line]] };
+    return { title: line ? "Respuesta ASCII" : "Sin respuesta", fields: line ? [["valor", line]] : [] };
+  }, [lines]);
   useEffect(() => {
     if (view === "monitor") endRef.current?.scrollIntoView?.({ block: "end" });
   }, [lines, view]);
@@ -47,7 +56,13 @@ export default function FlipperSerialConsole({ flip, view = "commands" }: { flip
   );
 
   return (
-    <section className="rise flex min-h-[420px] flex-col overflow-hidden rounded-md border border-line bg-panel p-3 shadow-[inset_0_1px_0_rgba(255,255,255,0.04)]">
+    <div className="flex flex-col gap-3">
+    <section className="rise rounded-md border border-line bg-panel p-3 shadow-[inset_0_1px_0_rgba(255,255,255,0.04)]">
+      <header className="flex items-center gap-2"><span className="h-[7px] w-[7px] bg-ion/80" /><h2 className="font-display text-[11px] font-bold uppercase tracking-[0.24em] text-dim">Decodificador Flipper</h2></header>
+      <p className="mt-2 font-mono text-[10px] text-fog">{decoded.title}</p>
+      {decoded.fields.length ? <div className="mt-2 grid grid-cols-2 gap-1.5">{decoded.fields.map(([label, value]) => <div key={label} className="rounded border border-line bg-[#0c1930] px-2 py-1.5"><p className="font-mono text-[8.5px] uppercase tracking-wider text-dim">{label}</p><p className="mt-0.5 break-all font-mono text-[10px] text-ion">{value}</p></div>)}</div> : <p className="mt-2 font-mono text-[10px] text-dim">Envía INFO o SYNC desde el monitor izquierdo.</p>}
+    </section>
+    <section className="rise flex min-h-[260px] flex-col overflow-hidden rounded-md border border-line bg-panel p-3 shadow-[inset_0_1px_0_rgba(255,255,255,0.04)]">
       <header className="flex items-center gap-2">
         <span className={`led ${flip.connected ? "led-mint led-breathe" : "led-off"}`} />
         <h2 className="font-display text-[11px] font-bold uppercase tracking-[0.24em] text-dim">Comandos del Flipper</h2>
@@ -68,5 +83,6 @@ export default function FlipperSerialConsole({ flip, view = "commands" }: { flip
       </div>
       <div className="mt-3 border-t border-line pt-2.5 font-mono text-[10px] text-dim">RATE &lt;Hz&gt; admite 10–1000. El último tráfico y sus respuestas se ven y se envían desde el monitor izquierdo.</div>
     </section>
+    </div>
   );
 }
