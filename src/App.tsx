@@ -1625,7 +1625,7 @@ export default function App() {
                 </div>
               </div>
 
-              <TerminalLog entries={visibleLogEntries} mode={displayMode} autoscroll={autoscroll} ready={showingFlipperSerial ? flip.connected : apiOk && secure} />
+              <TerminalLog entries={visibleLogEntries} mode={displayMode} autoscroll={autoscroll} ready={showingFlipperSerial ? flip.connected : apiOk && secure} minimalEmpty={showingFlipperSerial} emptyLabel="MONITOR EN ESPERA" />
 
               <CommandBar
                 ref={barRef}
@@ -1636,6 +1636,7 @@ export default function App() {
                 termination={showingFlipperSerial ? "lf" : termination}
                 onTermination={showingFlipperSerial ? () => undefined : setTermination}
                 history={showingFlipperSerial ? flip.consoleLines.filter((line) => line.direction === "tx").map((line) => line.text) : history}
+                placeholder={showingFlipperSerial ? "INFO · SYNC · RATE 500   — Enter envía, ↑↓ historial" : undefined}
               />
             </section>
           )}

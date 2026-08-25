@@ -14,10 +14,11 @@ interface Props {
   termination: string;
   onTermination: (id: string) => void;
   history: string[];
+  placeholder?: string;
 }
 
 const CommandBar = forwardRef<CommandBarHandle, Props>(function CommandBar(
-  { value, onChange, disabled, onSend, termination, onTermination, history },
+  { value, onChange, disabled, onSend, termination, onTermination, history, placeholder },
   ref,
 ) {
   const inputRef = useRef<HTMLInputElement>(null);
@@ -76,11 +77,7 @@ const CommandBar = forwardRef<CommandBarHandle, Props>(function CommandBar(
         spellCheck={false}
         autoCapitalize="off"
         autoComplete="off"
-        placeholder={
-          disabled
-            ? "Conecta un puerto para enviar comandos…"
-            : "Ej. :e1 · :f1 · :j1 · :G100 · :S1001080   — Enter envía, ↑↓ historial"
-        }
+        placeholder={disabled ? "Conecta un puerto para enviar comandos…" : placeholder ?? "Ej. :e1 · :f1 · :j1 · :G100 · :S1001080   — Enter envía, ↑↓ historial"}
         className="min-w-0 flex-1 bg-transparent font-mono text-[13px] text-[#e8f0ff] placeholder:text-[#44587c] focus:outline-none"
       />
       <label className="hidden items-center gap-1.5 sm:flex">

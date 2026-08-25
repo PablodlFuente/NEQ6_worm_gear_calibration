@@ -90,7 +90,12 @@ function EntryRow({ e, mode }: { e: LogEntry; mode: DisplayMode }) {
   );
 }
 
-function EmptyState({ ready }: { ready: boolean }) {
+function EmptyState({ ready, minimal, label }: { ready: boolean; minimal?: boolean; label?: string }) {
+  if (minimal) return (
+    <div className="flex h-full items-center justify-center px-6 text-center">
+      <p className="font-display text-sm font-bold tracking-[0.3em] text-fog">{label ?? "MONITOR EN ESPERA"}</p>
+    </div>
+  );
   return (
     <div className="flex h-full flex-col items-center justify-center gap-5 px-6 text-center">
       <div className="relative">
@@ -128,11 +133,15 @@ export default function TerminalLog({
   mode,
   autoscroll,
   ready,
+  minimalEmpty = false,
+  emptyLabel,
 }: {
   entries: LogEntry[];
   mode: DisplayMode;
   autoscroll: boolean;
   ready: boolean;
+  minimalEmpty?: boolean;
+  emptyLabel?: string;
 }) {
   const ref = useRef<HTMLDivElement>(null);
 
@@ -145,7 +154,7 @@ export default function TerminalLog({
   return (
     <div ref={ref} className="crt relative min-h-0 flex-1 overflow-y-auto px-3 py-2 font-mono">
       {entries.length === 0 ? (
-        <EmptyState ready={ready} />
+        <EmptyState ready={ready} minimal={minimalEmpty} label={emptyLabel} />
       ) : (
         <div className="flex flex-col gap-[3px] pb-2">
           {entries.map((e) => (
