@@ -177,11 +177,20 @@ const STAT_HELP: Record<string, string> = {
   "elipse · centro x / y": "Desplazamiento cartesiano del centro respecto al origen polar.",
   "elipse · centro polar r / θ": "Módulo y dirección del desplazamiento del centro.",
   "elipse · excentricidad / RMS": "Forma de la elipse y residuo del ajuste; un RMS menor indica mejor ajuste.",
+  "corriente media": "Promedio entre las vueltas del test extendido; el valor ± es la incertidumbre estándar entre vueltas.",
+  "tasa ADC media": "Frecuencia efectiva media recibida por el Flipper; el valor ± es su incertidumbre entre pasadas.",
+  "velocidad |:j| media": "Velocidad angular absoluta media medida con el feedback :j; el valor ± es su incertidumbre entre pasadas.",
+  "concentración R̄ media": "Concentración angular media entre pasadas, de 0 (uniforme/cancelada) a 1 (una dirección dominante).",
+  "dirección de carga media": "Dirección media del vector de carga ponderado por corriente; si R̄ es pequeña no es representativa.",
+  "semieje a medio": "Semieje mayor medio del ajuste elíptico; ± expresa la variación entre pasadas.",
+  "semieje b medio": "Semieje menor medio del ajuste elíptico; ± expresa la variación entre pasadas.",
+  "cociente a/b medio": "Elongación media de la elipse; 1 equivale a una circunferencia.",
+  "inclinación φ media": "Orientación media del semieje mayor de la elipse.",
 };
 
 function StatCell({ k, v, tone }: { k: string; v: ReactNode; tone?: string }) {
   const help = STAT_HELP[k]
-    ?? (k.includes("± incertidumbre") ? "Media entre las vueltas de movimiento ± error estándar de esa media entre vueltas." : undefined)
+    ?? (k.endsWith("media") ? "Valor medio entre las pasadas del test extendido; el valor ± asociado es la incertidumbre entre pasadas." : undefined)
     ?? (k.startsWith("Flipper ") ? "OOR cuenta lecturas fuera de rango y OVF pérdidas por desbordamiento del búfer." : undefined);
   return (
     <div title={help} className={`flex items-baseline justify-between gap-2 rounded border border-line bg-[#0c1930] px-2 py-1.5 ${help ? "cursor-help" : ""}`}>
@@ -1304,19 +1313,19 @@ export default function FlipperLab({
         ) : extendedSummary ? (
           <div className="space-y-2">
             <StatSection title="Resumen medio del test extendido" subtitle={`${extendedPasses.length}/5 fases terminadas · ± = incertidumbre estándar entre las vueltas`}>
-              <StatCell k="corriente media ± incertidumbre" v={`${extendedSummary.current.mean.toFixed(5)} ± ${extendedSummary.current.uncertainty.toFixed(5)} A`} tone="text-mint" />
+              <StatCell k="corriente media" v={`${extendedSummary.current.mean.toFixed(5)} ± ${extendedSummary.current.uncertainty.toFixed(5)} A`} tone="text-mint" />
               <StatCell k="N total" v={extendedSummary.totalSamples.toLocaleString("es-ES")} />
               <StatCell k="tiempo total adquisición" v={`${extendedSummary.totalDurationS.toFixed(1)} s`} />
-              <StatCell k="tasa ADC media ± incertidumbre" v={`${extendedSummary.rate.mean.toFixed(1)} ± ${extendedSummary.rate.uncertainty.toFixed(1)} Hz`} />
-              <StatCell k="velocidad |:j| media ± incertidumbre" v={`${extendedSummary.speed.mean.toFixed(4)} ± ${extendedSummary.speed.uncertainty.toFixed(4)} °/s`} tone="text-ion" />
+              <StatCell k="tasa ADC media" v={`${extendedSummary.rate.mean.toFixed(1)} ± ${extendedSummary.rate.uncertainty.toFixed(1)} Hz`} />
+              <StatCell k="velocidad |:j| media" v={`${extendedSummary.speed.mean.toFixed(4)} ± ${extendedSummary.speed.uncertainty.toFixed(4)} °/s`} tone="text-ion" />
               <StatCell k="máximo global" v={`${extendedSummary.maxA.toFixed(4)} A`} tone="text-ember" />
-              <StatCell k="concentración R̄ media ± incertidumbre" v={`${extendedSummary.circularR.mean.toFixed(4)} ± ${extendedSummary.circularR.uncertainty.toFixed(4)}`} tone="text-ion" />
-              {extendedSummary.direction && <StatCell k="dirección de carga media ± incertidumbre" v={`${extendedSummary.direction.mean.toFixed(2)}° ± ${extendedSummary.direction.uncertainty.toFixed(2)}°${extendedSummary.circularR.mean < 0.05 ? " · no representativa" : ""}`} tone="text-ion" />}
+              <StatCell k="concentración R̄ media" v={`${extendedSummary.circularR.mean.toFixed(4)} ± ${extendedSummary.circularR.uncertainty.toFixed(4)}`} tone="text-ion" />
+              {extendedSummary.direction && <StatCell k="dirección de carga media" v={`${extendedSummary.direction.mean.toFixed(2)}° ± ${extendedSummary.direction.uncertainty.toFixed(2)}°${extendedSummary.circularR.mean < 0.05 ? " · no representativa" : ""}`} tone="text-ion" />}
               {polarLoadAnalysis?.dominantZone && <StatCell k="zona sobre la media" v={`${polarLoadAnalysis.dominantZone.startDeg.toFixed(0)}° → ${polarLoadAnalysis.dominantZone.endDeg.toFixed(0)}° · ancho ${polarLoadAnalysis.dominantZone.widthDeg.toFixed(0)}° · ${polarLoadAnalysis.dominantZone.meanA.toFixed(4)} ± ${polarLoadAnalysis.dominantZone.uncertaintyA.toFixed(4)} A`} tone="text-ember" />}
-              {extendedSummary.semiMajor && <StatCell k="semieje a medio ± incertidumbre" v={`${extendedSummary.semiMajor.mean.toFixed(4)} ± ${extendedSummary.semiMajor.uncertainty.toFixed(4)} A`} tone="text-ion" />}
-              {extendedSummary.semiMinor && <StatCell k="semieje b medio ± incertidumbre" v={`${extendedSummary.semiMinor.mean.toFixed(4)} ± ${extendedSummary.semiMinor.uncertainty.toFixed(4)} A`} tone="text-ion" />}
-              {extendedSummary.ellipseRatio && <StatCell k="cociente a/b medio ± incertidumbre" v={`${extendedSummary.ellipseRatio.mean.toFixed(4)} ± ${extendedSummary.ellipseRatio.uncertainty.toFixed(4)}`} tone="text-ion" />}
-              {extendedSummary.ellipseAngle && <StatCell k="inclinación φ media ± incertidumbre" v={`${extendedSummary.ellipseAngle.mean.toFixed(2)}° ± ${extendedSummary.ellipseAngle.uncertainty.toFixed(2)}°`} tone="text-ion" />}
+              {extendedSummary.semiMajor && <StatCell k="semieje a medio" v={`${extendedSummary.semiMajor.mean.toFixed(4)} ± ${extendedSummary.semiMajor.uncertainty.toFixed(4)} A`} tone="text-ion" />}
+              {extendedSummary.semiMinor && <StatCell k="semieje b medio" v={`${extendedSummary.semiMinor.mean.toFixed(4)} ± ${extendedSummary.semiMinor.uncertainty.toFixed(4)} A`} tone="text-ion" />}
+              {extendedSummary.ellipseRatio && <StatCell k="cociente a/b medio" v={`${extendedSummary.ellipseRatio.mean.toFixed(4)} ± ${extendedSummary.ellipseRatio.uncertainty.toFixed(4)}`} tone="text-ion" />}
+              {extendedSummary.ellipseAngle && <StatCell k="inclinación φ media" v={`${extendedSummary.ellipseAngle.mean.toFixed(2)}° ± ${extendedSummary.ellipseAngle.uncertainty.toFixed(2)}°`} tone="text-ion" />}
             </StatSection>
             {extendedPasses.map((pass, index) => {
               const st = pass.statistics;
@@ -1356,7 +1365,7 @@ export default function FlipperLab({
               {derived.st.samplesPerDeg !== null && <StatCell k="muestras / grado medidas" v={derived.st.samplesPerDeg.toFixed(1)} tone="text-ion" />}
               <StatCell k="recorrido confirmado :j" v={`${derived.st.angleSpanDeg.toFixed(2)}°`} tone={derived.st.angleSpanDeg >= 358 ? "text-mint" : "text-alert"} />
               <StatCell k="factor de promedio" v={`×${flip.avgFactor}`} tone="text-ion" />
-              {flip.deviceInfo && <StatCell k={`Flipper ${flip.deviceInfo.version} · OOR / OVF`} v={`${flip.deviceInfo.outOfRange} / ${flip.deviceInfo.overflow}`} tone={flip.deviceInfo.overflow ? "text-alert" : "text-mint"} />}
+              {flip.deviceInfo && <StatCell k={`Flipper ${flip.deviceInfo.version} · OOR / OVF`} v={`${flip.deviceInfo.outOfRange} / ${flip.deviceInfo.overflow}${flip.deviceInfo.overflowDelta === null ? "" : ` · captura +${flip.deviceInfo.overflowDelta}`}`} tone={flip.deviceInfo.overflowDelta ? "text-alert" : "text-mint"} />}
             </StatSection>
             <StatSection title="Estadística básica" subtitle="Nivel, dispersión y extremos de la corriente">
               <StatCell k="media ± σ" v={`${derived.st.mean.toFixed(5)} ± ${derived.st.sd.toFixed(5)} A`} />

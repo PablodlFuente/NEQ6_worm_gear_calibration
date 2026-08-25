@@ -63,6 +63,7 @@ export function useFlipper({ cpr1 }: Props) {
     timerHz: number;
     outOfRange: number;
     overflow: number;
+    overflowDelta: number | null;
     total: number;
   } | null>(null);
   const [sessions, setSessions] = useState<Session[]>([]);
@@ -85,6 +86,7 @@ export function useFlipper({ cpr1 }: Props) {
   const pendingLineRef = useRef<((line: string) => void) | null>(null);
   const commandQueueRef = useRef<Promise<unknown>>(Promise.resolve());
   const captureGenerationRef = useRef(0);
+  const overflowBaselineRef = useRef<number | null>(null);
   const capturingRef = useRef(false);
   const sampleClockOffsetRef = useRef<number | null>(null);
   const syncRef = useRef(sync);
@@ -261,6 +263,10 @@ export function useFlipper({ cpr1 }: Props) {
     const generation = ++captureGenerationRef.current;
     sampleClockOffsetRef.current = null;
     setRate(requestedRate);
+    /* INFO.ovf es acumulado desde el arranque del firmware. Guardamos la
+     * lectura anterior para distinguir pérdidas históricas de las producidas
+     * en esta captura concreta. */
+    overflowBaselineRef.current = deviceInfo?.overflow ?? null;
     setDeviceInfo(null);
     setNotice(null);
     const r1 = await sendCmd(`RATE ${requestedRate}`);
@@ -298,6 +304,9 @@ export function useFlipper({ cpr1 }: Props) {
           timerHz: Number(match[3]),
           outOfRange: Number(match[4]),
           overflow: Number(match[5]),
+          overflowDelta: overflowBaselineRef.current === null
+            ? null
+            : Math.max(0, Number(match[5]) - overflowBaselineRef.current),
           total: Number(match[6]),
         });
       }

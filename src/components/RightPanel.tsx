@@ -1,4 +1,3 @@
-import { useState } from "react";
 import SidePanel, { type AutoState } from "./SidePanel";
 import DrivePanel, { type MoveInputs, type MoveState } from "./DrivePanel";
 import JogPad from "./JogPad";
@@ -11,10 +10,13 @@ import { IconCrosshair, IconSettings, IconTelescope, IconZap } from "./icons";
 import FlipperSerialConsole from "./FlipperSerialConsole";
 
 export type Tab = "mov" | "montura" | "ajustes" | "test";
+export type SerialTarget = "mount" | "flipper";
 
 interface Props {
   tab: Tab;
   onTab: (t: Tab) => void;
+  serialTarget: SerialTarget;
+  onSerialTarget: (target: SerialTarget) => void;
   /* conexión / ajustes */
   supported: boolean;
   status: SerialStatus;
@@ -62,7 +64,6 @@ const TABS: { id: Tab; label: string; icon: (p: { className?: string }) => React
 export default function RightPanel(props: Props) {
   const { tab, onTab } = props;
   const open = props.status === "open";
-  const [serialTarget, setSerialTarget] = useState<"mount" | "flipper">("mount");
 
   return (
     <aside className="flex min-h-0 flex-col lg:overflow-hidden">
@@ -115,14 +116,17 @@ export default function RightPanel(props: Props) {
               {(["mount", "flipper"] as const).map((target) => (
                 <button
                   key={target}
-                  onClick={() => setSerialTarget(target)}
-                  className={`flex-1 px-2 py-2 font-display text-[9.5px] font-bold uppercase tracking-[0.14em] ${serialTarget === target ? "bg-ember/15 text-ember shadow-[inset_0_-2px_0_rgba(245,165,36,0.8)]" : "text-dim hover:text-fog"}`}
+                  onClick={() => props.onSerialTarget(target)}
+                  className={`flex-1 px-2 py-2 font-display text-[9.5px] font-bold uppercase tracking-[0.14em] ${props.serialTarget === target ? "bg-ember/15 text-ember shadow-[inset_0_-2px_0_rgba(245,165,36,0.8)]" : "text-dim hover:text-fog"}`}
                 >
                   {target === "mount" ? "Serial montura" : "Serial Flipper"}
                 </button>
               ))}
             </div>
-            {serialTarget === "mount" ? (
+            {/* Ambos paneles permanecen montados. Alternar un subárbol que
+             * contiene hooks y listas de comandos durante una conexión podía
+             * dejar la aplicación en blanco con el runtime de React/HMR. */}
+            <div className={props.serialTarget === "mount" ? "block" : "hidden"}>
               <SidePanel
                 mode="montura"
                 flip={props.flip}
@@ -142,7 +146,10 @@ export default function RightPanel(props: Props) {
                 onRunDiag={props.onRunDiag}
                 onCancelDiag={props.onCancelDiag}
               />
-            ) : <FlipperSerialConsole flip={props.flip} />}
+            </div>
+            <div className={props.serialTarget === "flipper" ? "block" : "hidden"}>
+              <FlipperSerialConsole flip={props.flip} />
+            </div>
           </div>
         )}
 
