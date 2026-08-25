@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import type { FlipperApi } from "../hooks/useFlipper";
+import { IconSend } from "./icons";
 
 type View = "monitor" | "commands";
 
@@ -41,26 +42,28 @@ export default function FlipperSerialConsole({ flip, view = "commands" }: { flip
   );
 
   return (
-    <section className="flex min-h-[260px] flex-col overflow-hidden rounded border border-line bg-panel">
-      <header className="flex items-center gap-2 border-b border-line bg-[#0c1930] px-3 py-2">
+    <section className="rise flex min-h-[420px] flex-col overflow-hidden rounded-md border border-line bg-panel p-3 shadow-[inset_0_1px_0_rgba(255,255,255,0.04)]">
+      <header className="flex items-center gap-2">
         <span className={`led ${flip.connected ? "led-mint led-breathe" : "led-off"}`} />
-        <h2 className="font-display text-[10px] font-bold uppercase tracking-[0.16em] text-fog">Comandos del Flipper</h2>
+        <h2 className="font-display text-[11px] font-bold uppercase tracking-[0.24em] text-dim">Comandos del Flipper</h2>
         <span className="ml-auto font-mono text-[9px] text-dim">{flip.transport?.toUpperCase() ?? "DESCONECTADO"}</span>
       </header>
-      <div className="grid grid-cols-2 gap-1.5 p-2">
+      <p className="mt-2 font-mono text-[10px] leading-relaxed text-dim">Canal de control ASCII del registrador. Durante una captura, usa la pestaña Test ejes.</p>
+      <div className="mt-3 grid grid-cols-2 gap-1.5">
         {["INFO", "SYNC", "START", "STOP"].map((preset) => (
           <button
             key={preset}
             disabled={!flip.connected || flip.capturing && preset !== "STOP"}
             onClick={() => void flip.sendConsoleCommand(preset)}
-            className="rounded border border-line bg-[#0c1930] px-2 py-2 font-mono text-[10px] text-fog hover:border-ion/60 hover:text-ion disabled:opacity-35"
+            className="rounded border border-line bg-[#0c1930] px-2 py-[7px] font-mono text-[10px] text-fog transition-colors hover:border-ion/60 hover:bg-[#122240] hover:text-ion disabled:opacity-35"
           >
             {preset}
           </button>
         ))}
       </div>
-      <p className="border-t border-line px-2 py-1.5 font-mono text-[9px] text-dim">RATE &lt;Hz&gt; admite 10–1000. Durante un test, usa la pestaña Test ejes.</p>
-      <div className="flex gap-1.5 border-t border-line bg-[#091426] p-2">
+      <div className="mt-auto border-t border-line pt-2.5">
+      <p className="mb-1.5 font-mono text-[9.5px] text-dim">RATE &lt;Hz&gt; admite 10–1000.</p>
+      <div className="flex gap-1.5">
         <input
           value={command}
           onChange={(event) => setCommand(event.target.value)}
@@ -69,7 +72,8 @@ export default function FlipperSerialConsole({ flip, view = "commands" }: { flip
           placeholder={flip.capturing ? "Captura activa…" : "INFO, SYNC, RATE 500…"}
           className="min-w-0 flex-1 rounded border border-line bg-[#0c1930] px-2 py-1.5 font-mono text-[10.5px] text-fog focus:border-ion/60 focus:outline-none disabled:opacity-40"
         />
-        <button onClick={() => void send()} disabled={!flip.connected || flip.capturing || !command.trim()} className="rounded bg-ion px-3 font-display text-[9.5px] font-bold text-[#04121c] disabled:opacity-35">ENVIAR</button>
+        <button onClick={() => void send()} disabled={!flip.connected || flip.capturing || !command.trim()} className="flex items-center gap-1 rounded bg-ion px-3 font-display text-[9.5px] font-bold text-[#04121c] disabled:opacity-35"><IconSend className="h-3 w-3" /> ENVIAR</button>
+      </div>
       </div>
     </section>
   );

@@ -53,6 +53,13 @@ export const IconDownload = (p: P) => (
   </svg>
 );
 
+export const IconZoom = (p: P) => (
+  <svg {...base(p)}>
+    <circle cx="10.5" cy="10.5" r="6.5" />
+    <path d="m15.5 15.5 5 5M8 10.5h5M10.5 8v5" />
+  </svg>
+);
+
 export const IconSend = (p: P) => (
   <svg {...base(p)}>
     <path d="M22 2 11 13" />

@@ -161,6 +161,7 @@ export default function App() {
   const [cmd, setCmd] = useState("");
   const [decoded, setDecoded] = useState<DecodedState | null>(null);
   const [profile, setProfile] = useState<MountProfile>({});
+  const [axisPosition, setAxisPosition] = useState<{ ar?: number; dec?: number }>({});
   const [auto, setAuto] = useState<AutoState>({
     running: false,
     step: 0,
@@ -265,6 +266,9 @@ export default function App() {
     if (d) setDecoded({ cmd: lastCmdTextRef.current, line: text, d });
 
     const key = lastCmdKeyRef.current;
+    if (d?.kind === "value" && key?.[0] === "j" && d.logical !== undefined) {
+      setAxisPosition((current) => key[1] === "2" ? { ...current, dec: d.logical } : { ...current, ar: d.logical });
+    }
     if (d && (d.kind === "value" || d.kind === "status" || d.kind === "version") && key) {
       const letter = key[0];
       const ch = key[1];
@@ -1637,20 +1641,9 @@ export default function App() {
 
       {/* barra de estado */}
       <footer className="flex h-8 shrink-0 items-center gap-4 border-t border-line bg-[#0a1424] px-4 font-mono text-[10.5px] text-dim">
-        <span className="flex items-center gap-1.5">
-          <span className={`led ${supported ? "led-mint" : "led-alert"}`} />
-          WEB SERIAL {supported ? "OK" : "NO"}
-        </span>
-        <span className="hidden sm:inline">{secure ? "contexto seguro" : "contexto inseguro"}</span>
-        <span className="hidden items-center gap-1.5 md:flex">
-          <IconActivity className="h-3 w-3 text-dim" />
-          {status === "open" ? "enlace activo" : "enlace inactivo"}
-        </span>
         <span className="tabular-nums text-ion/80">UT {utc}</span>
-        <span className="ml-auto tabular-nums">
-          sesión {fmtDuration(elapsed)} · RX {fmtBytes(counters.rx)} · TX {fmtBytes(counters.tx)}
-        </span>
-        <span className="hidden text-[#42567a] md:inline">9600 · 8N1 · SkyWatcher MC</span>
+        <span className="hidden tabular-nums sm:inline">AR {axisPosition.ar !== undefined && profile.cpr1 ? `${((axisPosition.ar * 360) / profile.cpr1).toFixed(3)}°` : "—"} · DEC {axisPosition.dec !== undefined && profile.cpr2 ? `${((axisPosition.dec * 360) / profile.cpr2).toFixed(3)}°` : "—"}</span>
+        <a className="ml-auto text-dim transition-colors hover:text-ion" href="https://github.com/PablodlFuente/" target="_blank" rel="noreferrer">Pablo de la Fuente · GitHub</a>
       </footer>
       <HelpModal open={helpOpen} onClose={() => setHelpOpen(false)} />
     </div>

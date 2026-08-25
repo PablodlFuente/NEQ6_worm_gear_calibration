@@ -237,25 +237,25 @@ export default function SidePanel({
               )}
               {profile.cpr1 !== undefined && (
                 <div className="flex items-baseline justify-between gap-2">
-                  <span className="text-dim">CPR AR</span>
+                  <span className="cursor-help text-dim" title="CPR: Counts Per Revolution; pasos del contador por una vuelta completa del eje AR.">CPR AR</span>
                   <span className="tabular-nums text-mint">{profile.cpr1.toLocaleString("es-ES")}</span>
                 </div>
               )}
               {profile.cpr2 !== undefined && (
                 <div className="flex items-baseline justify-between gap-2">
-                  <span className="text-dim">CPR DEC</span>
+                  <span className="cursor-help text-dim" title="CPR: Counts Per Revolution; pasos del contador por una vuelta completa del eje DEC.">CPR DEC</span>
                   <span className="tabular-nums text-mint">{profile.cpr2.toLocaleString("es-ES")}</span>
                 </div>
               )}
               {profile.timer !== undefined && (
                 <div className="flex items-baseline justify-between gap-2">
-                  <span className="text-dim">TMR</span>
+                  <span className="cursor-help text-dim" title="TMR: frecuencia base del temporizador del controlador de motores, en Hz.">TMR</span>
                   <span className="tabular-nums text-ion">{profile.timer.toLocaleString("es-ES")}</span>
                 </div>
               )}
               {profile.ratio1 !== undefined && (
                 <div className="flex items-baseline justify-between gap-2">
-                  <span className="text-dim">ratio HS</span>
+                  <span className="cursor-help text-dim" title="HS: High Speed; multiplicador interno que usa la montura para los GOTO rápidos.">ratio HS</span>
                   <span className="tabular-nums text-ion">×{profile.ratio1}</span>
                 </div>
               )}
@@ -405,52 +405,19 @@ export default function SidePanel({
         </section>
       )}
 
-      {/* ── GUÍA DEL PROTOCOLO (montura) ───────────────────── */}
+      {/* ── REFERENCIA DEL PROTOCOLO (montura) ─────────────── */}
       {!ajustes && (
         <section
           className="rise rounded-md border border-line bg-panel p-3 shadow-[inset_0_1px_0_rgba(255,255,255,0.04)]"
           style={{ animationDelay: "180ms" }}
         >
           <Head>
-            <IconBook className="h-3.5 w-3.5" /> Guía del protocolo
+            <IconBook className="h-3.5 w-3.5" /> Protocolo completo
           </Head>
-          <ul className="mt-2.5 flex flex-col gap-2.5 font-mono text-[11px] leading-relaxed text-[#7d92b8]">
-            <li>
-              Trama: <span className="text-[#ffc46b]">:CMD canal [datos] CR</span> · respuesta{" "}
-              <span className="text-mint">=</span> o error <span className="text-alert">!</span> · sin checksum.
-            </li>
-            <li>
-              Datos hex ASCII con el <span className="text-fog">byte bajo primero</span>: 0x123456 →{" "}
-              <span className="text-fog">563412</span>.
-            </li>
-            <li>
-              Posiciones con offset <span className="text-fog">0x800000</span>: lógico 0x001000 →{" "}
-              <span className="text-[#ffc46b]">:S1001080</span>.
-            </li>
-            <li>
-              Errores: 0 desconocido · 1 longitud · 2 motor no detenido · 3 carácter inválido · 4 no
-              inicializado · 5 driver en sleep · 7 PEC activo · 8 sin datos PEC.
-            </li>
-            <li>
-              <span className="text-ion">Verificado en firmware 2.04</span>: «:G» usa{" "}
-              <span className="text-fog">1 byte</span> y «:f» responde <span className="text-fog">3 dígitos</span>,
-              un nibble por byte («100»).
-            </li>
-            <li>
-              <span className="text-ion">«!4» en «:J»</span> = encoder sin referencia: se marca home con{" "}
-              <span className="text-[#ffc46b]">:F1</span>/<span className="text-[#ffc46b]">:F2</span>. El panel de
-              giro lo hace solo y reintenta una vez.
-            </li>
-            <li>
-              Velocidad: <span className="text-fog">T1 = TMR·360 / (°/s · CPR)</span>. Se envía con{" "}
-              <span className="text-[#ffc46b]">:I</span> (tracking) y <span className="text-[#ffc46b]">:T</span>{" "}
-              (GOTO, ×ratio alta velocidad); si «:T» responde !3 se reintenta con T1.
-            </li>
-            <li className="rounded border border-alert/30 bg-alert/5 p-2 text-[#d98f8f]">
-              Zona roja: «:L» solo en emergencia · «:Q55AA» mete el controlador en bootloader · EEPROM (C/N/n),
-              registros (A/R/r) y «:W» pueden dejar la placa inservible.
-            </li>
-          </ul>
+          <p className="mt-2 font-mono text-[10px] leading-relaxed text-dim">Consulta la referencia completa de comandos Sky-Watcher antes de enviar órdenes manuales.</p>
+          <a href="/docs/SkyWatcher_EQ6_Protocolo_Completo_Referenciado_FINAL.pdf" target="_blank" rel="noreferrer" className="mt-2 flex items-center justify-center gap-2 rounded border border-ion/50 bg-ion/10 px-3 py-2 font-display text-[10px] font-bold tracking-[0.16em] text-ion transition-colors hover:bg-ion/20">
+            <IconBook className="h-3.5 w-3.5" /> ABRIR PDF DEL PROTOCOLO
+          </a>
         </section>
       )}
     </aside>

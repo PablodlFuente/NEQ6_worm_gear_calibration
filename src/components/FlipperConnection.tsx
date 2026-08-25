@@ -153,11 +153,6 @@ export default function FlipperConnection({ flip }: { flip: FlipperApi }) {
       {/* firmware descargable */}
       <div className="mt-3 border-t border-line pt-2.5">
         <p className="text-[9.5px] uppercase tracking-[0.14em] text-dim">Firmware (SDK oficial / Momentum)</p>
-        <p className="mt-1.5 font-mono text-[9.5px] leading-relaxed text-dim">
-          FAP completa: ADC crudo en PA7 (pin 2) · BLE + USB CDC1 · timestamp DWT
-          extendido · ring buffer 2048 · tasa 10–1000 Hz. Descomprime y compila con{" "}
-          <span className="text-fog">ufbt</span>.
-        </p>
         <button
           onClick={downloadZip}
           className="mt-2 flex w-full items-center justify-center gap-2 rounded bg-ion px-3 py-2 font-display text-[10.5px] font-bold tracking-[0.16em] text-[#04121c] transition-all hover:brightness-110 hover:shadow-[0_0_18px_rgba(76,201,240,0.35)] active:translate-y-px"

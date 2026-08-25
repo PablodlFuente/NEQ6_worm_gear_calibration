@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import type { FlipperApi } from "../hooks/useFlipper";
 import { circularStats, fitPolarEllipse } from "../lib/flipper";
-import { IconAlert, IconDownload, IconTrash } from "./icons";
+import { IconAlert, IconDownload, IconTrash, IconZoom } from "./icons";
 
 const AVGS = [1, 2, 5, 10, 20, 50, 100];
 const REV_COLORS = [
@@ -236,6 +236,7 @@ export default function FlipperLab({
   const [hiddenExtendedSeries, setHiddenExtendedSeries] = useState<Set<string>>(() => new Set());
   const [showExtendedMean, setShowExtendedMean] = useState(true);
   const [movePrompt, setMovePrompt] = useState<{ angle: number; x: number; y: number } | null>(null);
+  const [exportMenu, setExportMenu] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
 
   const { derived, stats } = flip;
@@ -1064,12 +1065,13 @@ export default function FlipperLab({
         ))}
         <div className="ml-auto flex items-center gap-2">
           <label className="hidden items-center gap-1.5 font-mono text-[10px] text-dim sm:flex">
-            bloque ×
+            promedio ×
             <input
               type="number"
               min={1}
               max={100000}
               step={1}
+              list="average-presets"
               aria-label="Muestras por bloque de promedio"
               value={flip.avgFactor}
               onChange={(event) => {
@@ -1078,16 +1080,7 @@ export default function FlipperLab({
               }}
               className={`${selCls} w-20 tabular-nums`}
             />
-            <select
-              aria-label="Valores habituales de bloque"
-              value=""
-              onChange={(event) => event.target.value && flip.setAvgFactor(Number(event.target.value))}
-              className={`${selCls} w-8 px-1`}
-              title="Valores habituales"
-            >
-              <option value="">▾</option>
-              {AVGS.map((value) => <option key={value} value={value}>{value}</option>)}
-            </select>
+            <datalist id="average-presets">{AVGS.map((value) => <option key={value} value={value} />)}</datalist>
           </label>
           <label className="hidden cursor-pointer items-center gap-1.5 font-mono text-[10px] text-dim md:flex">
             <input
@@ -1106,7 +1099,7 @@ export default function FlipperLab({
                   regionZoom ? "border-ion/60 bg-ion/15 text-ion" : "border-line text-dim hover:text-fog"
                 }`}
               >
-                🔍 ZOOM RECT
+                <IconZoom className="h-3 w-3" /> AMPLIAR ÁREA
               </button>
               <button onClick={resetView} className="rounded border border-line px-2 py-1 font-display text-[9px] font-bold tracking-wider text-dim hover:border-ember/50 hover:text-ember">
                 RESTAURAR
@@ -1399,13 +1392,15 @@ export default function FlipperLab({
             Datos
           </p>
           <div className="grid grid-cols-1 gap-1.5 sm:grid-cols-3">
-            <button
-              onClick={() => void exportAll()}
-              disabled={!derived}
-              className="flex items-center justify-center gap-1.5 rounded border border-line px-2 py-1.5 font-display text-[9.5px] font-bold tracking-[0.1em] text-fog transition-colors hover:border-ember/50 hover:text-ember"
-            >
-              <IconDownload className="h-3 w-3" /> EXPORTAR TODO (.ZIP)
-            </button>
+            <div className="relative">
+              <button onClick={() => setExportMenu((open) => !open)} disabled={!derived} className="flex w-full items-center justify-center gap-1.5 rounded border border-line px-2 py-1.5 font-display text-[9.5px] font-bold tracking-[0.1em] text-fog transition-colors hover:border-ember/50 hover:text-ember">
+                <IconDownload className="h-3 w-3" /> EXPORTAR (.ZIP)
+              </button>
+              {exportMenu && <div className="absolute bottom-full left-0 z-20 mb-1 w-full overflow-hidden rounded border border-line bg-[#0c1930] shadow-xl">
+                <button onClick={() => { setExportMenu(false); void exportAll(); }} className="w-full px-2 py-2 text-left font-mono text-[9px] text-fog hover:bg-ion/10 hover:text-ion">Sesión actual</button>
+                {flip.sessions.length > 1 && <button onClick={() => { setExportMenu(false); void flip.exportSavedSessions(); }} className="w-full border-t border-line px-2 py-2 text-left font-mono text-[9px] text-fog hover:bg-ion/10 hover:text-ion">Todas las sesiones ({flip.sessions.length})</button>}
+              </div>}
+            </div>
             <button
               onClick={() => fileRef.current?.click()}
               className="flex items-center justify-center gap-1.5 rounded border border-line px-2 py-1.5 font-display text-[9.5px] font-bold tracking-[0.1em] text-fog transition-colors hover:border-ion/50 hover:text-ion"

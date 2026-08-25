@@ -698,6 +698,20 @@ export function useFlipper({ cpr1 }: Props) {
     setNotice("Exportación completa preparada: gráficas, CSV, FFT y resumen.");
   };
 
+  const exportSavedSessions = async () => {
+    if (!sessions.length) return;
+    const files = sessions.flatMap((session) => {
+      const safeName = session.name.replace(/[^a-z0-9_-]+/gi, "_");
+      const samples = session.adc.map((adc, index) => ({ tb: session.tb[index], ts: session.ts[index], adc }));
+      return [
+        { name: `sesiones/${safeName}/adc-crudo.csv`, data: buildRawCsv(samples, session.rateHz, session.metadata, session.calibration) },
+        { name: `sesiones/${safeName}/metadatos.json`, data: JSON.stringify({ name: session.name, createdAt: session.createdAt, axis: session.metadata?.axis, direction: session.metadata?.direction }, null, 2) },
+      ];
+    });
+    downloadBlob(`neq6-sesiones-${stamp()}.zip`, buildZip(files));
+    setNotice(`${sessions.length} sesiones exportadas.`);
+  };
+
   const importCsv = async (file: File) => {
     const text = await file.text();
     const parsed = parseCsv(text);
@@ -818,6 +832,7 @@ export function useFlipper({ cpr1 }: Props) {
     exportRaw,
     exportProc,
     exportBundle,
+    exportSavedSessions,
     importCsv,
     saveSession,
     loadSession,

@@ -1,7 +1,7 @@
 import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
 import tailwindcss from "@tailwindcss/vite";
-import { appendFile, mkdir } from "node:fs/promises";
+import { appendFile, mkdir, readFile } from "node:fs/promises";
 import { resolve } from "node:path";
 
 function localAuditLog() {
@@ -42,6 +42,12 @@ function localAuditLog() {
           }
           response.end();
         });
+      });
+      server.middlewares.use("/docs/SkyWatcher_EQ6_Protocolo_Completo_Referenciado_FINAL.pdf", async (_request, response) => {
+        try {
+          response.setHeader("Content-Type", "application/pdf");
+          response.end(await readFile(resolve(process.cwd(), "docs", "SkyWatcher_EQ6_Protocolo_Completo_Referenciado_FINAL.pdf")));
+        } catch { response.statusCode = 404; response.end(); }
       });
     },
   };
