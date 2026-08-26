@@ -21,8 +21,8 @@ const RESPONSES_KEY = "neq6-ai-analysis-responses-v1";
 const EVENT = "neq6-ai-analysis-settings";
 
 export const DEFAULT_AI_PROVIDERS: AiProvider[] = [
-  { id: "qwen", name: "Qwen", url: "https://chat.qwen.ai/" },
   { id: "chatgpt", name: "ChatGPT", url: "https://chatgpt.com/" },
+  { id: "qwen", name: "Qwen", url: "https://chat.qwen.ai/" },
   { id: "gemini", name: "Gemini", url: "https://gemini.google.com/app" },
 ];
 
@@ -35,6 +35,7 @@ export function loadAiSettings(): AiAnalysisSettings {
     const providers = Array.isArray(parsed.providers)
       ? parsed.providers.filter((provider): provider is AiProvider => Boolean(provider?.id && provider?.name && provider?.url))
       : DEFAULT_AI_PROVIDERS;
+    providers.sort((a, b) => Number(b.id === "chatgpt") - Number(a.id === "chatgpt"));
     return { enabled: Boolean(parsed.enabled), providers };
   } catch {
     return defaults();
@@ -92,4 +93,3 @@ export function saveAiResponse(providerId: string, fingerprint: string, text: st
   localStorage.setItem(RESPONSES_KEY, JSON.stringify(all));
   return saved;
 }
-

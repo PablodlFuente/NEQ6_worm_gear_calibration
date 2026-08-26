@@ -26,6 +26,7 @@ export default function AiSettingsPanel() {
       </div>
       {settings.enabled && (
         <div className="mt-3 space-y-2">
+          <a href="/neq6-ai-browser-bridge.zip" download className="flex w-full items-center justify-center rounded border border-mint/50 bg-mint/10 px-3 py-2 font-display text-[9px] font-bold tracking-wider text-mint hover:bg-mint/20">DESCARGAR PUENTE AUTOMÁTICO</a>
           {settings.providers.map((provider) => (
             <div key={provider.id} className="flex items-center gap-2 rounded border border-line bg-[#0c1930] px-2 py-1.5 font-mono text-[10px]">
               <span className="min-w-20 text-fog">{provider.name}</span>
@@ -43,4 +44,3 @@ export default function AiSettingsPanel() {
     </section>
   );
 }
-

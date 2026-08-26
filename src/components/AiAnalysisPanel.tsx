@@ -9,6 +9,8 @@ export default function AiAnalysisPanel({ prompt }: { prompt: string }) {
   const [response, setResponse] = useState("");
   const [savedAt, setSavedAt] = useState<number | null>(null);
   const [notice, setNotice] = useState("");
+  const [bridgeReady, setBridgeReady] = useState(false);
+  const [runningRequest, setRunningRequest] = useState<string | null>(null);
 
   useEffect(() => {
     if (!provider && settings.providers[0]) setProviderId(settings.providers[0].id);
@@ -19,6 +21,31 @@ export default function AiAnalysisPanel({ prompt }: { prompt: string }) {
     setResponse(saved?.text ?? "");
     setSavedAt(saved?.updatedAt ?? null);
   }, [provider?.id, fingerprint]);
+  useEffect(() => {
+    const receive = (event: MessageEvent) => {
+      if (event.source !== window || event.origin !== location.origin || event.data?.source !== "neq6-ai-bridge") return;
+      if (event.data.type === "NEQ6_AI_BRIDGE_READY") {
+        setBridgeReady(true);
+        return;
+      }
+      if (event.data.type !== "NEQ6_AI_RESULT" || event.data.requestId !== runningRequest) return;
+      setRunningRequest(null);
+      if (!event.data.result?.ok) {
+        setNotice(event.data.result?.error ?? "El chat no devolvió respuesta.");
+        return;
+      }
+      const text = String(event.data.result.response ?? "").trim();
+      setResponse(text);
+      if (provider && text) {
+        const saved = saveAiResponse(provider.id, fingerprint, text);
+        setSavedAt(saved.updatedAt);
+      }
+      setNotice("Análisis recibido y guardado.");
+    };
+    window.addEventListener("message", receive);
+    window.postMessage({ source: "neq6-ai-app", type: "NEQ6_AI_BRIDGE_PING" }, location.origin);
+    return () => window.removeEventListener("message", receive);
+  }, [fingerprint, provider?.id, runningRequest]);
 
   const providerUrl = (target: NonNullable<typeof provider>) => {
     const url = new URL(target.url);
@@ -41,6 +68,19 @@ export default function AiAnalysisPanel({ prompt }: { prompt: string }) {
     await navigator.clipboard.writeText(prompt);
     settings.providers.forEach((item) => window.open(providerUrl(item), "_blank", "noopener,noreferrer"));
     setNotice(`Informe copiado · abiertos ${settings.providers.length} chats.`);
+  };
+  const runAutomatic = () => {
+    if (!provider || !["chatgpt", "qwen", "gemini"].includes(provider.id)) return;
+    const requestId = crypto.randomUUID();
+    setRunningRequest(requestId);
+    setNotice(`Esperando respuesta de ${provider.name}…`);
+    window.postMessage({
+      source: "neq6-ai-app",
+      type: "NEQ6_AI_RUN",
+      requestId,
+      providerId: provider.id,
+      prompt,
+    }, location.origin);
   };
   const paste = async () => {
     const text = await navigator.clipboard.readText();
@@ -66,9 +106,15 @@ export default function AiAnalysisPanel({ prompt }: { prompt: string }) {
               {settings.providers.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}
             </select>
           </label>
+          {bridgeReady && ["chatgpt", "qwen", "gemini"].includes(provider.id) && (
+            <button onClick={runAutomatic} disabled={Boolean(runningRequest)} className="rounded border border-mint/50 bg-mint/10 px-3 py-2 font-display text-[9px] font-bold tracking-wider text-mint hover:bg-mint/20 disabled:opacity-40">
+              {runningRequest ? "ANALIZANDO…" : "ANALIZAR AUTOMÁTICAMENTE"}
+            </button>
+          )}
           <button onClick={() => void copyAndOpen()} className="rounded border border-ion/50 bg-ion/10 px-3 py-2 font-display text-[9px] font-bold tracking-wider text-ion hover:bg-ion/20">COPIAR Y ABRIR</button>
           <button onClick={() => void openAll()} className="rounded border border-line px-3 py-2 font-display text-[9px] font-bold tracking-wider text-fog hover:border-ember/50 hover:text-ember">ABRIR TODAS</button>
         </div>
+        {!bridgeReady && <p className="mt-2 font-mono text-[9px] text-dim">Automatización no detectada · instala el puente desde Ajustes.</p>}
         <details className="mt-2 rounded border border-line/70">
           <summary className="cursor-pointer px-2 py-1.5 font-mono text-[9px] text-dim">Informe enviado · {fingerprint}</summary>
           <pre className="max-h-60 overflow-auto whitespace-pre-wrap border-t border-line p-2 font-mono text-[9px] text-fog">{prompt}</pre>
