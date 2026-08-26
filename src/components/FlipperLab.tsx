@@ -354,26 +354,37 @@ export default function FlipperLab({
     if (activeExtendedSeries.length < 2) return null;
     const bySeries = activeExtendedSeries.map((series) => {
       const sums = new Float64Array(360);
+      const angleErrSquares = new Float64Array(360);
       const counts = new Uint32Array(360);
       series.angles.forEach((angle, index) => {
         const phase = ((angle % 360) + 360) % 360;
         const bin = Math.min(359, Math.floor(phase));
         sums[bin] += series.currents[index];
+        angleErrSquares[bin] += series.angleErr[index] ** 2;
         counts[bin]++;
       });
-      return Array.from(sums, (sum, index) => counts[index] ? sum / counts[index] : null);
+      return {
+        currentA: Array.from(sums, (sum, index) => counts[index] ? sum / counts[index] : null),
+        angleErr: Array.from(angleErrSquares, (sum, index) => counts[index] ? Math.sqrt(sum) / counts[index] : 0),
+      };
     });
     const currentA: (number | null)[] = [];
     const currentErr: number[] = [];
+    const angleErr: number[] = [];
     for (let bin = 0; bin < 360; bin++) {
-      const values = bySeries.map((series) => series[bin]).filter((value): value is number => value !== null);
-      if (!values.length) { currentA.push(null); currentErr.push(0); continue; }
+      const populated = bySeries.filter((series) => series.currentA[bin] !== null);
+      const values = populated.map((series) => series.currentA[bin] as number);
+      if (!values.length) { currentA.push(null); currentErr.push(0); angleErr.push(0); continue; }
       const average = values.reduce((sum, value) => sum + value, 0) / values.length;
       const variance = values.length > 1 ? values.reduce((sum, value) => sum + (value - average) ** 2, 0) / (values.length - 1) : 0;
       currentA.push(average);
       currentErr.push(Math.sqrt(variance / values.length));
+      // La coordenada representa un bin de 1°. Se conserva al menos su
+      // semiancho y se propaga además la incertidumbre angular de cada serie.
+      const propagated = Math.sqrt(populated.reduce((sum, series) => sum + series.angleErr[bin] ** 2, 0)) / populated.length;
+      angleErr.push(Math.max(0.5, propagated));
     }
-    return { currentA, currentErr };
+    return { currentA, currentErr, angleErr };
   }, [activeExtendedSeries]);
   const polarProfile = useMemo(() => {
     if (extendedDisplaySeries.length) {
@@ -1027,7 +1038,7 @@ export default function FlipperLab({
         const meanSeries = {
           angles: extendedMeanProfile.currentA.map((_, index) => index + 0.5),
           currents: extendedMeanProfile.currentA.map((value) => value ?? NaN),
-          angleErr: extendedMeanProfile.currentA.map(() => 0),
+          angleErr: extendedMeanProfile.angleErr,
           currentErr: extendedMeanProfile.currentErr,
         };
         const valid = meanSeries.currents.map(Number.isFinite);
@@ -1039,12 +1050,25 @@ export default function FlipperLab({
         };
         plotSeries(compact, "rgba(240,245,255,0.62)", 2.4, false);
         ctx.strokeStyle = "rgba(240,245,255,0.6)";
-        for (let i = 0; i < compact.currents.length; i += 10) {
+        ctx.lineWidth = 0.8;
+        const pixelsPerDegree = (w - L - Rg) / Math.max(1, maxAngle - minAngle);
+        const barStride = Math.max(1, Math.floor(12 / Math.max(0.1, pixelsPerDegree)));
+        for (let i = 0; i < compact.currents.length; i += barStride) {
           if (compact.angles[i] < minAngle || compact.angles[i] > maxAngle) continue;
           const x = X(compact.angles[i]);
+          const y = Y(compact.currents[i]);
           const y0 = Y(compact.currents[i] - compact.currentErr[i]);
           const y1 = Y(compact.currents[i] + compact.currentErr[i]);
-          ctx.beginPath(); ctx.moveTo(x, y0); ctx.lineTo(x, y1); ctx.moveTo(x - 2, y0); ctx.lineTo(x + 2, y0); ctx.moveTo(x - 2, y1); ctx.lineTo(x + 2, y1); ctx.stroke();
+          const x0 = X(Math.max(minAngle, compact.angles[i] - compact.angleErr[i]));
+          const x1 = X(Math.min(maxAngle, compact.angles[i] + compact.angleErr[i]));
+          ctx.beginPath();
+          ctx.moveTo(x, y0); ctx.lineTo(x, y1);
+          ctx.moveTo(x - 2, y0); ctx.lineTo(x + 2, y0);
+          ctx.moveTo(x - 2, y1); ctx.lineTo(x + 2, y1);
+          ctx.moveTo(x0, y); ctx.lineTo(x1, y);
+          ctx.moveTo(x0, y - 2); ctx.lineTo(x0, y + 2);
+          ctx.moveTo(x1, y - 2); ctx.lineTo(x1, y + 2);
+          ctx.stroke();
         }
       }
     } else if (flip.overlayRevs && data) {
