@@ -17,6 +17,7 @@ import {
   idb,
   mean,
   median,
+  movingWindowStats,
   parseCsv,
   resampleUniform,
   std,
@@ -512,12 +513,7 @@ export function useFlipper({ cpr1 }: Props) {
     }
 
     const m = Math.max(1, avgFactor);
-    const avgA: number[] = [];
-    for (let i = 0; i + m <= n; i += m) {
-      let s = 0;
-      for (let j = 0; j < m; j++) s += amps[i + j];
-      avgA.push(s / m);
-    }
+    const avgA = Array.from(movingWindowStats(amps, m)?.mean ?? []);
 
     const plot = perUnw
       ? averageAngleSeries(tsRef.current, tbRef.current, adcRef.current, amps, perUnw, m)
@@ -665,25 +661,19 @@ export function useFlipper({ cpr1 }: Props) {
   const extendedPassAveragesCsv = (pass: ExtendedPassResult): string | null => {
     const factor = Math.max(1, Math.floor(avgFactor));
     const length = Math.min(pass.samples.anglesDeg.length, pass.samples.currentA.length);
-    const groups = Math.floor(length / factor);
-    if (!groups) return null;
+    const angleStats = movingWindowStats(pass.samples.anglesDeg.slice(0, length), factor);
+    const currentStats = movingWindowStats(pass.samples.currentA.slice(0, length), factor);
+    if (!angleStats || !currentStats) return null;
     const lines = [
       `# pasada=${pass.label}`,
-      `# promedio_bloque=${factor}`,
-      "# std: desviación típica muestral dentro del bloque; sem: incertidumbre estándar de la media",
-      "angle_mean_deg,angle_std_deg,angle_sem_deg,amps_mean,amps_std,amps_sem,n_group",
+      `# media_movil=${factor}`,
+      "# std: desviación típica muestral en la ventana; sem: incertidumbre estándar con corrección de autocorrelación lag-1",
+      "angle_mean_deg,angle_std_deg,angle_sem_correlated_deg,amps_mean,amps_std,amps_sem_correlated,n_window",
     ];
-    for (let group = 0; group < groups; group++) {
-      const start = group * factor;
-      const angles = pass.samples.anglesDeg.slice(start, start + factor);
-      const currents = pass.samples.currentA.slice(start, start + factor);
-      const angleMean = mean(angles);
-      const currentMean = mean(currents);
-      const angleStd = factor > 1 ? std(angles) : 0;
-      const currentStd = factor > 1 ? std(currents) : 0;
+    for (let group = 0; group < angleStats.length; group++) {
       lines.push([
-        angleMean.toFixed(9), angleStd.toFixed(9), (angleStd / Math.sqrt(factor)).toFixed(9),
-        currentMean.toFixed(9), currentStd.toFixed(9), (currentStd / Math.sqrt(factor)).toFixed(9), factor,
+        angleStats.mean[group].toFixed(9), angleStats.std[group].toFixed(9), angleStats.sem[group].toFixed(9),
+        currentStats.mean[group].toFixed(9), currentStats.std[group].toFixed(9), currentStats.sem[group].toFixed(9), factor,
       ].join(","));
     }
     return `${lines.join("\n")}\n`;
@@ -719,7 +709,7 @@ export function useFlipper({ cpr1 }: Props) {
       `Eje: ${axis}`,
       `Sentido de la última captura: ${metadata.direction?.toUpperCase() ?? "sin movimiento"}`,
       `Calibración ADC: R=${calibrationRef.current.shuntOhm} Ω · K=${calibrationRef.current.k}`,
-      `Promedio seleccionado: bloques de ${Math.max(1, Math.floor(avgFactor))} muestra(s)`,
+      `Media móvil seleccionada: ventana de ${Math.max(1, Math.floor(avgFactor))} muestra(s)`,
       "",
     ];
     if (!isExtended && derived) {

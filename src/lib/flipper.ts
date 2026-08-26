@@ -576,18 +576,71 @@ export interface AveragedSeries {
   tb: Float64Array;
   adc: Float64Array;
   amps: Float64Array;
-  ampsStd: Float64Array; /* desviación típica dentro del bloque */
-  ampsErr: Float64Array; /* error estándar de la media */
+  ampsStd: Float64Array; /* desviación típica dentro de la ventana */
+  ampsErr: Float64Array; /* SEM corregido por autocorrelación lag-1 */
   angles: Float64Array; /* grados desenvueltos */
-  angleStd: Float64Array; /* desviación típica dentro del bloque */
-  angleErr: Float64Array; /* error estándar de la media */
+  angleStd: Float64Array; /* desviación típica dentro de la ventana */
+  angleErr: Float64Array; /* SEM corregido por autocorrelación lag-1 */
   revs: Int32Array;
   counts: Uint16Array;
 }
 
-/** Agrupa en orden temporal bloques completos de N muestras que tienen ángulo.
- * Con N=1 se conserva cada dato. Para N>1 se devuelve media y SEM en corriente
- * y ángulo; el último bloque incompleto se deja fuera hasta completarse. */
+export interface MovingWindowStats {
+  length: number;
+  mean: Float64Array;
+  std: Float64Array;
+  sem: Float64Array;
+  effectiveN: Float64Array;
+}
+
+/** Estadísticos de una ventana móvil de N muestras. La incertidumbre usa el
+ * tamaño efectivo N/(1+2(1-1/N)rho1), donde rho1 es la autocorrelación a un
+ * retardo; así las muestras consecutivas correlacionadas no se tratan como N
+ * observaciones independientes. El cálculo es deslizante O(n), no O(n·N). */
+export function movingWindowStats(values: ArrayLike<number>, factor: number): MovingWindowStats | null {
+  const m = Math.max(1, Math.floor(factor));
+  const n = values.length;
+  const windows = n - m + 1;
+  if (windows <= 0) return null;
+  const out: MovingWindowStats = {
+    length: windows,
+    mean: new Float64Array(windows),
+    std: new Float64Array(windows),
+    sem: new Float64Array(windows),
+    effectiveN: new Float64Array(windows),
+  };
+  let sum = 0, sum2 = 0, adjacent = 0;
+  for (let i = 0; i < m; i++) {
+    const value = values[i];
+    sum += value;
+    sum2 += value * value;
+    if (i) adjacent += values[i - 1] * value;
+  }
+  for (let start = 0; start < windows; start++) {
+    const avg = sum / m;
+    const populationVariance = m > 1 ? Math.max(0, sum2 / m - avg * avg) : 0;
+    const sampleVariance = m > 1 ? populationVariance * m / (m - 1) : 0;
+    const rho1 = m > 1 && populationVariance > 1e-18
+      ? Math.max(0, Math.min(0.999, (adjacent / (m - 1) - avg * avg) / populationVariance))
+      : 0;
+    const effectiveN = m / (1 + 2 * (1 - 1 / m) * rho1);
+    out.mean[start] = avg;
+    out.std[start] = Math.sqrt(sampleVariance);
+    out.effectiveN[start] = effectiveN;
+    out.sem[start] = out.std[start] / Math.sqrt(effectiveN);
+    if (start + m >= n) continue;
+    adjacent -= values[start] * values[start + 1];
+    adjacent += values[start + m - 1] * values[start + m];
+    const old = values[start], next = values[start + m];
+    sum += next - old;
+    sum2 += next * next - old * old;
+  }
+  return out;
+}
+
+/** Aplica una media móvil temporal de N muestras que tienen ángulo.
+ * Con N=1 se conserva cada dato; con N>1 cada nueva muestra completa una
+ * ventana y por tanto la curva conserva la resolución temporal. */
 export function averageAngleSeries(
   ts: ArrayLike<number>,
   tb: ArrayLike<number>,
@@ -597,11 +650,20 @@ export function averageAngleSeries(
   factor: number,
 ): AveragedSeries | null {
   const m = Math.max(1, Math.floor(factor));
-  let valid = 0;
   const size = Math.min(ts.length, tb.length, adc.length, amps.length, angles.length);
-  for (let i = 0; i < size; i++) if (Number.isFinite(angles[i])) valid++;
-  const groups = Math.floor(valid / m);
-  if (!groups) return null;
+  const validTs: number[] = [], validTb: number[] = [], validAdc: number[] = [], validAmps: number[] = [], validAngles: number[] = [];
+  for (let i = 0; i < size; i++) {
+    if (!Number.isFinite(angles[i])) continue;
+    validTs.push(ts[i]); validTb.push(tb[i]); validAdc.push(adc[i]);
+    validAmps.push(amps[i]); validAngles.push(angles[i]);
+  }
+  const tsStats = movingWindowStats(validTs, m);
+  const tbStats = movingWindowStats(validTb, m);
+  const adcStats = movingWindowStats(validAdc, m);
+  const ampsStats = movingWindowStats(validAmps, m);
+  const angleStats = movingWindowStats(validAngles, m);
+  if (!tsStats || !tbStats || !adcStats || !ampsStats || !angleStats) return null;
+  const groups = tsStats.length;
 
   const out: AveragedSeries = {
     length: groups,
@@ -619,45 +681,17 @@ export function averageAngleSeries(
     counts: new Uint16Array(groups),
   };
 
-  let group = 0;
-  let count = 0;
-  let sumTs = 0;
-  let sumTb = 0;
-  let sumAdc = 0;
-  let sumA = 0;
-  let sumA2 = 0;
-  let sumAngle = 0;
-  let sumAngle2 = 0;
-  for (let i = 0; i < size && group < groups; i++) {
-    const angle = angles[i];
-    if (!Number.isFinite(angle)) continue;
-    const current = amps[i];
-    sumTs += ts[i];
-    sumTb += tb[i];
-    sumAdc += adc[i];
-    sumA += current;
-    sumA2 += current * current;
-    sumAngle += angle;
-    sumAngle2 += angle * angle;
-    count++;
-    if (count !== m) continue;
-
-    const varianceA = m > 1 ? Math.max(0, (sumA2 - (sumA * sumA) / m) / (m - 1)) : 0;
-    const varianceAngle =
-      m > 1 ? Math.max(0, (sumAngle2 - (sumAngle * sumAngle) / m) / (m - 1)) : 0;
-    out.ts[group] = sumTs / m;
-    out.tb[group] = sumTb / m;
-    out.adc[group] = sumAdc / m;
-    out.amps[group] = sumA / m;
-    out.ampsStd[group] = Math.sqrt(varianceA);
-    out.ampsErr[group] = out.ampsStd[group] / Math.sqrt(m);
-    out.angles[group] = sumAngle / m;
-    out.angleStd[group] = Math.sqrt(varianceAngle);
-    out.angleErr[group] = out.angleStd[group] / Math.sqrt(m);
+  for (let group = 0; group < groups; group++) {
+    out.ts[group] = tsStats.mean[group];
+    out.tb[group] = tbStats.mean[group];
+    out.adc[group] = adcStats.mean[group];
+    out.amps[group] = ampsStats.mean[group];
+    out.ampsStd[group] = ampsStats.std[group];
+    out.ampsErr[group] = ampsStats.sem[group];
+    out.angles[group] = angleStats.mean[group];
+    out.angleStd[group] = angleStats.std[group];
+    out.angleErr[group] = angleStats.sem[group];
     out.counts[group] = m;
-    group++;
-    count = 0;
-    sumTs = sumTb = sumAdc = sumA = sumA2 = sumAngle = sumAngle2 = 0;
   }
 
   const firstAngle = out.angles[0];

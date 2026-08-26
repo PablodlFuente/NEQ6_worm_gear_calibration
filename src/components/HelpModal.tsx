@@ -16,7 +16,7 @@ const TERMS = [
   ["GOTO", "Movimiento del controlador hacia una posición objetivo."],
   ["FFT", "Transformada rápida de Fourier: separa las repeticiones periódicas de la corriente."],
   ["Hz", "Ciclos por segundo. En la FFT, 1 Hz significa una repetición cada segundo."],
-  ["SEM", "Error estándar de la media (σ/√N); barras X/Y cuando se promedian bloques."],
+  ["SEM", "Incertidumbre de la media. En media móvil se corrige con la autocorrelación a un retardo para no tratar muestras vecinas como independientes."],
   ["RMS", "Root Mean Square o valor eficaz. I RMS usa una ventana temporal móvil de medio segundo."],
   ["σ", "Desviación típica: dispersión de las medidas respecto a su media."],
   ["R̄ circular", "Concentración de la carga en una dirección entre 0 y 1; se calcula ponderando cada ángulo por la corriente."],

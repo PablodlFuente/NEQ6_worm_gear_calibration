@@ -180,20 +180,20 @@ test("la estadística circular ponderada apunta hacia la carga dominante", () =>
   assert.ok(circular.meanDeg < 1 || circular.meanDeg > 359);
 });
 
-test("promedio por bloques conserva x1 y calcula SEM en ambos ejes", () => {
+test("media móvil conserva x1 y calcula SEM correlacionado en ambos ejes", () => {
   const common = [0, 1, 2, 3];
   const x1 = averageAngleSeries(common, common, [10, 20, 30, 40], [1, 3, 5, 7], [0, 2, 4, 6], 1);
   assert.deepEqual(Array.from(x1!.amps), [1, 3, 5, 7]);
   assert.deepEqual(Array.from(x1!.angles), [0, 2, 4, 6]);
 
   const x2 = averageAngleSeries(common, common, [10, 20, 30, 40], [1, 3, 5, 7], [0, 2, 4, 6], 2);
-  assert.deepEqual(Array.from(x2!.amps), [2, 6]);
-  assert.deepEqual(Array.from(x2!.angles), [1, 5]);
-  assert.deepEqual(Array.from(x2!.ampsStd), [Math.SQRT2, Math.SQRT2]);
-  assert.deepEqual(Array.from(x2!.ampsErr), [1, 1]);
-  assert.deepEqual(Array.from(x2!.angleStd), [Math.SQRT2, Math.SQRT2]);
-  assert.deepEqual(Array.from(x2!.angleErr), [1, 1]);
-  assert.deepEqual(Array.from(x2!.counts), [2, 2]);
+  assert.deepEqual(Array.from(x2!.amps), [2, 4, 6]);
+  assert.deepEqual(Array.from(x2!.angles), [1, 3, 5]);
+  assert.deepEqual(Array.from(x2!.ampsStd), [Math.SQRT2, Math.SQRT2, Math.SQRT2]);
+  assert.deepEqual(Array.from(x2!.ampsErr), [1, 1, 1]);
+  assert.deepEqual(Array.from(x2!.angleStd), [Math.SQRT2, Math.SQRT2, Math.SQRT2]);
+  assert.deepEqual(Array.from(x2!.angleErr), [1, 1, 1]);
+  assert.deepEqual(Array.from(x2!.counts), [2, 2, 2]);
 });
 
 test("CSV procesado incluye errores X/Y y tamaño de bloque", () => {

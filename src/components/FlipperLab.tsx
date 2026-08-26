@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import type { FlipperApi } from "../hooks/useFlipper";
-import { averageFftSpectra, circularStats, fitPolarEllipse, topPeaks } from "../lib/flipper";
+import { averageFftSpectra, circularStats, fitPolarEllipse, movingWindowStats, topPeaks } from "../lib/flipper";
 import { IconAlert, IconDownload, IconTrash, IconZoom } from "./icons";
 
 const AVGS = [1, 2, 5, 10, 20, 50, 100];
@@ -190,14 +190,14 @@ function ChartCanvas({
 }
 
 const STAT_HELP: Record<string, string> = {
-  "N (crudo / promediado)": "Número de muestras ADC originales y número de puntos resultantes después de aplicar el promedio ×N.",
+  "N (crudo / promediado)": "Número de muestras ADC originales y número de puntos resultantes después de aplicar la media móvil ×N.",
   "tiempo real adquisición": "Duración calculada con los timestamps monotónicos del Flipper.",
   "tasa ADC efectiva": "Frecuencia realmente recibida: (N−1) dividido por la duración.",
   "sincronización reloj": "Desfase, jitter y tiempo de ida/vuelta entre el reloj del navegador y el Flipper.",
   "velocidad medida (:j)": "Mediana de los desplazamientos del contador :j divididos por su intervalo real.",
   "muestras / grado medidas": "Muestras ADC que pudieron interpolarse entre anclas :j, divididas por el recorrido confirmado.",
   "recorrido confirmado :j": "Ángulo acumulado calculado exclusivamente con posiciones devueltas por la montura.",
-  "factor de promedio": "Cantidad de muestras consecutivas agrupadas en cada punto representado.",
+  "media móvil": "Ventana deslizante de N muestras consecutivas. Cada nueva muestra genera un punto nuevo; las barras usan un tamaño efectivo corregido por la autocorrelación local.",
   "media ± σ": "Promedio aritmético y desviación típica de la corriente: describe el nivel central y la dispersión de las medidas.",
   "media ± SEM": "Promedio e incertidumbre estadística de esa media (σ/√N). No representa la dispersión de las muestras individuales.",
   mediana: "Valor central de la corriente; es menos sensible a picos aislados.",
@@ -322,28 +322,18 @@ export default function FlipperLab({
     const factor = Math.max(1, Math.floor(flip.avgFactor));
     if (pass.samples?.anglesDeg?.length) {
       const length = Math.min(pass.samples.anglesDeg.length, pass.samples.currentA.length);
-      const groups = Math.floor(length / factor);
+      const angleStats = movingWindowStats(pass.samples.anglesDeg.slice(0, length), factor);
+      const currentStats = movingWindowStats(pass.samples.currentA.slice(0, length), factor);
+      if (!angleStats || !currentStats) return [];
       const angles: number[] = [];
       const currents: number[] = [];
       const angleErr: number[] = [];
       const currentErr: number[] = [];
-      for (let group = 0; group < groups; group++) {
-        const start = group * factor;
-        let sumAngle = 0, sumAngle2 = 0, sumCurrent = 0, sumCurrent2 = 0;
-        for (let j = 0; j < factor; j++) {
-          const angle = pass.samples.anglesDeg[start + j];
-          const current = pass.samples.currentA[start + j];
-          sumAngle += angle; sumAngle2 += angle * angle;
-          sumCurrent += current; sumCurrent2 += current * current;
-        }
-        const meanAngle = sumAngle / factor;
-        const meanCurrent = sumCurrent / factor;
-        const varianceAngle = factor > 1 ? Math.max(0, (sumAngle2 - sumAngle * sumAngle / factor) / (factor - 1)) : 0;
-        const varianceCurrent = factor > 1 ? Math.max(0, (sumCurrent2 - sumCurrent * sumCurrent / factor) / (factor - 1)) : 0;
-        angles.push(meanAngle);
-        currents.push(meanCurrent);
-        angleErr.push(Math.sqrt(varianceAngle / factor));
-        currentErr.push(Math.sqrt(varianceCurrent / factor));
+      for (let index = 0; index < angleStats.length; index++) {
+        angles.push(angleStats.mean[index]);
+        currents.push(currentStats.mean[index]);
+        angleErr.push(angleStats.sem[index]);
+        currentErr.push(currentStats.sem[index]);
       }
       return [{ id: pass.id, label: pass.label, color: REV_COLORS[passIndex % REV_COLORS.length], angles, currents, angleErr, currentErr }];
     }
@@ -933,11 +923,18 @@ export default function FlipperLab({
       const a = minAngle + (maxAngle - minAngle) * tick / 6;
       ctx.fillText(`${a.toFixed(maxAngle - minAngle < 25 ? 1 : 0)}°`, X(a), h - 7);
     }
+    // El lienzo no recorta automáticamente. Sin este clip, los puntos fuera
+    // de los nuevos límites de datos del zoom generan "peines" en los bordes.
+    ctx.save();
+    ctx.beginPath();
+    ctx.rect(L, T, w - L - Rg, h - T - Bm);
+    ctx.clip();
     if (data && data.factor > 1) {
       ctx.strokeStyle = "rgba(76,201,240,0.85)";
       ctx.lineWidth = 1;
       for (let i = 0; i < data.length; i++) {
         const phase = ((data.angles[i] % 360) + 360) % 360;
+        if (phase < minAngle || phase > maxAngle) continue;
         const x = X(phase);
         const y = Y(data.amps[i]);
         const y0 = Y(data.amps[i] - data.ampsErr[i]);
@@ -974,6 +971,11 @@ export default function FlipperLab({
           continue;
         }
         const phase = ((data.angles[i] % 360) + 360) % 360;
+        if (phase < minAngle || phase > maxAngle || !Number.isFinite(data.amps[i])) {
+          started = false;
+          previousPhase = null;
+          continue;
+        }
         const x = X(phase);
         const y = Y(data.amps[i]);
         if (!started || (previousPhase !== null && Math.abs(phase - previousPhase) > 180)) ctx.moveTo(x, y);
@@ -992,6 +994,11 @@ export default function FlipperLab({
       for (let i = 0; i < series.currents.length; i++) {
         const current = series.currents[i];
         const phase = ((series.angles[i] % 360) + 360) % 360;
+        if (phase < minAngle || phase > maxAngle || !Number.isFinite(current)) {
+          started = false;
+          previousPhase = null;
+          continue;
+        }
         const x = X(phase);
         const y = Y(current);
         if (!started || (previousPhase !== null && Math.abs(phase - previousPhase) > 180)) ctx.moveTo(x, y);
@@ -1004,6 +1011,7 @@ export default function FlipperLab({
       ctx.lineWidth = 0.8;
       for (let i = 0; i < series.currents.length; i++) {
         const phase = ((series.angles[i] % 360) + 360) % 360;
+        if (phase < minAngle || phase > maxAngle || !Number.isFinite(series.currents[i])) continue;
         const x = X(phase), y = Y(series.currents[i]);
         const y0 = Y(series.currents[i] - series.currentErr[i]);
         const y1 = Y(series.currents[i] + series.currentErr[i]);
@@ -1032,6 +1040,7 @@ export default function FlipperLab({
         plotSeries(compact, "rgba(240,245,255,0.62)", 2.4, false);
         ctx.strokeStyle = "rgba(240,245,255,0.6)";
         for (let i = 0; i < compact.currents.length; i += 10) {
+          if (compact.angles[i] < minAngle || compact.angles[i] > maxAngle) continue;
           const x = X(compact.angles[i]);
           const y0 = Y(compact.currents[i] - compact.currentErr[i]);
           const y1 = Y(compact.currents[i] + compact.currentErr[i]);
@@ -1042,6 +1051,7 @@ export default function FlipperLab({
       const lastRev = data.revs[data.length - 1] ?? 0;
       for (let rev = 0; rev <= Math.min(lastRev, 11); rev++) plotRevision(REV_COLORS[rev % REV_COLORS.length], rev);
     } else plotRevision("rgba(245,165,36,0.95)");
+    ctx.restore();
   };
 
   /* ── dibujo: FFT ─────────────────────────────────────── */
@@ -1080,18 +1090,26 @@ export default function FlipperLab({
       const viewMaxMagnitude = (1 - viewport.y0) * maxMagnitude;
       const X = (hz: number) => L + ((hz - minHz) / (maxHz - minHz || 1)) * (w - L * 2);
       const Y = (value: number) => h - Bm - Math.sqrt(Math.max(0, (value - minMagnitude) / (viewMaxMagnitude - minMagnitude || 1))) * (h - Bm - 12);
+      ctx.save();
+      ctx.beginPath();
+      ctx.rect(L, 12, w - L * 2, h - Bm - 12);
+      ctx.clip();
       for (const series of spectra) {
         ctx.strokeStyle = series.id === "average" ? "rgba(240,245,255,0.78)" : series.color;
         ctx.lineWidth = series.id === "average" ? 2.4 : 1.2;
         ctx.globalAlpha = overlayFftSeries && series.id !== "average" ? 0.65 : 1;
         ctx.beginPath();
+        let started = false;
         for (let i = 2; i < series.spectrum.magnitude.length; i++) {
-          const x = X(i * series.spectrum.dfHz), y = Y(series.spectrum.magnitude[i]);
-          if (i === 2) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+          const hz = i * series.spectrum.dfHz;
+          if (hz < minHz || hz > maxHz) { started = false; continue; }
+          const x = X(hz), y = Y(series.spectrum.magnitude[i]);
+          if (!started) { ctx.moveTo(x, y); started = true; } else ctx.lineTo(x, y);
         }
         ctx.stroke();
       }
       ctx.globalAlpha = 1;
+      ctx.restore();
       drawFrequencyTicks(minHz, maxHz, X);
       ctx.fillStyle = "#42567a"; ctx.textAlign = "right"; ctx.fillText("Hz", w - L, 10);
       return;
@@ -1116,12 +1134,19 @@ export default function FlipperLab({
     const maxMagnitude = (1 - viewport.y0) * mx;
     const X = (i: number) => L + ((i * derived.df - minHz) / (maxHz - minHz || 1)) * (w - L * 2);
     const Y = (v: number) => h - Bm - Math.sqrt(Math.max(0, (v - minMagnitude) / (maxMagnitude - minMagnitude || 1))) * (h - Bm - 12);
+    ctx.save();
+    ctx.beginPath();
+    ctx.rect(L, 12, w - L * 2, h - Bm - 12);
+    ctx.clip();
     ctx.fillStyle = "rgba(76,201,240,0.5)";
     const bw = Math.max(1, (w - L * 2) / usable - 0.5);
     for (let i = 2; i < usable; i++) {
+      const hz = i * derived.df;
+      if (hz < minHz || hz > maxHz) continue;
       const y = Y(mag[i]);
       ctx.fillRect(X(i), y, bw, h - Bm - y);
     }
+    ctx.restore();
     drawFrequencyTicks(minHz, maxHz, (hz) => X(hz / derived.df));
     ctx.fillStyle = "#42567a";
     ctx.textAlign = "right";
@@ -1289,14 +1314,14 @@ export default function FlipperLab({
         ))}
         <div className="ml-auto flex items-center gap-2">
           <label className="hidden items-center gap-1.5 font-mono text-[10px] text-dim sm:flex">
-            promedio ×
+            media móvil ×
             <input
               type="number"
               min={1}
               max={100000}
               step={1}
               list="average-presets"
-              aria-label="Muestras por bloque de promedio"
+              aria-label="Muestras por ventana de media móvil"
               value={flip.avgFactor}
               onChange={(event) => {
                 const next = Math.floor(Number(event.target.value));
@@ -1597,7 +1622,7 @@ export default function FlipperLab({
               {derived.st.feedbackSpeedDegS !== null && <StatCell k="velocidad medida (:j)" v={`${derived.st.feedbackSpeedDegS.toFixed(4)} °/s`} tone="text-ion" />}
               {derived.st.samplesPerDeg !== null && <StatCell k="muestras / grado medidas" v={derived.st.samplesPerDeg.toFixed(1)} tone="text-ion" />}
               <StatCell k="recorrido confirmado :j" v={`${derived.st.angleSpanDeg.toFixed(2)}°`} tone={derived.st.angleSpanDeg >= 358 ? "text-mint" : "text-alert"} />
-              <StatCell k="factor de promedio" v={`×${flip.avgFactor}`} tone="text-ion" />
+              <StatCell k="media móvil" v={`×${flip.avgFactor}`} tone="text-ion" />
               {flip.deviceInfo && <StatCell k={`Flipper ${flip.deviceInfo.version} · OOR / OVF`} v={`${flip.deviceInfo.outOfRange} / ${flip.deviceInfo.overflow}${flip.deviceInfo.overflowDelta === null ? "" : ` · captura +${flip.deviceInfo.overflowDelta}`}`} tone={flip.deviceInfo.overflowDelta ? "text-alert" : "text-mint"} />}
             </StatSection>
             <StatSection title="Estadística básica" subtitle="Nivel, dispersión y extremos de la corriente">
