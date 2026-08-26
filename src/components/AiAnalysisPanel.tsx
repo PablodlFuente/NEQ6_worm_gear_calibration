@@ -20,16 +20,26 @@ export default function AiAnalysisPanel({ prompt }: { prompt: string }) {
     setSavedAt(saved?.updatedAt ?? null);
   }, [provider?.id, fingerprint]);
 
+  const providerUrl = (target: NonNullable<typeof provider>) => {
+    const url = new URL(target.url);
+    // ChatGPT admite oficialmente en su interfaz web precargar el compositor
+    // mediante ?q=. Qwen y Gemini ignoran los parámetros equivalentes.
+    if ((url.hostname === "chatgpt.com" || url.hostname === "www.chatgpt.com") && prompt.length <= 12_000) {
+      url.searchParams.set("q", prompt);
+    }
+    return url.href;
+  };
   const copyAndOpen = async (target = provider) => {
     if (!target || !prompt) return;
     await navigator.clipboard.writeText(prompt);
-    window.open(target.url, "_blank", "noopener,noreferrer");
-    setNotice(`Informe copiado · ${target.name} abierto.`);
+    window.open(providerUrl(target), "_blank", "noopener,noreferrer");
+    const direct = new URL(target.url).hostname.replace(/^www\./, "") === "chatgpt.com" && prompt.length <= 12_000;
+    setNotice(direct ? `Informe precargado en ${target.name}.` : `Informe copiado · ${target.name} abierto.`);
   };
   const openAll = async () => {
     if (!prompt) return;
     await navigator.clipboard.writeText(prompt);
-    settings.providers.forEach((item) => window.open(item.url, "_blank", "noopener,noreferrer"));
+    settings.providers.forEach((item) => window.open(providerUrl(item), "_blank", "noopener,noreferrer"));
     setNotice(`Informe copiado · abiertos ${settings.providers.length} chats.`);
   };
   const paste = async () => {
