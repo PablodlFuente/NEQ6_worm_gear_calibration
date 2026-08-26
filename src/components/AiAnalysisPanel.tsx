@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { analysisFingerprint, getAiResponse, saveAiResponse, useAiSettings } from "../hooks/useAiAnalysis";
 
 export default function AiAnalysisPanel({ prompt }: { prompt: string }) {
@@ -10,7 +10,8 @@ export default function AiAnalysisPanel({ prompt }: { prompt: string }) {
   const [savedAt, setSavedAt] = useState<number | null>(null);
   const [notice, setNotice] = useState("");
   const [bridgeReady, setBridgeReady] = useState(false);
-  const [runningRequest, setRunningRequest] = useState<string | null>(null);
+  const [runningProviders, setRunningProviders] = useState<Set<string>>(() => new Set());
+  const pendingRef = useRef(new Map<string, { providerId: string; fingerprint: string }>());
 
   useEffect(() => {
     if (!provider && settings.providers[0]) setProviderId(settings.providers[0].id);
@@ -28,74 +29,63 @@ export default function AiAnalysisPanel({ prompt }: { prompt: string }) {
         setBridgeReady(true);
         return;
       }
-      if (event.data.type !== "NEQ6_AI_RESULT" || event.data.requestId !== runningRequest) return;
-      setRunningRequest(null);
+      if (event.data.type !== "NEQ6_AI_RESULT") return;
+      const pending = pendingRef.current.get(event.data.requestId);
+      if (!pending) return;
+      pendingRef.current.delete(event.data.requestId);
+      setRunningProviders((current) => {
+        const next = new Set(current); next.delete(pending.providerId); return next;
+      });
       if (!event.data.result?.ok) {
         setNotice(event.data.result?.error ?? "El chat no devolvió respuesta.");
         return;
       }
       const text = String(event.data.result.response ?? "").trim();
-      setResponse(text);
-      if (provider && text) {
-        const saved = saveAiResponse(provider.id, fingerprint, text);
-        setSavedAt(saved.updatedAt);
+      if (text) {
+        const saved = saveAiResponse(pending.providerId, pending.fingerprint, text);
+        if (pending.providerId === provider?.id) {
+          setResponse(text);
+          setSavedAt(saved.updatedAt);
+        }
       }
       setNotice("Análisis recibido y guardado.");
     };
     window.addEventListener("message", receive);
     window.postMessage({ source: "neq6-ai-app", type: "NEQ6_AI_BRIDGE_PING" }, location.origin);
     return () => window.removeEventListener("message", receive);
-  }, [fingerprint, provider?.id, runningRequest]);
+  }, [provider?.id]);
 
-  const providerUrl = (target: NonNullable<typeof provider>) => {
-    const url = new URL(target.url);
-    // ChatGPT admite oficialmente en su interfaz web precargar el compositor
-    // mediante ?q=. Qwen y Gemini ignoran los parámetros equivalentes.
-    if ((url.hostname === "chatgpt.com" || url.hostname === "www.chatgpt.com") && prompt.length <= 12_000) {
-      url.searchParams.set("q", prompt);
-    }
-    return url.href;
-  };
-  const copyAndOpen = async (target = provider) => {
-    if (!target || !prompt) return;
-    await navigator.clipboard.writeText(prompt);
-    window.open(providerUrl(target), "_blank", "noopener,noreferrer");
-    const direct = new URL(target.url).hostname.replace(/^www\./, "") === "chatgpt.com" && prompt.length <= 12_000;
-    setNotice(direct ? `Informe precargado en ${target.name}.` : `Informe copiado · ${target.name} abierto.`);
-  };
-  const openAll = async () => {
-    if (!prompt) return;
-    await navigator.clipboard.writeText(prompt);
-    settings.providers.forEach((item) => window.open(providerUrl(item), "_blank", "noopener,noreferrer"));
-    setNotice(`Informe copiado · abiertos ${settings.providers.length} chats.`);
-  };
-  const runAutomatic = () => {
-    if (!provider || !["chatgpt", "qwen", "gemini"].includes(provider.id)) return;
+  const runAutomatic = (target = provider) => {
+    if (!target || !["chatgpt", "qwen", "gemini"].includes(target.id)) return;
     const requestId = crypto.randomUUID();
-    setRunningRequest(requestId);
-    setNotice(`Esperando respuesta de ${provider.name}…`);
+    pendingRef.current.set(requestId, { providerId: target.id, fingerprint });
+    setRunningProviders((current) => new Set(current).add(target.id));
+    setNotice(`Esperando respuesta de ${target.name}…`);
     window.postMessage({
       source: "neq6-ai-app",
       type: "NEQ6_AI_RUN",
       requestId,
-      providerId: provider.id,
+      providerId: target.id,
       prompt,
     }, location.origin);
   };
-  const paste = async () => {
-    const text = await navigator.clipboard.readText();
-    setResponse(text);
-    setNotice("Respuesta pegada; falta guardarla.");
-  };
-  const save = () => {
-    if (!provider || !response.trim()) return;
-    const saved = saveAiResponse(provider.id, fingerprint, response.trim());
-    setSavedAt(saved.updatedAt);
-    setNotice("Respuesta guardada para este ensayo.");
-  };
+  const runAll = () => settings.providers.filter((item) => ["chatgpt", "qwen", "gemini"].includes(item.id)).forEach((item) => runAutomatic(item));
 
   if (!prompt) return <p className="rounded border border-dashed border-line px-3 py-10 text-center font-mono text-[10.5px] text-dim">No hay resultados que analizar.</p>;
   if (!provider) return <p className="rounded border border-dashed border-line px-3 py-10 text-center font-mono text-[10.5px] text-dim">Añade una IA desde Ajustes.</p>;
+
+  if (!bridgeReady) return (
+    <section className="rounded border border-line bg-[#091426]/70 p-5 text-center">
+      <h3 className="font-display text-[11px] font-bold uppercase tracking-[0.18em] text-fog">Puente automático no detectado</h3>
+      <p className="mx-auto mt-2 max-w-xl font-mono text-[10px] text-dim">Instala la extensión local y recarga esta página. Después el programa enviará el informe y recuperará la respuesta automáticamente.</p>
+      <a href="/neq6-ai-browser-bridge.zip" download className="mx-auto mt-4 flex w-fit items-center justify-center rounded border border-mint/50 bg-mint/10 px-4 py-2 font-display text-[9px] font-bold tracking-wider text-mint hover:bg-mint/20">DESCARGAR PUENTE AUTOMÁTICO</a>
+      <ol className="mx-auto mt-4 max-w-lg list-decimal space-y-1 text-left font-mono text-[9.5px] text-dim">
+        <li>Descomprime el ZIP.</li>
+        <li>Abre las extensiones del navegador y activa el modo desarrollador.</li>
+        <li>Carga la carpeta descomprimida y recarga esta página.</li>
+      </ol>
+    </section>
+  );
 
   return (
     <div className="space-y-2">
@@ -106,15 +96,13 @@ export default function AiAnalysisPanel({ prompt }: { prompt: string }) {
               {settings.providers.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}
             </select>
           </label>
-          {bridgeReady && ["chatgpt", "qwen", "gemini"].includes(provider.id) && (
-            <button onClick={runAutomatic} disabled={Boolean(runningRequest)} className="rounded border border-mint/50 bg-mint/10 px-3 py-2 font-display text-[9px] font-bold tracking-wider text-mint hover:bg-mint/20 disabled:opacity-40">
-              {runningRequest ? "ANALIZANDO…" : "ANALIZAR AUTOMÁTICAMENTE"}
+          {["chatgpt", "qwen", "gemini"].includes(provider.id) ? (
+            <button onClick={() => runAutomatic()} disabled={runningProviders.has(provider.id)} className="rounded border border-mint/50 bg-mint/10 px-3 py-2 font-display text-[9px] font-bold tracking-wider text-mint hover:bg-mint/20 disabled:opacity-40">
+              {runningProviders.has(provider.id) ? "ANALIZANDO…" : "ANALIZAR"}
             </button>
-          )}
-          <button onClick={() => void copyAndOpen()} className="rounded border border-ion/50 bg-ion/10 px-3 py-2 font-display text-[9px] font-bold tracking-wider text-ion hover:bg-ion/20">COPIAR Y ABRIR</button>
-          <button onClick={() => void openAll()} className="rounded border border-line px-3 py-2 font-display text-[9px] font-bold tracking-wider text-fog hover:border-ember/50 hover:text-ember">ABRIR TODAS</button>
+          ) : <span className="font-mono text-[9px] text-alert">Proveedor sin adaptador automático.</span>}
+          <button onClick={runAll} disabled={runningProviders.size > 0} className="rounded border border-ion/50 bg-ion/10 px-3 py-2 font-display text-[9px] font-bold tracking-wider text-ion hover:bg-ion/20 disabled:opacity-40">ANALIZAR CON TODAS</button>
         </div>
-        {!bridgeReady && <p className="mt-2 font-mono text-[9px] text-dim">Automatización no detectada · instala el puente desde Ajustes.</p>}
         <details className="mt-2 rounded border border-line/70">
           <summary className="cursor-pointer px-2 py-1.5 font-mono text-[9px] text-dim">Informe enviado · {fingerprint}</summary>
           <pre className="max-h-60 overflow-auto whitespace-pre-wrap border-t border-line p-2 font-mono text-[9px] text-fog">{prompt}</pre>
@@ -124,11 +112,9 @@ export default function AiAnalysisPanel({ prompt }: { prompt: string }) {
         <div className="mb-2 flex flex-wrap items-center gap-2">
           <h3 className="mr-auto font-display text-[10px] font-bold uppercase tracking-[0.16em] text-fog">Respuesta · {provider.name}</h3>
           {savedAt && <span className="font-mono text-[9px] text-mint">guardada {new Date(savedAt).toLocaleString("es-ES")}</span>}
-          <button onClick={() => void paste()} className="rounded border border-line px-2 py-1 font-display text-[9px] font-bold text-fog hover:border-ion/50 hover:text-ion">PEGAR</button>
-          <button onClick={save} className="rounded border border-mint/50 px-2 py-1 font-display text-[9px] font-bold text-mint hover:bg-mint/10">GUARDAR</button>
-          <button onClick={() => void copyAndOpen()} className="rounded border border-ember/50 px-2 py-1 font-display text-[9px] font-bold text-ember hover:bg-ember/10">RECALCULAR</button>
+          <button onClick={() => runAutomatic()} disabled={runningProviders.has(provider.id)} className="rounded border border-ember/50 px-2 py-1 font-display text-[9px] font-bold text-ember hover:bg-ember/10 disabled:opacity-40">RECALCULAR</button>
         </div>
-        <textarea value={response} onChange={(event) => setResponse(event.target.value)} placeholder="Pega aquí la respuesta del chat." className="min-h-72 w-full resize-y rounded border border-line bg-[#07101e] p-2 font-mono text-[10.5px] leading-relaxed text-fog focus:border-ion/60 focus:outline-none" />
+        <textarea value={response} readOnly placeholder="La respuesta automática aparecerá aquí." className="min-h-72 w-full resize-y rounded border border-line bg-[#07101e] p-2 font-mono text-[10.5px] leading-relaxed text-fog focus:outline-none" />
         {notice && <p className="mt-1.5 font-mono text-[9px] text-dim">{notice}</p>}
       </section>
     </div>
