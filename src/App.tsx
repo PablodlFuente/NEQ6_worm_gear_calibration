@@ -1171,6 +1171,7 @@ export default function App() {
     let moveSuccess = false;
     let captureStarted = false;
     let captureStopped = false;
+    let captureStopPromise: Promise<void> | null = null;
     let captureFailed = false;
     let testStartedAt: number | null = null;
     let captureOriginPosition: number | null = null;
@@ -1180,29 +1181,6 @@ export default function App() {
         speed,
         deg: (targetDeg + 2) * measurementSign,
         maxDeg: 3602,
-        onTargetReached: async () => {
-          /* La última consulta periódica puede quedar a 1–2° del STOP. Se
-           * toma una ancla final una vez detenido para cerrar exactamente en
-           * 360° y no recortar la corona al dibujar la vuelta. */
-          if (captureStarted && !captureStopped && acquisitionPreviousPosition !== null) {
-            const finalAt = Date.now();
-            if (await sendRaw(`:j${axis}`, false)) {
-              const finalPosition = parsePosLine(await waitForRx(RX_TIMEOUT_MS));
-              if (finalPosition !== null) {
-                let delta = finalPosition - acquisitionPreviousPosition;
-                if (delta > MAX_POSITION_DELTA) delta -= 0x1000000;
-                else if (delta < -MAX_POSITION_DELTA) delta += 0x1000000;
-                travelledSteps += delta;
-                acquisitionPreviousPosition = finalPosition;
-                flip.recordAngle((travelledSteps * 360) / cpr, finalAt);
-              }
-            }
-          }
-          if (captureStarted && !captureStopped) {
-            await flip.stopCapture();
-            captureStopped = true;
-          }
-        },
         onPosition: async (reportedAxis, steps, tb) => {
           if (reportedAxis !== axis) return;
           if (motionPreviousPosition !== null) {
@@ -1248,8 +1226,12 @@ export default function App() {
             travelledSteps += delta;
           }
           acquisitionPreviousPosition = steps;
-          flip.recordAngle((travelledSteps * 360) / cpr, tb);
-          const currentDeg = Math.min(targetDeg, (Math.abs(travelledSteps) * 360) / cpr);
+          const travelledDeg = (Math.abs(travelledSteps) * 360) / cpr;
+          const currentDeg = Math.min(targetDeg, travelledDeg);
+          /* Al cruzar 360° se fija una última ancla exactamente en el borde
+           * de la captura. Los 2° siguientes se recorren a igual velocidad,
+           * pero ya sin ADC ni ángulos asociados. */
+          flip.recordAngle(Math.sign(travelledSteps || measurementSign) * currentDeg, tb);
           setAxisTest((state) => ({
             ...state,
             currentDeg,
@@ -1261,9 +1243,9 @@ export default function App() {
            * detiene al cruzar el recorrido solicitado, mientras el motor aún
            * mantiene su velocidad; la frenada posterior queda fuera del
            * perfil y no introduce el pico de los últimos grados. */
-          if (!captureStopped && Math.abs(travelledSteps) >= totalSteps) {
-            await flip.stopCapture();
+          if (!captureStopped && travelledDeg >= targetDeg) {
             captureStopped = true;
+            captureStopPromise = flip.stopCapture();
             setAxisTest((state) => ({ ...state, message: "Captura completa; finalizando 2° de salida…" }));
           }
         },
@@ -1271,6 +1253,8 @@ export default function App() {
     } finally {
       if (captureStarted && !captureStopped) await flip.stopCapture();
     }
+
+    if (captureStopPromise) await captureStopPromise;
 
     /* Tras detener y cerrar la adquisición, elimina el pequeño sobrepaso de
      * la rampa y vuelve al mismo contador absoluto del que partió la medida. */

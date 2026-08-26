@@ -11,8 +11,12 @@ const REV_COLORS = [
 
 type View = "vivo" | "polar" | "cartesiano" | "fft" | "stats";
 type Peak = { bin: number; freq: number; period: number; mag: number };
-type ChartTransform = { scale: number; x: number; y: number };
-const RESET_TRANSFORM: ChartTransform = { scale: 1, x: 0, y: 0 };
+/** Fracción visible de los dominios completos X/Y. Es el equivalente a
+ * set_xlim/set_ylim: los dibujantes vuelven a proyectar los datos, no se
+ * recorta una imagen de la gráfica. */
+type ChartViewport = { x0: number; x1: number; y0: number; y1: number };
+const RESET_VIEWPORT: ChartViewport = { x0: 0, x1: 1, y0: 0, y1: 1 };
+type ChartDraw = (ctx: CanvasRenderingContext2D, w: number, h: number, viewport?: ChartViewport) => void;
 
 const VIEWS: { id: View; label: string }[] = [
   { id: "vivo", label: "Vivo" },
@@ -25,8 +29,8 @@ const VIEWS: { id: View; label: string }[] = [
 function ChartCanvas({
   draw,
   className,
-  transform,
-  onTransform,
+  viewport,
+  onViewport,
   onPick,
   onCursor,
   onCursorLeave,
@@ -34,10 +38,10 @@ function ChartCanvas({
   regionZoom,
   onRegionZoomDone,
 }: {
-  draw: (ctx: CanvasRenderingContext2D, w: number, h: number) => void;
+  draw: ChartDraw;
   className: string;
-  transform: ChartTransform;
-  onTransform: (next: ChartTransform) => void;
+  viewport: ChartViewport;
+  onViewport: (next: ChartViewport) => void;
   onPick?: (x: number, y: number, clientX: number, clientY: number) => void;
   onCursor?: (x: number, y: number, width: number, height: number) => void;
   onCursorLeave?: () => void;
@@ -46,7 +50,7 @@ function ChartCanvas({
   onRegionZoomDone: () => void;
 }) {
   const ref = useRef<HTMLCanvasElement>(null);
-  const drag = useRef<{ x: number; y: number; tx: number; ty: number; moved: boolean; mode: "pan" | "region" | "pick" } | null>(null);
+  const drag = useRef<{ x: number; y: number; viewport: ChartViewport; moved: boolean; mode: "pan" | "region" | "pick" } | null>(null);
   const [selection, setSelection] = useState<{ x0: number; y0: number; x1: number; y1: number } | null>(null);
   useEffect(() => {
     const cv = ref.current;
@@ -64,11 +68,7 @@ function ChartCanvas({
       const ctx = cv.getContext("2d");
       if (!ctx) return;
       ctx.scale(dpr, dpr);
-      ctx.save();
-      ctx.translate(transform.x, transform.y);
-      ctx.scale(transform.scale, transform.scale);
-      draw(ctx, w, h);
-      ctx.restore();
+      draw(ctx, w, h, viewport);
     };
     render();
     const ro = new ResizeObserver(render);
@@ -80,7 +80,7 @@ function ChartCanvas({
     const mode = event.button === 2 ? "pan" : regionZoom ? "region" : "pick";
     if (mode === "pan") event.preventDefault();
     event.currentTarget.setPointerCapture(event.pointerId);
-    drag.current = { x: event.clientX, y: event.clientY, tx: transform.x, ty: transform.y, moved: false, mode };
+    drag.current = { x: event.clientX, y: event.clientY, viewport, moved: false, mode };
     if (mode === "region") {
       const rect = event.currentTarget.getBoundingClientRect();
       setSelection({ x0: event.clientX - rect.left, y0: event.clientY - rect.top, x1: event.clientX - rect.left, y1: event.clientY - rect.top });
@@ -89,8 +89,8 @@ function ChartCanvas({
   const pointerMove = (event: React.PointerEvent<HTMLCanvasElement>) => {
     const rect = event.currentTarget.getBoundingClientRect();
     onCursor?.(
-      (event.clientX - rect.left - transform.x) / transform.scale,
-      (event.clientY - rect.top - transform.y) / transform.scale,
+      event.clientX - rect.left,
+      event.clientY - rect.top,
       rect.width,
       rect.height,
     );
@@ -98,7 +98,14 @@ function ChartCanvas({
     const dx = event.clientX - drag.current.x;
     const dy = event.clientY - drag.current.y;
     if (Math.hypot(dx, dy) > 3) drag.current.moved = true;
-    if (drag.current.mode === "pan") onTransform({ ...transform, x: drag.current.tx + dx, y: drag.current.ty + dy });
+    if (drag.current.mode === "pan") {
+      const spanX = drag.current.viewport.x1 - drag.current.viewport.x0;
+      const spanY = drag.current.viewport.y1 - drag.current.viewport.y0;
+      const rect = event.currentTarget.getBoundingClientRect();
+      const x0 = Math.min(1 - spanX, Math.max(0, drag.current.viewport.x0 - (dx / rect.width) * spanX));
+      const y0 = Math.min(1 - spanY, Math.max(0, drag.current.viewport.y0 - (dy / rect.height) * spanY));
+      onViewport({ x0, x1: x0 + spanX, y0, y1: y0 + spanY });
+    }
     if (drag.current.mode === "region") {
       const rect = event.currentTarget.getBoundingClientRect();
       setSelection((current) => current ? { ...current, x1: event.clientX - rect.left, y1: event.clientY - rect.top } : current);
@@ -111,19 +118,26 @@ function ChartCanvas({
       const height = Math.abs(selection.y1 - selection.y0);
       const rect = event.currentTarget.getBoundingClientRect();
       if (width > 8 && height > 8) {
-        const cx = (selection.x0 + selection.x1) / 2;
-        const cy = (selection.y0 + selection.y1) / 2;
-        const nextScale = Math.min(8, transform.scale * Math.min(rect.width / width, rect.height / height));
-        const ratio = nextScale / transform.scale;
-        onTransform({ scale: nextScale, x: rect.width / 2 - (cx - transform.x) * ratio, y: rect.height / 2 - (cy - transform.y) * ratio });
+        const sx0 = Math.min(selection.x0, selection.x1) / rect.width;
+        const sx1 = Math.max(selection.x0, selection.x1) / rect.width;
+        const sy0 = Math.min(selection.y0, selection.y1) / rect.height;
+        const sy1 = Math.max(selection.y0, selection.y1) / rect.height;
+        const spanX = viewport.x1 - viewport.x0;
+        const spanY = viewport.y1 - viewport.y0;
+        onViewport({
+          x0: viewport.x0 + sx0 * spanX,
+          x1: viewport.x0 + sx1 * spanX,
+          y0: viewport.y0 + sy0 * spanY,
+          y1: viewport.y0 + sy1 * spanY,
+        });
       }
       setSelection(null);
       onRegionZoomDone();
     } else if (state?.mode === "pick" && !state.moved && onPick) {
       const rect = event.currentTarget.getBoundingClientRect();
       onPick(
-        ((event.clientX - rect.left - transform.x) / transform.scale) / rect.width,
-        ((event.clientY - rect.top - transform.y) / transform.scale) / rect.height,
+        (event.clientX - rect.left) / rect.width,
+        (event.clientY - rect.top) / rect.height,
         event.clientX,
         event.clientY,
       );
@@ -135,12 +149,17 @@ function ChartCanvas({
     const parentRect = event.currentTarget.parentElement!.getBoundingClientRect();
     const px = event.clientX - parentRect.left;
     const py = event.clientY - parentRect.top;
-    const scale = Math.min(8, Math.max(1, transform.scale * (event.deltaY < 0 ? 1.18 : 1 / 1.18)));
-    onTransform({
-      scale,
-      x: px - ((px - transform.x) * scale) / transform.scale,
-      y: py - ((py - transform.y) * scale) / transform.scale,
-    });
+    const zoomIn = event.deltaY < 0;
+    const factor = zoomIn ? 1 / 1.18 : 1.18;
+    const spanX = Math.min(1, (viewport.x1 - viewport.x0) * factor);
+    const spanY = Math.min(1, (viewport.y1 - viewport.y0) * factor);
+    const fx = px / parentRect.width;
+    const fy = py / parentRect.height;
+    const focusX = viewport.x0 + fx * (viewport.x1 - viewport.x0);
+    const focusY = viewport.y0 + fy * (viewport.y1 - viewport.y0);
+    const x0 = Math.min(1 - spanX, Math.max(0, focusX - fx * spanX));
+    const y0 = Math.min(1 - spanY, Math.max(0, focusY - fy * spanY));
+    onViewport({ x0, x1: x0 + spanX, y0, y1: y0 + spanY });
   };
   return (
     <div className={`relative w-full overflow-hidden rounded border border-line bg-[#081120] ${className}`}>
@@ -244,12 +263,12 @@ export default function FlipperLab({
 }) {
   const [view, setView] = useState<View>("vivo");
   const [regionZoom, setRegionZoom] = useState(false);
-  const [transforms, setTransforms] = useState<Record<View, ChartTransform>>({
-    vivo: RESET_TRANSFORM,
-    polar: RESET_TRANSFORM,
-    cartesiano: RESET_TRANSFORM,
-    fft: RESET_TRANSFORM,
-    stats: RESET_TRANSFORM,
+  const [viewports, setViewports] = useState<Record<View, ChartViewport>>({
+    vivo: RESET_VIEWPORT,
+    polar: RESET_VIEWPORT,
+    cartesiano: RESET_VIEWPORT,
+    fft: RESET_VIEWPORT,
+    stats: RESET_VIEWPORT,
   });
   const [manualPeaksBySeries, setManualPeaksBySeries] = useState<Record<string, Peak[]>>({});
   const [hiddenExtendedSeries, setHiddenExtendedSeries] = useState<Set<string>>(() => new Set());
@@ -509,19 +528,24 @@ export default function FlipperLab({
     }
   }, [extendedFftSeries, selectedFftSeries]);
 
-  const setTransform = (next: ChartTransform) => setTransforms((all) => ({ ...all, [view]: next }));
-  const resetView = () => setTransforms((all) => ({ ...all, [view]: RESET_TRANSFORM }));
+  const setViewport = (next: ChartViewport) => setViewports((all) => ({ ...all, [view]: next }));
+  const resetView = () => setViewports((all) => ({ ...all, [view]: RESET_VIEWPORT }));
 
   const updateCursor = (x: number, y: number, w: number, h: number) => {
     const clamp = (value: number, lower: number, upper: number) => Math.min(upper, Math.max(lower, value));
+    const viewport = viewports[view];
     if (view === "polar") {
       let maxI = 0.05;
       if (derived?.plot) for (let i = 0; i < derived.plot.length; i++) maxI = Math.max(maxI, derived.plot.amps[i]);
       for (const series of activeExtendedSeries) for (const current of series.currents) maxI = Math.max(maxI, current);
       maxI *= 1.15;
       const radius = Math.min(w, h) / 2 - 22;
-      const dx = x - w / 2;
-      const dy = y - h / 2;
+      const spanX = viewport.x1 - viewport.x0;
+      const spanY = viewport.y1 - viewport.y0;
+      const graphX = (x + viewport.x0 * w / spanX) * spanX;
+      const graphY = (y + viewport.y0 * h / spanY) * spanY;
+      const dx = graphX - w / 2;
+      const dy = graphY - h / 2;
       const angle = ((Math.atan2(dx, -dy) * 180) / Math.PI + 360) % 360;
       const current = Math.max(0, Math.hypot(dx, dy) / Math.max(radius, 1) * maxI);
       setCursorLabel(`θ ${angle.toFixed(1)}° · I ${current.toFixed(3)} A`);
@@ -540,9 +564,11 @@ export default function FlipperLab({
       }
       if (!Number.isFinite(minI) || !Number.isFinite(maxI)) return;
       const span = Math.max(0.01, maxI - minI);
-      minI = Math.max(0, minI - span * 0.12);
-      maxI += span * 0.12;
-      const angle = clamp(((x - 46) / Math.max(1, w - 56)) * 360, 0, 360);
+      const fullMinI = Math.max(0, minI - span * 0.12);
+      const fullMaxI = maxI + span * 0.12;
+      minI = fullMinI + (1 - viewport.y1) * (fullMaxI - fullMinI);
+      maxI = fullMinI + (1 - viewport.y0) * (fullMaxI - fullMinI);
+      const angle = clamp(viewport.x0 * 360 + ((x - 46) / Math.max(1, w - 56)) * (viewport.x1 - viewport.x0) * 360, 0, 360);
       const current = minI + ((h - 20 - y) / Math.max(1, h - 30)) * (maxI - minI);
       setCursorLabel(`θ ${angle.toFixed(2)}° · I ${current.toFixed(3)} A`);
       return;
@@ -556,19 +582,19 @@ export default function FlipperLab({
       const maxHz = spectra.length
         ? Math.max(...spectra.map((series) => (series.spectrum.magnitude.length - 1) * series.spectrum.dfHz))
         : derived?.mag ? (derived.mag.length - 1) * derived.df : 0;
-      const frequency = clamp(((x - left) / Math.max(1, w - left * 2)) * maxHz, 0, maxHz);
+      const frequency = clamp((viewport.x0 + ((x - left) / Math.max(1, w - left * 2)) * (viewport.x1 - viewport.x0)) * maxHz, 0, maxHz);
       setCursorLabel(`f ${frequency.toFixed(maxHz < 10 ? 3 : 2)} Hz`);
       return;
     }
     const width = Math.min(n, 2400);
     const first = Math.max(0, n - width);
-    const sample = clamp(Math.round(first + ((x - 4) / Math.max(1, w - 8)) * Math.max(0, width - 1)), first, Math.max(first, n - 1));
+    const sample = clamp(Math.round(first + (viewport.x0 + ((x - 4) / Math.max(1, w - 8)) * (viewport.x1 - viewport.x0)) * Math.max(0, width - 1)), first, Math.max(first, n - 1));
     const current = n ? flip.adcToAmps(flip.buffers.adcRef.current[sample]) : 0;
     setCursorLabel(`muestra ${sample + 1} · I ${current.toFixed(3)} A`);
   };
 
   /* ── dibujo: vivo ────────────────────────────────────── */
-  const drawLive = (ctx: CanvasRenderingContext2D, w: number, h: number) => {
+  const drawLive = (ctx: CanvasRenderingContext2D, w: number, h: number, viewport = RESET_VIEWPORT) => {
     ctx.clearRect(0, 0, w, h);
     ctx.font = "9px IBM Plex Mono, monospace";
     if (!n) {
@@ -578,21 +604,27 @@ export default function FlipperLab({
       return;
     }
     const W = Math.min(n, 2400);
-    const i0 = n - W;
+    const fullI0 = n - W;
+    const i0 = fullI0 + Math.floor(viewport.x0 * Math.max(0, W - 1));
+    const i1 = Math.min(n - 1, fullI0 + Math.max(1, Math.ceil(viewport.x1 * Math.max(1, W - 1))));
     let mn = Infinity;
     let mx = -Infinity;
-    for (let i = i0; i < n; i++) {
+    for (let i = i0; i <= i1; i++) {
       const a = flip.adcToAmps(flip.buffers.adcRef.current[i]);
       if (a < mn) mn = a;
       if (a > mx) mx = a;
     }
     if (mx - mn < 0.01) mx = mn + 0.01;
+    const fullMin = mn;
+    const fullMax = mx;
+    mn = fullMin + (1 - viewport.y1) * (fullMax - fullMin);
+    mx = fullMin + (1 - viewport.y0) * (fullMax - fullMin);
     const pad = 14;
     ctx.strokeStyle = "rgba(245,165,36,0.9)";
     ctx.lineWidth = 1.2;
     ctx.beginPath();
-    for (let i = i0; i < n; i++) {
-      const x = ((i - i0) / (W - 1)) * (w - 8) + 4;
+    for (let i = i0; i <= i1; i++) {
+      const x = ((i - i0) / Math.max(1, i1 - i0)) * (w - 8) + 4;
       const y = h - pad - ((flip.adcToAmps(flip.buffers.adcRef.current[i]) - mn) / (mx - mn)) * (h - pad * 2);
       i === i0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y);
     }
@@ -600,7 +632,7 @@ export default function FlipperLab({
     const ap = flip.buffers.angleRef.current;
     if (ap.length > 1) {
       const tb0 = flip.buffers.tbRef.current[i0];
-      const tb1 = flip.buffers.tbRef.current[n - 1];
+      const tb1 = flip.buffers.tbRef.current[i1];
       ctx.strokeStyle = "rgba(76,201,240,0.55)";
       ctx.lineWidth = 1;
       ctx.beginPath();
@@ -624,7 +656,7 @@ export default function FlipperLab({
   };
 
   /* ── dibujo: polar ───────────────────────────────────── */
-  const drawPolar = (ctx: CanvasRenderingContext2D, w: number, h: number) => {
+  const drawPolar = (ctx: CanvasRenderingContext2D, w: number, h: number, viewport = RESET_VIEWPORT) => {
     ctx.clearRect(0, 0, w, h);
     const cx = w / 2;
     const cy = h / 2;
@@ -636,6 +668,14 @@ export default function FlipperLab({
       ctx.fillText("necesita ángulo de la montura durante la captura", w / 2, h / 2);
       return;
     }
+    /* El dominio polar se reproyecta desde las series vectoriales para la zona
+     * elegida. No se amplía una imagen: al cambiar el viewport se vuelve a
+     * calcular cada punto, eje y ajuste. */
+    const spanX = viewport.x1 - viewport.x0;
+    const spanY = viewport.y1 - viewport.y0;
+    ctx.save();
+    ctx.translate((-viewport.x0 * w) / spanX, (-viewport.y0 * h) / spanY);
+    ctx.scale(1 / spanX, 1 / spanY);
     let maxI = 0.05;
     if (data) for (let i = 0; i < data.length; i++) maxI = Math.max(maxI, data.amps[i]);
     for (const series of activeExtendedSeries) for (const current of series.currents) maxI = Math.max(maxI, current);
@@ -823,10 +863,11 @@ export default function FlipperLab({
     ctx.fillStyle = "#f5a524";
     ctx.textAlign = "left";
     ctx.fillText(`max ${maxI.toFixed(3)} A · ${data?.length.toLocaleString("es-ES") ?? 0} puntos actuales`, 6, 11);
+    ctx.restore();
   };
 
   /* ── dibujo: cartesiano con barras de error ──────────── */
-  const drawCart = (ctx: CanvasRenderingContext2D, w: number, h: number) => {
+  const drawCart = (ctx: CanvasRenderingContext2D, w: number, h: number, viewport = RESET_VIEWPORT) => {
     ctx.clearRect(0, 0, w, h);
     const L = 46;
     const Bm = 20;
@@ -857,9 +898,14 @@ export default function FlipperLab({
     });
     if (!Number.isFinite(minI) || !Number.isFinite(maxI)) return;
     const span = Math.max(0.01, maxI - minI);
-    minI = Math.max(0, minI - span * 0.12);
-    maxI += span * 0.12;
-    const X = (a: number) => L + (a / 360) * (w - L - Rg);
+    const fullMinI = Math.max(0, minI - span * 0.12);
+    const fullMaxI = maxI + span * 0.12;
+    const fullSpanI = fullMaxI - fullMinI;
+    minI = fullMinI + (1 - viewport.y1) * fullSpanI;
+    maxI = fullMinI + (1 - viewport.y0) * fullSpanI;
+    const minAngle = viewport.x0 * 360;
+    const maxAngle = viewport.x1 * 360;
+    const X = (a: number) => L + ((a - minAngle) / (maxAngle - minAngle || 1)) * (w - L - Rg);
     const Y = (v: number) => h - Bm - ((v - minI) / (maxI - minI || 1)) * (h - T - Bm);
     if (derived?.minSector && !extendedDisplaySeries.length) {
       ctx.fillStyle = "rgba(76,201,240,0.09)";
@@ -883,7 +929,10 @@ export default function FlipperLab({
       ctx.fillText(v.toFixed(2), L - 4, y + 3);
     }
     ctx.textAlign = "center";
-    for (let a = 0; a <= 360; a += 60) ctx.fillText(`${a}°`, X(a), h - 7);
+    for (let tick = 0; tick <= 6; tick++) {
+      const a = minAngle + (maxAngle - minAngle) * tick / 6;
+      ctx.fillText(`${a.toFixed(maxAngle - minAngle < 25 ? 1 : 0)}°`, X(a), h - 7);
+    }
     if (data && data.factor > 1) {
       ctx.strokeStyle = "rgba(76,201,240,0.85)";
       ctx.lineWidth = 1;
@@ -893,8 +942,8 @@ export default function FlipperLab({
         const y = Y(data.amps[i]);
         const y0 = Y(data.amps[i] - data.ampsErr[i]);
         const y1 = Y(data.amps[i] + data.ampsErr[i]);
-        const x0 = X(Math.max(0, phase - data.angleErr[i]));
-        const x1 = X(Math.min(360, phase + data.angleErr[i]));
+        const x0 = X(Math.max(minAngle, phase - data.angleErr[i]));
+        const x1 = X(Math.min(maxAngle, phase + data.angleErr[i]));
         ctx.beginPath();
         ctx.moveTo(x, y0);
         ctx.lineTo(x, y1);
@@ -958,8 +1007,8 @@ export default function FlipperLab({
         const x = X(phase), y = Y(series.currents[i]);
         const y0 = Y(series.currents[i] - series.currentErr[i]);
         const y1 = Y(series.currents[i] + series.currentErr[i]);
-        const x0 = X(Math.max(0, phase - series.angleErr[i]));
-        const x1 = X(Math.min(360, phase + series.angleErr[i]));
+        const x0 = X(Math.max(minAngle, phase - series.angleErr[i]));
+        const x1 = X(Math.min(maxAngle, phase + series.angleErr[i]));
         ctx.beginPath(); ctx.moveTo(x, y0); ctx.lineTo(x, y1); ctx.moveTo(x0, y); ctx.lineTo(x1, y); ctx.stroke();
       }
     };
@@ -996,24 +1045,24 @@ export default function FlipperLab({
   };
 
   /* ── dibujo: FFT ─────────────────────────────────────── */
-  const drawFft = (ctx: CanvasRenderingContext2D, w: number, h: number) => {
+  const drawFft = (ctx: CanvasRenderingContext2D, w: number, h: number, viewport = RESET_VIEWPORT) => {
     ctx.clearRect(0, 0, w, h);
     const mag = derived?.mag;
     ctx.font = "8.5px IBM Plex Mono, monospace";
-    const drawFrequencyTicks = (maxHz: number, X: (hz: number) => number) => {
+    const drawFrequencyTicks = (minHz: number, maxHz: number, X: (hz: number) => number) => {
       const ticks = 6;
       ctx.strokeStyle = "rgba(29,48,80,0.9)";
       ctx.fillStyle = "#42567a";
       ctx.lineWidth = 1;
       ctx.textAlign = "center";
       for (let tick = 0; tick <= ticks; tick++) {
-        const hz = maxHz * tick / ticks;
+        const hz = minHz + (maxHz - minHz) * tick / ticks;
         const x = X(hz);
         ctx.beginPath();
         ctx.moveTo(x, h - 18);
         ctx.lineTo(x, h - 14);
         ctx.stroke();
-        ctx.fillText(`${hz.toFixed(maxHz < 10 ? 2 : 1)}`, x, h - 6);
+        ctx.fillText(`${hz.toFixed(maxHz - minHz < 10 ? 2 : 1)}`, x, h - 6);
       }
     };
     if (extendedFftSeries.length) {
@@ -1022,11 +1071,15 @@ export default function FlipperLab({
         : extendedFftSeries.filter((series) => series.id === selectedFftSeries);
       const spectra = visible.length ? visible : [extendedFftSeries[0]];
       const L = 10, Bm = 18;
-      const maxHz = Math.max(...spectra.map((series) => (series.spectrum.magnitude.length - 1) * series.spectrum.dfHz));
+      const fullMaxHz = Math.max(...spectra.map((series) => (series.spectrum.magnitude.length - 1) * series.spectrum.dfHz));
       let maxMagnitude = 0;
       for (const series of spectra) for (let i = 2; i < series.spectrum.magnitude.length; i++) maxMagnitude = Math.max(maxMagnitude, series.spectrum.magnitude[i]);
-      const X = (hz: number) => L + (hz / (maxHz || 1)) * (w - L * 2);
-      const Y = (value: number) => h - Bm - Math.sqrt(value / (maxMagnitude || 1)) * (h - Bm - 12);
+      const minHz = viewport.x0 * fullMaxHz;
+      const maxHz = viewport.x1 * fullMaxHz;
+      const minMagnitude = (1 - viewport.y1) * maxMagnitude;
+      const viewMaxMagnitude = (1 - viewport.y0) * maxMagnitude;
+      const X = (hz: number) => L + ((hz - minHz) / (maxHz - minHz || 1)) * (w - L * 2);
+      const Y = (value: number) => h - Bm - Math.sqrt(Math.max(0, (value - minMagnitude) / (viewMaxMagnitude - minMagnitude || 1))) * (h - Bm - 12);
       for (const series of spectra) {
         ctx.strokeStyle = series.id === "average" ? "rgba(240,245,255,0.78)" : series.color;
         ctx.lineWidth = series.id === "average" ? 2.4 : 1.2;
@@ -1039,7 +1092,7 @@ export default function FlipperLab({
         ctx.stroke();
       }
       ctx.globalAlpha = 1;
-      drawFrequencyTicks(maxHz, X);
+      drawFrequencyTicks(minHz, maxHz, X);
       ctx.fillStyle = "#42567a"; ctx.textAlign = "right"; ctx.fillText("Hz", w - L, 10);
       return;
     }
@@ -1056,16 +1109,20 @@ export default function FlipperLab({
     const usable = mag.length;
     let mx = 0;
     for (let i = 2; i < usable; i++) if (mag[i] > mx) mx = mag[i];
-    const maxHz = (usable - 1) * derived.df;
-    const X = (i: number) => L + (i / Math.max(1, usable - 1)) * (w - L * 2);
-    const Y = (v: number) => h - Bm - Math.sqrt(v / (mx || 1)) * (h - Bm - 12);
+    const fullMaxHz = (usable - 1) * derived.df;
+    const minHz = viewport.x0 * fullMaxHz;
+    const maxHz = viewport.x1 * fullMaxHz;
+    const minMagnitude = (1 - viewport.y1) * mx;
+    const maxMagnitude = (1 - viewport.y0) * mx;
+    const X = (i: number) => L + ((i * derived.df - minHz) / (maxHz - minHz || 1)) * (w - L * 2);
+    const Y = (v: number) => h - Bm - Math.sqrt(Math.max(0, (v - minMagnitude) / (maxMagnitude - minMagnitude || 1))) * (h - Bm - 12);
     ctx.fillStyle = "rgba(76,201,240,0.5)";
     const bw = Math.max(1, (w - L * 2) / usable - 0.5);
     for (let i = 2; i < usable; i++) {
       const y = Y(mag[i]);
       ctx.fillRect(X(i), y, bw, h - Bm - y);
     }
-    drawFrequencyTicks(maxHz, (hz) => X(hz / derived.df));
+    drawFrequencyTicks(minHz, maxHz, (hz) => X(hz / derived.df));
     ctx.fillStyle = "#42567a";
     ctx.textAlign = "right";
     ctx.fillText("Hz", w - L, 10);
@@ -1166,8 +1223,8 @@ export default function FlipperLab({
 
   const chartFor = useMemo(() => {
     const interaction = {
-      transform: transforms[view],
-      onTransform: setTransform,
+      viewport: viewports[view],
+      onViewport: setViewport,
       onCursor: updateCursor,
       onCursorLeave: () => setCursorLabel(""),
       cursorLabel,
@@ -1185,7 +1242,7 @@ export default function FlipperLab({
         return <ChartCanvas draw={drawLive} className="h-[46dvh] min-h-[300px]" {...interaction} />;
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [view, derived, n, flip.tick, flip.overlayRevs, flip.capturing, flip.extendedAnalysis, extendedMeanProfile, selectedEllipse, polarLoadAnalysis, hiddenExtendedSeries, showExtendedMean, extendedFftSeries, selectedFftSeries, overlayFftSeries, regionZoom, transforms, selectedPeaks, cursorLabel]);
+  }, [view, derived, n, flip.tick, flip.overlayRevs, flip.capturing, flip.extendedAnalysis, extendedMeanProfile, selectedEllipse, polarLoadAnalysis, hiddenExtendedSeries, showExtendedMean, extendedFftSeries, selectedFftSeries, overlayFftSeries, regionZoom, viewports, selectedPeaks, cursorLabel]);
 
   const selCls =
     "rounded border border-line bg-[#0c1930] px-1.5 py-1 font-mono text-[10.5px] text-fog focus:border-ion/60 focus:outline-none disabled:opacity-40";

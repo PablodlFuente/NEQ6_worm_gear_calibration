@@ -328,10 +328,10 @@ export function useFlipper({ cpr1 }: Props) {
   }, [notice]);
 
   const recordAngle = (deg: number, tb = Date.now()) => {
-    /* startAxisTest limpia la serie antes de cada prueba. No descartamos un
-     * feedback :j válido por una transición asíncrona de React/START: ese era
-     * precisamente el caso que dejaba corriente sin ángulo en plena captura. */
-    if (!angleOn) return;
+    /* No anclar la señal ya detenida en el ángulo del post-roll: las últimas
+     * muestras que el ring vacía tras STOP deben quedar asociadas al límite de
+     * captura, nunca a los 2° extra usados sólo para frenar. */
+    if (!angleOn || !capturingRef.current) return;
     angleRef.current.push({ tb, deg: ((deg % 360) + 360) % 360 });
   };
 
