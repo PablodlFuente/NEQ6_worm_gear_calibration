@@ -28,21 +28,11 @@ de montura.
 
 ## Proyecto
 
-- [Procedimiento de calibración](Procedimiento-operativo-de-calibracion.md)
 - [Montaje y firmware del Flipper](Configuracion-del-Flipper.md)
 - [Protocolo del logger](Protocolo-del-logger-Flipper.md)
-- [Diagnóstico](Resolucion-de-problemas.md)
 - [Pruebas automatizadas](https://github.com/PablodlFuente/NEQ6_worm_gear_calibration/tree/HEAD/tests)
 
 ## Licencia y plataforma
 
 - [GNU Affero General Public License v3.0](https://www.gnu.org/licenses/agpl-3.0.html)
 - [GitHub Docs: documentación con wikis](https://docs.github.com/en/communities/documenting-your-project-with-wikis)
-
-## Convención de evidencia
-
-Las referencias de protocolo describen qué solicita la placa y cómo responde.
-Los resultados de una montura concreta deben apoyarse además en su tráfico
-registrado y en medición física. Cuando el documento Sky-Watcher y una
-implementación de terceros difieran, la wiki lo trata como una discrepancia que
-debe resolverse con firmware y tráfico reales, no por autoridad aparente.

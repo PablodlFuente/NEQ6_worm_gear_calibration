@@ -73,13 +73,6 @@ Los comandos de escritura persistente, posición o bootloader requieren
 confirmación en la interfaz. `L1` y `L2` no la requieren porque introducir un
 diálogo en una parada urgente sería contraproducente.
 
-## Qué significa “posición real” aquí
-
-La posición consultada es real respecto al estado interno de la controladora,
-no respecto a un encoder externo. La aplicación calcula progreso y velocidad
-desde variaciones de ese contador y timestamps de respuesta. Si el motor pierde
-pasos, el contador puede seguir avanzando: una gráfica aparentemente completa
-no demuestra por sí sola una vuelta mecánica completa.
 
 ## Referencias
 

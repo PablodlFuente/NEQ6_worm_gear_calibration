@@ -62,15 +62,6 @@ muestras y los contadores `OOR/OVF`.
 3. En la web abre **Ajustes → Escanear BLE** y elige el Flipper.
 4. Espera a que aparezca `ALINEADO`; la aplicación hace seis intercambios SYNC.
 
-El firmware usa el servicio serie oficial:
-`8fe5b3d5-2e7f-4a98-2a48-7acc60fe0000`.
-
-La aplicación móvil oficial puede instalar aplicaciones de catálogo por BLE,
-pero este logger, mientras se ejecuta, usa ese servicio serie para su protocolo
-ADC y desactiva el RPC oficial. Por ello la web no intenta sobrescribir/actualizar
-el mismo FAP por BLE. Instala esta compilación local mediante USB/qFlipper/uFBT;
-un botón BLE sólo sería viable tras publicar el FAP en catálogo o implementar
-un cargador RPC independiente.
 
 ## Alternativa USB-COM
 

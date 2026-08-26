@@ -4,23 +4,14 @@
 
 La aplicación mantiene dos enlaces independientes. El EQDirect transporta el
 protocolo ASCII del motor controller a 9600 8N1. El Flipper transporta comandos
-de adquisición y tramas ADC mediante BLE Serial o USB CDC1. Mezclar ambos
-puertos o permitir dos consumidores simultáneos rompe el modelo transaccional.
+de adquisición y tramas ADC mediante BLE Serial o USB CDC1. No se puede mezclar ambos modos. Se aconseja usar BLE ya que el USB se ha visto que puede cambiar la referencia a GND del ADC.
 
-```text
-Navegador
-  |-- Web Serial 9600 8N1 --> EQDirect --> placa de motores NEQ6
-  `-- BLE Serial o CDC1 ----> Flipper --> ADC PA7 --> shunt low-side
-```
+Un comando de la montura debe recibir `=` o `!` terminado en CR antes de que se
+emita la siguiente orden dependiente.
 
-La interfaz ejecuta las operaciones del motor como transacciones ordenadas. Un
-comando de la montura debe recibir `=` o `!` terminado en CR antes de que se
-emita la siguiente orden dependiente. El logger, en cambio, multiplexa comandos
-ASCII con tramas binarias de muestra.
+## Lectura de corriente
 
-## Cadena de corriente
-
-Para una lectura de 12 bits, la conversión utilizada es:
+Para una lectura de 12 bits del ADC del Flipper Zero, la conversión utilizada es:
 
 ```text
 I [A] = adc_raw * 2.5 * K / (4096 * R_shunt)
@@ -33,7 +24,7 @@ la corriente máxima prevista. La aplicación no sustituye ese dimensionado.
 
 ## Relojes y sincronización
 
-Cada muestra contiene `t_us`, el contador monotónico del Flipper. En cada
+Cada muestra contiene `t_us`, el contador del Flipper. En cada
 intercambio `SYNC`, la web registra envío y recepción, estima el instante del
 Flipper en el punto medio del RTT y obtiene un desfase. Usa la mediana de varias
 medidas para reducir el efecto de latencias puntuales.
@@ -49,28 +40,20 @@ transporte limitan la precisión temporal real.
 ## Posición y ángulo de muestra
 
 La posición de la montura procede de consultas periódicas al contador de la
-placa de motores. Cada respuesta crea un punto `(timestamp, posición)`. Para una
-muestra situada entre dos puntos se usa interpolación lineal temporal. No se
-integra la velocidad solicitada y no se inventa el final de una captura si
-faltan anclas.
+placa de motores. Cada respuesta crea un punto `(timestamp, posición)`.
 
-El ángulo exportado se normaliza a `[0, 360)` y `rev` comienza en 1. Para los
-cálculos internos se conserva también el ángulo desenvuelto, imprescindible
-para distinguir 359° -> 1° de un salto hacia atrás.
-
-### Limitación fundamental
+### Limitación 
 
 El feedback confirma pasos contabilizados por la electrónica. No confirma la
 posición física del conjunto telescopio-eje ante deslizamiento, acoplamiento
 suelto o pérdida de pasos. Por eso la velocidad medida es superior a una
-estimación por tiempo, pero no equivale a un encoder metrológico externo.
+estimación por tiempo, ya la montura no dispone de sistema de feedback de posición como un encoder.
 
-## Datos inmutables y vistas derivadas
+## Datos y vistas derivadas
 
-Los buffers de adquisición almacenan timestamp, ADC y anclas angulares. El
+Los buffers de adquisición almacenan timestamp, ADC y valores angulares. El
 selector `promedio x N` sólo cambia la vista: no reduce los datos conservados.
-Las gráficas, estadísticas, sectores, elipse y FFT son productos derivados y
-pueden recalcularse sin alterar las muestras originales.
+
 
 ## Implementación relacionada
 

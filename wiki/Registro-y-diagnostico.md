@@ -103,5 +103,3 @@ npm run check
 cd flipper_fw\neq6_current_logger
 ..\..\.tools\ufbt-venv\Scripts\ufbt.exe
 ```
-
-Consulta también [Resolución de problemas](Resolucion-de-problemas.md).

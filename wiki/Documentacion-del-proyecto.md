@@ -12,8 +12,6 @@
 - [Interfaz de la aplicación](Interfaz-de-la-aplicacion.md): recorrido visual por todas las vistas.
 - [Configuración del Flipper](Configuracion-del-Flipper.md): cableado, compilación, BLE y USB-COM.
 - [Protocolo del logger](Protocolo-del-logger-Flipper.md): comandos y formato binario compartido.
-- [Procedimiento operativo](Procedimiento-operativo-de-calibracion.md): preparación y ejecución segura de la calibración.
-- [Resolución de problemas](Resolucion-de-problemas.md): diagnóstico por síntomas.
 - `SkyWatcher_EQ6_Protocolo_investigacion.pdf`: referencia
   consolidada del protocolo de control de motores usada por la interfaz.
 

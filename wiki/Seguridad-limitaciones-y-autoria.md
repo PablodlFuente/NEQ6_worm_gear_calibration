@@ -63,7 +63,4 @@ Proyecto original: **Pablo de la Fuente**
 Repositorio: <https://github.com/PablodlFuente/NEQ6_worm_gear_calibration>
 
 La programación, revisión y documentación han sido asistidas por **OpenAI
-Codex**. Esa asistencia no implica certificación, garantía, validación de
-seguridad ni respaldo del proyecto por parte de OpenAI. La autoría y las
-decisiones de publicación corresponden al titular del proyecto y a sus
-contribuidores humanos.
+Codex**.

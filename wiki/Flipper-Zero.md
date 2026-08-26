@@ -7,7 +7,7 @@ forma parte del lazo de control del motor. Se eligió porque era el dispositivo
 disponible durante las vacaciones en que se montó el prototipo; una placa ADC o
 microcontrolador puede reemplazarlo si conserva el contrato de muestras y
 comandos. Entre las alternativas previstas están un ESP32 con ADC externo, un
-Arduino Mini u otra placa con ADC propio o externo.
+Arduino u otra placa con ADC propio o externo.
 
 ## Entrada y calibración
 
@@ -16,13 +16,6 @@ Arduino Mini u otra placa con ADC propio o externo.
 - Valores iniciales: `R_shunt = 0,323 ohm`, `K = 1,0025189`.
 - Conversión: `I = adc_raw * 2,5 * K / (4096 * R_shunt)`.
 
-PA7 se conecta a la caída del shunt low-side, nunca al positivo de 12 V. Deben
-existir masa común, limitación de tensión y una comprobación previa con
-multímetro. La validación de rango del firmware no protege físicamente el pin.
-
-`K` corrige la cadena completa de medida y no debe usarse para ocultar una
-resistencia de shunt mal caracterizada. Registra temperatura, instrumento de
-referencia y puntos de calibración si necesitas comparar sesiones con rigor.
 
 ## Formato de muestra
 
@@ -76,9 +69,7 @@ ufbt
 ```
 
 El FAP generado queda en `dist/`. La API del SDK debe coincidir con el firmware
-del Flipper. Para instalación local usa qFlipper o uFBT; la aplicación web no
-actualiza este FAP por BLE porque el logger ocupa el servicio serie y no expone
-un cargador RPC seguro.
+del Flipper. Para instalación local usa qFlipper o uFBT.
 
 ## Referencias internas
 

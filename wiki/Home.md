@@ -11,30 +11,17 @@ problemas mecánicos. Además, permite comandar la montura por serial EQDirect.
 ## Nivel y alcance
 
 Se presupone que el lector sabe trabajar con electrónica de baja tensión,
-shunts, UART, motores paso a paso y análisis básico de señales. La wiki explica
-las decisiones específicas de este proyecto, pero no enseña desde cero a usar
-un multímetro, dimensionar una protección ni ajustar mecánicamente una montura.
-
-El sistema relaciona tres dominios distintos:
-
-1. **Eléctrico:** el ADC del Flipper mide la caída en un shunt low-side.
-2. **Temporal:** cada conversión incorpora un contador monotónico en
-   microsegundos; la web sincroniza ese reloj con el navegador.
-3. **Mecánico:** las consultas de posición de la placa de motores actúan como
-   anclas angulares y la web interpola las muestras comprendidas entre ellas.
-
-El contador de posición pertenece a la controladora de pasos. No existe un
-encoder absoluto en el eje de salida: un bloqueo con pérdida física de pasos
-puede no quedar reflejado correctamente en la posición comunicada.
+UART, motores paso a paso y análisis básico de señales. La wiki explica
+las decisiones específicas de este proyecto, pero no enseña desde cero conceptos de electrónica o mecánica de la montura.
 
 ## Evolución del registrador ADC
 
 El Flipper Zero es el registrador ADC del prototipo porque era el dispositivo
 disponible durante las vacaciones en que se inició el montaje. No es una
 dependencia de la arquitectura: puede sustituirse por un microcontrolador con
-ADC propio o externo, por ejemplo un ESP32 con ADC externo, un Arduino Mini u
+ADC propio o externo, por ejemplo un ESP32 con ADC externo, un Arduino  u
 otra placa que entregue el mismo contrato de timestamp, lectura ADC y comandos
-por serie.
+por serie. Para ello habría que modificar ligeramnte el código o contactar con el autor que está abierto a está modificación si hay usuarios que lo requieran.
 
 ## Ruta recomendada
 
@@ -45,11 +32,9 @@ por serie.
 - [Configuración detallada del Flipper](Configuracion-del-Flipper.md)
 - [Protocolo del logger Flipper](Protocolo-del-logger-Flipper.md)
 - [Procedimiento de ensayo](Procedimiento-de-ensayo.md)
-- [Procedimiento operativo de calibración](Procedimiento-operativo-de-calibracion.md)
 - [Análisis de datos](Analisis-de-datos.md)
 - [Formato de datos y exportación](Formato-de-datos-y-exportacion.md)
 - [Registro y diagnóstico](Registro-y-diagnostico.md)
-- [Resolución de problemas](Resolucion-de-problemas.md)
 - [Recorrido por la interfaz](Recorrido-por-la-interfaz.md)
 - [Seguridad, limitaciones y autoría](Seguridad-limitaciones-y-autoria.md)
 - [Referencias](Referencias.md)

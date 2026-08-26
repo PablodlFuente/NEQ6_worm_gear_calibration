@@ -7,7 +7,7 @@
   contexto seguro (`localhost` o HTTPS).
 - EQDirect/UART-USB compatible con el nivel eléctrico de la montura.
 - Flipper Zero con `NEQ6 Current`, o un logger que implemente el protocolo.
-- Shunt low-side dimensionado, masa común y protección frente a sobretensión.
+- Shunt 
 
 ## Instalación reproducible
 

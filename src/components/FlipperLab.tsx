@@ -251,7 +251,7 @@ export default function FlipperLab({
     fft: RESET_TRANSFORM,
     stats: RESET_TRANSFORM,
   });
-  const [selectedPeaks, setSelectedPeaks] = useState<Peak[]>([]);
+  const [manualPeaksBySeries, setManualPeaksBySeries] = useState<Record<string, Peak[]>>({});
   const [hiddenExtendedSeries, setHiddenExtendedSeries] = useState<Set<string>>(() => new Set());
   const [showExtendedMean, setShowExtendedMean] = useState(true);
   const [selectedFftSeries, setSelectedFftSeries] = useState("average");
@@ -278,6 +278,11 @@ export default function FlipperLab({
     return average ? [...passes, { id: "average", label: "Promedio", color: "#f0f5ff", spectrum: average }] : passes;
   }, [extendedPasses]);
   const selectedExtendedPass = extendedPasses.find((pass) => pass.id === selectedFftSeries);
+  const manualPeakKey = extendedFftSeries.length ? selectedFftSeries : "current";
+  const selectedPeaks = manualPeaksBySeries[manualPeakKey] ?? [];
+  const updateSelectedPeaks = (update: (peaks: Peak[]) => Peak[]) => {
+    setManualPeaksBySeries((all) => ({ ...all, [manualPeakKey]: update(all[manualPeakKey] ?? []) }));
+  };
   const displayedFftPeaks: Peak[] = extendedFftSeries.length
     ? selectedExtendedPass
       ? selectedExtendedPass.peaks.slice(0, 5).map((peak) => ({
@@ -488,7 +493,7 @@ export default function FlipperLab({
   }, [extendedPasses]);
   void flip.tick;
   useEffect(() => {
-    if (!n) setSelectedPeaks([]);
+    if (!n) setManualPeaksBySeries({});
   }, [n]);
   useEffect(() => {
     if (flip.extendedAnalysis) return;
@@ -496,7 +501,7 @@ export default function FlipperLab({
     setShowExtendedMean(true);
   }, [flip.extendedAnalysis]);
   useEffect(() => {
-    if (flip.extendedAnalysis) setSelectedPeaks([]);
+    if (flip.extendedAnalysis) setManualPeaksBySeries({});
   }, [flip.extendedAnalysis]);
   useEffect(() => {
     if (!extendedFftSeries.some((series) => series.id === selectedFftSeries)) {
@@ -544,8 +549,12 @@ export default function FlipperLab({
     }
     if (view === "fft") {
       const left = 10;
-      const maxHz = extendedFftSeries.length
-        ? Math.max(...extendedFftSeries.map((series) => (series.spectrum.magnitude.length - 1) * series.spectrum.dfHz))
+      const visible = overlayFftSeries
+        ? extendedFftSeries
+        : extendedFftSeries.filter((series) => series.id === selectedFftSeries);
+      const spectra = visible.length ? visible : extendedFftSeries;
+      const maxHz = spectra.length
+        ? Math.max(...spectra.map((series) => (series.spectrum.magnitude.length - 1) * series.spectrum.dfHz))
         : derived?.mag ? (derived.mag.length - 1) * derived.df : 0;
       const frequency = clamp(((x - left) / Math.max(1, w - left * 2)) * maxHz, 0, maxHz);
       setCursorLabel(`f ${frequency.toFixed(maxHz < 10 ? 3 : 2)} Hz`);
@@ -1080,17 +1089,20 @@ export default function FlipperLab({
   };
 
   const pickFft = (x: number) => {
-    const mag = derived?.mag;
-    if (!mag || !derived) return;
+    const spectrum = extendedFftSeries.length
+      ? extendedFftSeries.find((series) => series.id === selectedFftSeries)?.spectrum
+      : derived?.mag ? { magnitude: Array.from(derived.mag), dfHz: derived.df } : null;
+    if (!spectrum) return;
+    const mag = spectrum.magnitude;
     const center = Math.max(2, Math.min(mag.length - 2, Math.round(x * mag.length)));
     const radius = Math.max(8, Math.round(mag.length * 0.008));
     let bin = center;
     for (let i = Math.max(2, center - radius); i <= Math.min(mag.length - 2, center + radius); i++) {
       if (mag[i] > mag[bin]) bin = i;
     }
-    const freq = bin * derived.df;
+    const freq = bin * spectrum.dfHz;
     const peak = { bin, freq, period: 1 / freq, mag: mag[bin] };
-    setSelectedPeaks((current) =>
+    updateSelectedPeaks((current) =>
       current.some((item) => item.bin === bin) ? current : [...current, peak].sort((a, b) => a.freq - b.freq),
     );
   };
@@ -1168,7 +1180,7 @@ export default function FlipperLab({
       case "cartesiano":
         return <ChartCanvas draw={drawCart} className="h-[46dvh] min-h-[300px]" onPick={(x, y, cx, cy) => pickMountPosition("cartesiano", x, y, cx, cy)} {...interaction} />;
       case "fft":
-        return <ChartCanvas draw={drawFft} className="h-[46dvh] min-h-[300px]" onPick={extendedFftSeries.length ? undefined : (x) => pickFft(x)} {...interaction} />;
+        return <ChartCanvas draw={drawFft} className="h-[46dvh] min-h-[300px]" onPick={(x) => pickFft(x)} {...interaction} />;
       default:
         return <ChartCanvas draw={drawLive} className="h-[46dvh] min-h-[300px]" {...interaction} />;
     }
@@ -1356,7 +1368,7 @@ export default function FlipperLab({
               <div className="overflow-hidden rounded border border-line">
                 <p className="border-b border-line bg-[#0c1930] px-2 py-1.5 font-mono text-[9px] text-dim">
                   {extendedFftSeries.length
-                    ? "5 picos principales del espectro seleccionado · cambia de serie o superpone todas arriba"
+                    ? "5 picos principales del espectro seleccionado + selecciones manuales · pulsa sobre el espectro para añadir"
                     : "5 picos principales automáticos + selecciones manuales · pulsa sobre el espectro para añadir"}
                 </p>
                 <table className="w-full font-mono text-[10px]">
@@ -1395,8 +1407,8 @@ export default function FlipperLab({
                           {p.period >= 1 ? `${p.period.toFixed(3)} s` : `${(p.period * 1000).toFixed(1)} ms`}
                         </td>
                         <td className="px-2 py-1 tabular-nums text-ion">
-                          {derived.st.feedbackSpeedDegS
-                            ? `${(p.period * derived.st.feedbackSpeedDegS).toFixed(3)}°`
+                          {displayedFftSpeed
+                            ? `${(p.period * displayedFftSpeed).toFixed(3)}°`
                             : "—"}
                         </td>
                         <td className="px-2 py-1 text-right tabular-nums text-dim">
@@ -1406,7 +1418,7 @@ export default function FlipperLab({
                           <button
                             title="Quitar pico"
                             aria-label={`Quitar pico ${p.freq.toFixed(3)} Hz`}
-                            onClick={() => setSelectedPeaks((items) => items.filter((item) => item.bin !== p.bin))}
+                            onClick={() => updateSelectedPeaks((items) => items.filter((item) => item.bin !== p.bin))}
                             className="text-dim hover:text-alert"
                           >
                             ×
