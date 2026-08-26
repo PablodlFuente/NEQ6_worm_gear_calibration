@@ -5,14 +5,23 @@ export default function AiSettingsPanel() {
   const [settings, setSettings] = useAiSettings();
   const [name, setName] = useState("");
   const [url, setUrl] = useState("");
+  const [inputSelector, setInputSelector] = useState("");
+  const [sendSelector, setSendSelector] = useState("");
+  const [responseSelector, setResponseSelector] = useState("");
+  const [stopSelector, setStopSelector] = useState("");
   const add = () => {
     const trimmedName = name.trim();
     const trimmedUrl = url.trim();
     try {
       const parsed = new URL(trimmedUrl);
       if (!/^https?:$/.test(parsed.protocol) || !trimmedName) return;
-      setSettings({ ...settings, providers: [...settings.providers, { id: crypto.randomUUID(), name: trimmedName, url: parsed.href }] });
+      if (!inputSelector.trim() || !sendSelector.trim() || !responseSelector.trim()) return;
+      setSettings({ ...settings, providers: [...settings.providers, {
+        id: crypto.randomUUID(), name: trimmedName, url: parsed.href,
+        adapter: { input: inputSelector.trim(), send: sendSelector.trim(), response: responseSelector.trim(), stop: stopSelector.trim() },
+      }] });
       setName(""); setUrl("");
+      setInputSelector(""); setSendSelector(""); setResponseSelector(""); setStopSelector("");
     } catch { /* URL incompleta: se conserva para que el usuario la corrija. */ }
   };
   return (
@@ -26,7 +35,6 @@ export default function AiSettingsPanel() {
       </div>
       {settings.enabled && (
         <div className="mt-3 space-y-2">
-          <a href="/neq6-ai-browser-bridge.zip" download className="flex w-full items-center justify-center rounded border border-mint/50 bg-mint/10 px-3 py-2 font-display text-[9px] font-bold tracking-wider text-mint hover:bg-mint/20">DESCARGAR PUENTE AUTOMÁTICO</a>
           {settings.providers.map((provider) => (
             <div key={provider.id} className="flex items-center gap-2 rounded border border-line bg-[#0c1930] px-2 py-1.5 font-mono text-[10px]">
               <span className="min-w-20 text-fog">{provider.name}</span>
@@ -34,10 +42,14 @@ export default function AiSettingsPanel() {
               <button onClick={() => setSettings({ ...settings, providers: settings.providers.filter((item) => item.id !== provider.id) })} className="text-dim hover:text-alert" aria-label={`Eliminar ${provider.name}`}>×</button>
             </div>
           ))}
-          <div className="grid grid-cols-1 gap-1.5 sm:grid-cols-[0.7fr_1.5fr_auto]">
+          <div className="grid grid-cols-1 gap-1.5 sm:grid-cols-2">
             <input value={name} onChange={(event) => setName(event.target.value)} placeholder="Nombre" className="rounded border border-line bg-[#0c1930] px-2 py-1.5 font-mono text-[10px] text-fog focus:border-ion/60 focus:outline-none" />
             <input value={url} onChange={(event) => setUrl(event.target.value)} placeholder="https://…" className="rounded border border-line bg-[#0c1930] px-2 py-1.5 font-mono text-[10px] text-fog focus:border-ion/60 focus:outline-none" />
-            <button onClick={add} className="rounded border border-ion/50 px-3 py-1.5 font-display text-[9px] font-bold tracking-wider text-ion hover:bg-ion/10">AÑADIR</button>
+            <input value={inputSelector} onChange={(event) => setInputSelector(event.target.value)} placeholder="Selector del campo de entrada" className="rounded border border-line bg-[#0c1930] px-2 py-1.5 font-mono text-[10px] text-fog focus:border-ion/60 focus:outline-none" />
+            <input value={sendSelector} onChange={(event) => setSendSelector(event.target.value)} placeholder="Selector del botón enviar" className="rounded border border-line bg-[#0c1930] px-2 py-1.5 font-mono text-[10px] text-fog focus:border-ion/60 focus:outline-none" />
+            <input value={responseSelector} onChange={(event) => setResponseSelector(event.target.value)} placeholder="Selector de la respuesta" className="rounded border border-line bg-[#0c1930] px-2 py-1.5 font-mono text-[10px] text-fog focus:border-ion/60 focus:outline-none" />
+            <input value={stopSelector} onChange={(event) => setStopSelector(event.target.value)} placeholder="Selector de generación (opcional)" className="rounded border border-line bg-[#0c1930] px-2 py-1.5 font-mono text-[10px] text-fog focus:border-ion/60 focus:outline-none" />
+            <button onClick={add} className="rounded border border-ion/50 px-3 py-1.5 font-display text-[9px] font-bold tracking-wider text-ion hover:bg-ion/10 sm:col-span-2">AÑADIR IA</button>
           </div>
         </div>
       )}

@@ -3,6 +3,7 @@ import react from "@vitejs/plugin-react";
 import tailwindcss from "@tailwindcss/vite";
 import { appendFile, mkdir, readFile } from "node:fs/promises";
 import { resolve } from "node:path";
+import { aiScraperMiddleware } from "./tools/ai-scraper.js";
 
 function localAuditLog() {
   const logDir = resolve(process.cwd(), "logs");
@@ -10,6 +11,7 @@ function localAuditLog() {
   return {
     name: "neq6-local-audit-log",
     configureServer(server) {
+      server.middlewares.use(aiScraperMiddleware());
       server.middlewares.use("/api/audit", (request, response) => {
         if (request.method !== "POST") {
           response.statusCode = 405;

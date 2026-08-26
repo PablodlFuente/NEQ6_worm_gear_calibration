@@ -4,6 +4,12 @@ export interface AiProvider {
   id: string;
   name: string;
   url: string;
+  adapter?: {
+    input: string;
+    send: string;
+    response: string;
+    stop?: string;
+  };
 }
 
 export interface AiAnalysisSettings {

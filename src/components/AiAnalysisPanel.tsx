@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { analysisFingerprint, getAiResponse, saveAiResponse, useAiSettings } from "../hooks/useAiAnalysis";
 
 export default function AiAnalysisPanel({ prompt }: { prompt: string }) {
@@ -9,9 +9,8 @@ export default function AiAnalysisPanel({ prompt }: { prompt: string }) {
   const [response, setResponse] = useState("");
   const [savedAt, setSavedAt] = useState<number | null>(null);
   const [notice, setNotice] = useState("");
-  const [bridgeReady, setBridgeReady] = useState(false);
+  const [serviceReady, setServiceReady] = useState<boolean | null>(null);
   const [runningProviders, setRunningProviders] = useState<Set<string>>(() => new Set());
-  const pendingRef = useRef(new Map<string, { providerId: string; fingerprint: string }>());
 
   useEffect(() => {
     if (!provider && settings.providers[0]) setProviderId(settings.providers[0].id);
@@ -23,67 +22,45 @@ export default function AiAnalysisPanel({ prompt }: { prompt: string }) {
     setSavedAt(saved?.updatedAt ?? null);
   }, [provider?.id, fingerprint]);
   useEffect(() => {
-    const receive = (event: MessageEvent) => {
-      if (event.source !== window || event.origin !== location.origin || event.data?.source !== "neq6-ai-bridge") return;
-      if (event.data.type === "NEQ6_AI_BRIDGE_READY") {
-        setBridgeReady(true);
-        return;
-      }
-      if (event.data.type !== "NEQ6_AI_RESULT") return;
-      const pending = pendingRef.current.get(event.data.requestId);
-      if (!pending) return;
-      pendingRef.current.delete(event.data.requestId);
-      setRunningProviders((current) => {
-        const next = new Set(current); next.delete(pending.providerId); return next;
-      });
-      if (!event.data.result?.ok) {
-        setNotice(event.data.result?.error ?? "El chat no devolvió respuesta.");
-        return;
-      }
-      const text = String(event.data.result.response ?? "").trim();
-      if (text) {
-        const saved = saveAiResponse(pending.providerId, pending.fingerprint, text);
-        if (pending.providerId === provider?.id) {
-          setResponse(text);
-          setSavedAt(saved.updatedAt);
-        }
-      }
-      setNotice("Análisis recibido y guardado.");
-    };
-    window.addEventListener("message", receive);
-    window.postMessage({ source: "neq6-ai-app", type: "NEQ6_AI_BRIDGE_PING" }, location.origin);
-    return () => window.removeEventListener("message", receive);
-  }, [provider?.id]);
+    void fetch("/api/ai/status").then((response) => setServiceReady(response.ok)).catch(() => setServiceReady(false));
+  }, []);
 
-  const runAutomatic = (target = provider) => {
-    if (!target || !["chatgpt", "qwen", "gemini"].includes(target.id)) return;
-    const requestId = crypto.randomUUID();
-    pendingRef.current.set(requestId, { providerId: target.id, fingerprint });
+  const runAutomatic = async (target = provider) => {
+    if (!target) return;
     setRunningProviders((current) => new Set(current).add(target.id));
     setNotice(`Esperando respuesta de ${target.name}…`);
-    window.postMessage({
-      source: "neq6-ai-app",
-      type: "NEQ6_AI_RUN",
-      requestId,
-      providerId: target.id,
-      prompt,
-    }, location.origin);
+    try {
+      const request = await fetch("/api/ai/run", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ provider: target, prompt }),
+      });
+      const result = await request.json();
+      if (!request.ok || !result.ok) throw new Error(result.error ?? "El chat no devolvió respuesta.");
+      const text = String(result.response ?? "").trim();
+      const saved = saveAiResponse(target.id, fingerprint, text);
+      if (target.id === provider?.id) {
+        setResponse(text);
+        setSavedAt(saved.updatedAt);
+      }
+      setNotice(`Análisis de ${target.name} recibido y guardado.`);
+    } catch (error) {
+      setNotice(String(error instanceof Error ? error.message : error));
+    } finally {
+      setRunningProviders((current) => {
+        const next = new Set(current); next.delete(target.id); return next;
+      });
+    }
   };
-  const runAll = () => settings.providers.filter((item) => ["chatgpt", "qwen", "gemini"].includes(item.id)).forEach((item) => runAutomatic(item));
+  const runAll = () => settings.providers.forEach((item) => void runAutomatic(item));
 
   if (!prompt) return <p className="rounded border border-dashed border-line px-3 py-10 text-center font-mono text-[10.5px] text-dim">No hay resultados que analizar.</p>;
   if (!provider) return <p className="rounded border border-dashed border-line px-3 py-10 text-center font-mono text-[10.5px] text-dim">Añade una IA desde Ajustes.</p>;
 
-  if (!bridgeReady) return (
+  if (serviceReady === false) return (
     <section className="rounded border border-line bg-[#091426]/70 p-5 text-center">
-      <h3 className="font-display text-[11px] font-bold uppercase tracking-[0.18em] text-fog">Puente automático no detectado</h3>
-      <p className="mx-auto mt-2 max-w-xl font-mono text-[10px] text-dim">Instala la extensión local y recarga esta página. Después el programa enviará el informe y recuperará la respuesta automáticamente.</p>
-      <a href="/neq6-ai-browser-bridge.zip" download className="mx-auto mt-4 flex w-fit items-center justify-center rounded border border-mint/50 bg-mint/10 px-4 py-2 font-display text-[9px] font-bold tracking-wider text-mint hover:bg-mint/20">DESCARGAR PUENTE AUTOMÁTICO</a>
-      <ol className="mx-auto mt-4 max-w-lg list-decimal space-y-1 text-left font-mono text-[9.5px] text-dim">
-        <li>Descomprime el ZIP.</li>
-        <li>Abre las extensiones del navegador y activa el modo desarrollador.</li>
-        <li>Carga la carpeta descomprimida y recarga esta página.</li>
-      </ol>
+      <h3 className="font-display text-[11px] font-bold uppercase tracking-[0.18em] text-fog">Servicio local de análisis no disponible</h3>
+      <p className="mx-auto mt-2 max-w-xl font-mono text-[10px] text-dim">Inicia la aplicación mediante su servidor local y recarga esta página.</p>
     </section>
   );
 
@@ -96,11 +73,9 @@ export default function AiAnalysisPanel({ prompt }: { prompt: string }) {
               {settings.providers.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}
             </select>
           </label>
-          {["chatgpt", "qwen", "gemini"].includes(provider.id) ? (
-            <button onClick={() => runAutomatic()} disabled={runningProviders.has(provider.id)} className="rounded border border-mint/50 bg-mint/10 px-3 py-2 font-display text-[9px] font-bold tracking-wider text-mint hover:bg-mint/20 disabled:opacity-40">
-              {runningProviders.has(provider.id) ? "ANALIZANDO…" : "ANALIZAR"}
-            </button>
-          ) : <span className="font-mono text-[9px] text-alert">Proveedor sin adaptador automático.</span>}
+          <button onClick={() => void runAutomatic()} disabled={serviceReady !== true || runningProviders.has(provider.id)} className="rounded border border-mint/50 bg-mint/10 px-3 py-2 font-display text-[9px] font-bold tracking-wider text-mint hover:bg-mint/20 disabled:opacity-40">
+            {runningProviders.has(provider.id) ? "ANALIZANDO…" : "ANALIZAR"}
+          </button>
           <button onClick={runAll} disabled={runningProviders.size > 0} className="rounded border border-ion/50 bg-ion/10 px-3 py-2 font-display text-[9px] font-bold tracking-wider text-ion hover:bg-ion/20 disabled:opacity-40">ANALIZAR CON TODAS</button>
         </div>
         <details className="mt-2 rounded border border-line/70">
@@ -112,7 +87,7 @@ export default function AiAnalysisPanel({ prompt }: { prompt: string }) {
         <div className="mb-2 flex flex-wrap items-center gap-2">
           <h3 className="mr-auto font-display text-[10px] font-bold uppercase tracking-[0.16em] text-fog">Respuesta · {provider.name}</h3>
           {savedAt && <span className="font-mono text-[9px] text-mint">guardada {new Date(savedAt).toLocaleString("es-ES")}</span>}
-          <button onClick={() => runAutomatic()} disabled={runningProviders.has(provider.id)} className="rounded border border-ember/50 px-2 py-1 font-display text-[9px] font-bold text-ember hover:bg-ember/10 disabled:opacity-40">RECALCULAR</button>
+          <button onClick={() => void runAutomatic()} disabled={runningProviders.has(provider.id)} className="rounded border border-ember/50 px-2 py-1 font-display text-[9px] font-bold text-ember hover:bg-ember/10 disabled:opacity-40">RECALCULAR</button>
         </div>
         <textarea value={response} readOnly placeholder="La respuesta automática aparecerá aquí." className="min-h-72 w-full resize-y rounded border border-line bg-[#07101e] p-2 font-mono text-[10.5px] leading-relaxed text-fog focus:outline-none" />
         {notice && <p className="mt-1.5 font-mono text-[9px] text-dim">{notice}</p>}
