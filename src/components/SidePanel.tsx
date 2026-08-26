@@ -8,6 +8,7 @@ import DecoderPanel from "./DecoderPanel";
 import FlipperConnection from "./FlipperConnection";
 import { IconBook, IconPlug, IconRadar, IconStop, IconUnplug } from "./icons";
 import { DEFAULT_ADC_CALIBRATION } from "../lib/flipper";
+import AiSettingsPanel from "./AiSettingsPanel";
 
 export interface AutoState {
   running: boolean;
@@ -293,6 +294,8 @@ export default function SidePanel({
 
       {/* ── CONEXIÓN FLIPPER (ajustes) ─────────────────────── */}
       {ajustes && <FlipperConnection flip={flip} />}
+
+      {ajustes && <AiSettingsPanel />}
 
       {/* ── DECODIFICADOR (montura) ────────────────────────── */}
       {!ajustes && <DecoderPanel data={decoded} profile={profile} />}
