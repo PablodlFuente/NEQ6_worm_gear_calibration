@@ -25,6 +25,7 @@ export interface SavedAiResponse {
 const SETTINGS_KEY = "neq6-ai-analysis-settings-v1";
 const RESPONSES_KEY = "neq6-ai-analysis-responses-v1";
 const EVENT = "neq6-ai-analysis-settings";
+const RESPONSE_EVENT = "neq6-ai-analysis-responses";
 
 export const DEFAULT_AI_PROVIDERS: AiProvider[] = [
   {
@@ -120,10 +121,25 @@ export function getAiResponse(providerId: string, fingerprint: string): SavedAiR
   return loadResponses()[`${providerId}:${fingerprint}`] ?? null;
 }
 
-export function saveAiResponse(providerId: string, fingerprint: string, text: string): SavedAiResponse {
+export function saveAiResponse(providerId: string, fingerprint: string, text: string, updatedAt = Date.now()): SavedAiResponse {
   const all = loadResponses();
-  const saved = { text, updatedAt: Date.now() };
+  const saved = { text, updatedAt };
   all[`${providerId}:${fingerprint}`] = saved;
   localStorage.setItem(RESPONSES_KEY, JSON.stringify(all));
+  window.dispatchEvent(new Event(RESPONSE_EVENT));
   return saved;
+}
+
+export function useAiResponseVersion() {
+  const [version, setVersion] = useState(0);
+  useEffect(() => {
+    const update = () => setVersion((current) => current + 1);
+    window.addEventListener(RESPONSE_EVENT, update);
+    window.addEventListener("storage", update);
+    return () => {
+      window.removeEventListener(RESPONSE_EVENT, update);
+      window.removeEventListener("storage", update);
+    };
+  }, []);
+  return version;
 }

@@ -132,6 +132,23 @@ En el extendido se puede seleccionar una pasada, el promedio o superponer todos
 los espectros. También se conservan hasta 40 máximos locales por pasada para el
 análisis comparativo.
 
+## Revoluciones superpuestas o independientes
+
+La opción **revs. independientes** cambia el dominio de cálculo, no sólo la
+apariencia de la gráfica:
+
+- Desactivada: cada vuelta se representa en `0–360°`. El perfil blanco, las
+  estadísticas finales y el espectro promedio se calculan comparando las
+  revoluciones entre sí.
+- Activada: las vueltas ocupan intervalos consecutivos (`0–360°`, `360–720°`,
+  etc.). La línea blanca es la media móvil de la adquisición concatenada; las
+  estadísticas pertenecen a esa serie completa y la FFT se calcula sobre toda
+  su duración. Las curvas individuales conservan su color.
+
+La segunda opción proporciona mayor resolución frecuencial por su mayor tiempo
+de observación; la primera facilita valorar la repetibilidad angular entre
+vueltas. La interfaz identifica el modo activo en FFT y Estadísticas.
+
 ### Clasificación comparativa
 
 - Periodicidad en grados estable al cambiar velocidad: indicio ligado a

@@ -38,6 +38,11 @@ En el caso del test extendido la montura rota 4 veces (2 velocidades diferentes 
 
 Se dan valores de la estadística de la medición, el usuario puede poner el cursor enciama de cada una de ellas para ver una descripción de ellas.
 
+**Revs. independientes** decide si las vueltas se analizan como series
+superpuestas en `0–360°` o como una adquisición consecutiva de hasta `N×360°`.
+El cambio afecta también al promedio, la FFT y el resumen estadístico; el
+indicador de modo aparece en las vistas correspondientes.
+
 ## FFT de una serie
 
 ![FFT durante la adquisición](images/test-en-ejecucion-fft.png)

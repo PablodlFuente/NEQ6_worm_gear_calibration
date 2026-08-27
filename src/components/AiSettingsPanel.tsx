@@ -51,7 +51,7 @@ export default function AiSettingsPanel() {
           <span>{settings.enabled ? "ON" : "OFF"}</span>
           <input type="checkbox" checked={settings.enabled} onChange={(event) => setSettings({ ...settings, enabled: event.target.checked })} className="peer sr-only" />
           <span className="relative h-5 w-10 rounded-full border border-line bg-[#091426] transition peer-checked:border-mint/70 peer-checked:bg-mint/20">
-            <span className="absolute left-0.5 top-0.5 h-3.5 w-3.5 rounded-full bg-dim transition-transform peer-checked:translate-x-5 peer-checked:bg-mint" />
+            <span className={`absolute left-0.5 top-0.5 h-3.5 w-3.5 rounded-full transition-transform ${settings.enabled ? "translate-x-5 bg-mint" : "translate-x-0 bg-dim"}`} />
           </span>
         </label>
       </div>

@@ -42,4 +42,11 @@ button.send-button, button[aria-label='Enviar'], button[aria-label='Send']
 
 **Analizar** procesa el proveedor seleccionado. **Analizar con todas** lanza el mismo informe contra todos los adaptadores y almacena cada respuesta por separado. Volver a seleccionar una IA recupera su respuesta guardada; pulsar **Analizar** genera otra.
 
+Cuando la función está activada, **Guardar sesión** incorpora las respuestas
+disponibles y su huella de datos a la sesión de IndexedDB. Al volver a cargarla
+se restauran los informes de sus proveedores. **Exportar (.zip)** añade cada
+respuesta como `analisis-ia/<proveedor>.txt`; la exportación conjunta hace lo
+mismo para cada sesión guardada. Con el interruptor en `OFF` no se adjuntan ni
+restauran informes de IA.
+
 El navegador se inicia minimizado y utiliza un perfil local propio. El proveedor puede exigir inicio de sesión, limitar el uso o cambiar su estructura HTML. El programa no evade CAPTCHA ni controles de acceso; en esos casos la automatización se detiene y muestra el error.
