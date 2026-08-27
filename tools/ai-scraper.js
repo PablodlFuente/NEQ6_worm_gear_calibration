@@ -44,7 +44,7 @@ async function executablePath() {
 }
 
 async function browserContext() {
-  const mode = process.env.NEQ6_AI_SHOW_BROWSER === "1" ? "visible" : "background";
+  const mode = process.env.NEQ6_AI_SHOW_BROWSER === "1" ? "visible" : "headless";
   if (state.contextPromise && state.mode === mode) return state.contextPromise;
   if (state.contextPromise) {
     const previous = await state.contextPromise.catch(() => null);
@@ -61,18 +61,24 @@ async function browserContext() {
     await mkdir(profile, { recursive: true });
     const context = await chromium.launchPersistentContext(profile, {
       executablePath: await executablePath(),
-      headless: false,
+      headless: mode === "headless",
       viewport: null,
       args: [
         "--no-first-run",
         "--disable-features=Translate",
-        ...(mode === "background" ? ["--start-minimized", "--window-position=-32000,-32000", "--window-size=1280,900"] : []),
       ],
     });
     context.on("close", () => { state.contextPromise = null; });
     return context;
   })().catch((error) => { state.contextPromise = null; throw error; });
   return state.contextPromise;
+}
+
+async function closeBrowserContext() {
+  const context = await state.contextPromise?.catch(() => null);
+  await context?.close().catch(() => {});
+  state.contextPromise = null;
+  state.mode = null;
 }
 
 function localRequest(request) {
@@ -267,6 +273,11 @@ export function aiScraperMiddleware() {
         response.statusCode = 503;
         response.end(JSON.stringify({ ok: false, error: String(error?.message ?? error) }));
       }
+      return;
+    }
+    if (request.method === "POST" && request.url === "/api/ai/close") {
+      await closeBrowserContext();
+      response.end(JSON.stringify({ ok: true }));
       return;
     }
     if (request.method === "POST" && request.url === "/api/ai/run") {
