@@ -672,6 +672,29 @@ export function timedFftSpectrum(
   return { dfHz, magnitude };
 }
 
+/** Migra sesiones extendidas creadas con la FFT antigua. Las muestras de cada
+ * pasada ya están ordenadas; su duración permite reconstruir el eje temporal
+ * uniforme y recalcular espectro, picos y Nyquist. */
+export function refreshExtendedAnalysisSpectra(analysis: ExtendedAnalysis): ExtendedAnalysis {
+  const passes = analysis.passes.map((pass) => {
+    const currents = pass.samples?.currentA ?? [];
+    const durationS = pass.statistics.durationS;
+    if (currents.length < 64 || !(durationS > 0)) return pass;
+    const timestamps = Array.from({ length: currents.length }, (_, index) =>
+      index * durationS * 1e6 / Math.max(1, currents.length - 1));
+    const spectrum = timedFftSpectrum(timestamps, Float64Array.from(currents));
+    if (!spectrum) return pass;
+    const speed = pass.measuredSpeedDegS;
+    const peaks = topPeaks(Float64Array.from(spectrum.magnitude), spectrum.dfHz, 40).map((peak) => ({
+      frequencyHz: peak.freq,
+      periodMountDeg: speed ? peak.period * speed : null,
+      magnitude: peak.mag,
+    }));
+    return { ...pass, spectrum, revolutionSpectra: [spectrum], peaks };
+  });
+  return { ...analysis, passes, groups: classifyExtendedPeaks(passes) };
+}
+
 export function topPeaks(
   mag: Float64Array,
   df: number,
