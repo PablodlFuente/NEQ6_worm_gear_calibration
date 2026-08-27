@@ -8,6 +8,8 @@ const REV_COLORS = [
   "#f5a524", "#4cc9f0", "#45e08b", "#ff6b9d", "#b892ff",
   "#ff7d5c", "#68d8d6", "#e7e247", "#8fb8ff", "#f29cff",
 ];
+const renderStride = (length: number, pixelWidth: number, pointsPerPixel = 3) =>
+  Math.max(1, Math.ceil(length / Math.max(600, pixelWidth * pointsPerPixel)));
 
 type View = "vivo" | "polar" | "cartesiano" | "fft" | "stats";
 type Peak = { bin: number; freq: number; period: number; mag: number };
@@ -37,6 +39,7 @@ function ChartCanvas({
   cursorLabel,
   regionZoom,
   onRegionZoomDone,
+  renderToken,
 }: {
   draw: ChartDraw;
   className: string;
@@ -48,8 +51,11 @@ function ChartCanvas({
   cursorLabel?: string;
   regionZoom: boolean;
   onRegionZoomDone: () => void;
+  renderToken: string;
 }) {
   const ref = useRef<HTMLCanvasElement>(null);
+  const drawRef = useRef(draw);
+  drawRef.current = draw;
   const drag = useRef<{ x: number; y: number; viewport: ChartViewport; moved: boolean; mode: "pan" | "region" | "pick" } | null>(null);
   const [selection, setSelection] = useState<{ x0: number; y0: number; x1: number; y1: number } | null>(null);
   useEffect(() => {
@@ -68,13 +74,13 @@ function ChartCanvas({
       const ctx = cv.getContext("2d");
       if (!ctx) return;
       ctx.scale(dpr, dpr);
-      draw(ctx, w, h, viewport);
+      drawRef.current(ctx, w, h, viewport);
     };
     render();
     const ro = new ResizeObserver(render);
     ro.observe(parent);
     return () => ro.disconnect();
-  });
+  }, [renderToken, viewport]);
   const pointerDown = (event: React.PointerEvent<HTMLCanvasElement>) => {
     if (event.button !== 0 && event.button !== 2) return;
     const mode = event.button === 2 ? "pan" : regionZoom ? "region" : "pick";
@@ -284,10 +290,12 @@ export default function FlipperLab({
   const n = stats.n;
   /* Sesiones guardadas antes de incorporar perfiles/estadísticas extendidas
    * siguen siendo cargables; sencillamente no se dibujan como multipasada. */
-  const extendedPasses = (flip.extendedAnalysis?.passes ?? []).filter((pass) => Boolean(pass.statistics));
-  const basicPasses = derived?.basicPasses ?? [];
-  const comparisonPasses = extendedPasses.length ? extendedPasses : basicPasses;
+  const extendedPasses = useMemo(() => (flip.extendedAnalysis?.passes ?? []).filter((pass) => Boolean(pass.statistics)), [flip.extendedAnalysis]);
+  const basicPasses = useMemo(() => derived?.basicPasses ?? [], [derived]);
+  const comparisonPasses = useMemo(() => extendedPasses.length ? extendedPasses : basicPasses, [extendedPasses, basicPasses]);
   const isExtendedTest = extendedPasses.length > 0;
+  const sequentialCartesian = !flip.overlayRevs && !isExtendedTest && basicPasses.length > 1;
+  const cartesianFullAngleDeg = sequentialCartesian ? basicPasses.length * 360 : 360;
   const extendedFftSeries = useMemo(() => {
     const passes = comparisonPasses.flatMap((pass, index) => pass.spectrum ? [{
       id: pass.id,
@@ -352,7 +360,10 @@ export default function FlipperLab({
     }
       return [];
     }), [comparisonPasses, flip.avgFactor]);
-  const activeExtendedSeries = extendedDisplaySeries.filter((series) => !hiddenExtendedSeries.has(series.id));
+  const activeExtendedSeries = useMemo(
+    () => extendedDisplaySeries.filter((series) => !hiddenExtendedSeries.has(series.id)),
+    [extendedDisplaySeries, hiddenExtendedSeries],
+  );
   const extendedMeanProfile = useMemo(() => {
     if (activeExtendedSeries.length < 2) return null;
     const bySeries = activeExtendedSeries.map((series) => {
@@ -572,7 +583,7 @@ export default function FlipperLab({
       const fullMaxI = maxI + span * 0.12;
       minI = fullMinI + (1 - viewport.y1) * (fullMaxI - fullMinI);
       maxI = fullMinI + (1 - viewport.y0) * (fullMaxI - fullMinI);
-      const angle = clamp(viewport.x0 * 360 + ((x - 46) / Math.max(1, w - 56)) * (viewport.x1 - viewport.x0) * 360, 0, 360);
+      const angle = clamp(viewport.x0 * cartesianFullAngleDeg + ((x - 46) / Math.max(1, w - 56)) * (viewport.x1 - viewport.x0) * cartesianFullAngleDeg, 0, cartesianFullAngleDeg);
       const current = minI + ((h - 20 - y) / Math.max(1, h - 30)) * (maxI - minI);
       setCursorLabel(`θ ${angle.toFixed(2)}° · I ${current.toFixed(3)} A`);
       return;
@@ -743,7 +754,8 @@ export default function FlipperLab({
       ctx.lineWidth = width;
       ctx.beginPath();
       let started = false;
-      for (let i = 0; i < data.length; i++) {
+      const stride = renderStride(data.length, w);
+      for (let i = 0; i < data.length; i += stride) {
         if (rev !== undefined && data.revs[i] !== rev) {
           started = false;
           continue;
@@ -764,7 +776,9 @@ export default function FlipperLab({
       ctx.beginPath();
       let started = false;
       let previousPhase: number | null = null;
-      for (let i = 0; i < Math.min(angles.length, currents.length); i++) {
+      const length = Math.min(angles.length, currents.length);
+      const stride = renderStride(length, w);
+      for (let i = 0; i < length; i += stride) {
         const current = currents[i];
         const phase = ((angles[i] % 360) + 360) % 360;
         const angle = (phase * Math.PI) / 180;
@@ -907,21 +921,25 @@ export default function FlipperLab({
     const fullSpanI = fullMaxI - fullMinI;
     minI = fullMinI + (1 - viewport.y1) * fullSpanI;
     maxI = fullMinI + (1 - viewport.y0) * fullSpanI;
-    const minAngle = viewport.x0 * 360;
-    const maxAngle = viewport.x1 * 360;
+    const minAngle = viewport.x0 * cartesianFullAngleDeg;
+    const maxAngle = viewport.x1 * cartesianFullAngleDeg;
     const X = (a: number) => L + ((a - minAngle) / (maxAngle - minAngle || 1)) * (w - L - Rg);
     const Y = (v: number) => h - Bm - ((v - minI) / (maxI - minI || 1)) * (h - T - Bm);
     if (polarLoadAnalysis?.zones.length && extendedDisplaySeries.length) {
-      for (const zone of polarLoadAnalysis.zones) {
-        const ranges = zone.startDeg + zone.widthDeg <= 360
-          ? [[zone.startDeg, zone.startDeg + zone.widthDeg]]
-          : [[zone.startDeg, 360], [0, zone.startDeg + zone.widthDeg - 360]];
-        const dominant = polarLoadAnalysis.dominantZone === zone;
-        ctx.fillStyle = dominant ? "rgba(245,165,36,0.12)" : "rgba(245,165,36,0.055)";
-        for (const [start, end] of ranges) {
-          const visibleStart = Math.max(start, minAngle);
-          const visibleEnd = Math.min(end, maxAngle);
-          if (visibleEnd > visibleStart) ctx.fillRect(X(visibleStart), T, X(visibleEnd) - X(visibleStart), h - T - Bm);
+      const repetitions = sequentialCartesian ? basicPasses.length : 1;
+      for (let revolution = 0; revolution < repetitions; revolution++) {
+        for (const zone of polarLoadAnalysis.zones) {
+          const ranges = zone.startDeg + zone.widthDeg <= 360
+            ? [[zone.startDeg, zone.startDeg + zone.widthDeg]]
+            : [[zone.startDeg, 360], [0, zone.startDeg + zone.widthDeg - 360]];
+          const dominant = polarLoadAnalysis.dominantZone === zone;
+          ctx.fillStyle = dominant ? "rgba(245,165,36,0.12)" : "rgba(245,165,36,0.055)";
+          for (const [start, end] of ranges) {
+            const offset = revolution * 360;
+            const visibleStart = Math.max(start + offset, minAngle);
+            const visibleEnd = Math.min(end + offset, maxAngle);
+            if (visibleEnd > visibleStart) ctx.fillRect(X(visibleStart), T, X(visibleEnd) - X(visibleStart), h - T - Bm);
+          }
         }
       }
     }
@@ -960,8 +978,9 @@ export default function FlipperLab({
     if (data && data.factor > 1) {
       ctx.strokeStyle = "rgba(76,201,240,0.85)";
       ctx.lineWidth = 1;
-      for (let i = 0; i < data.length; i++) {
-        const phase = ((data.angles[i] % 360) + 360) % 360;
+      const errorStride = Math.max(1, Math.ceil(data.length / Math.max(40, w / 12)));
+      for (let i = 0; i < data.length; i += errorStride) {
+        const phase = sequentialCartesian ? data.angles[i] : ((data.angles[i] % 360) + 360) % 360;
         if (phase < minAngle || phase > maxAngle) continue;
         const x = X(phase);
         const y = Y(data.amps[i]);
@@ -992,13 +1011,14 @@ export default function FlipperLab({
       ctx.beginPath();
       let started = false;
       let previousPhase: number | null = null;
-      for (let i = 0; i < data.length; i++) {
+      const stride = renderStride(data.length, w);
+      for (let i = 0; i < data.length; i += stride) {
         if (rev !== undefined && data.revs[i] !== rev) {
           started = false;
           previousPhase = null;
           continue;
         }
-        const phase = ((data.angles[i] % 360) + 360) % 360;
+        const phase = sequentialCartesian ? data.angles[i] : ((data.angles[i] % 360) + 360) % 360;
         if (phase < minAngle || phase > maxAngle || !Number.isFinite(data.amps[i])) {
           started = false;
           previousPhase = null;
@@ -1019,9 +1039,10 @@ export default function FlipperLab({
       ctx.beginPath();
       let started = false;
       let previousPhase: number | null = null;
-      for (let i = 0; i < series.currents.length; i++) {
+      const stride = renderStride(series.currents.length, w);
+      for (let i = 0; i < series.currents.length; i += stride) {
         const current = series.currents[i];
-        const phase = ((series.angles[i] % 360) + 360) % 360;
+        const phase = sequentialCartesian ? series.angles[i] : ((series.angles[i] % 360) + 360) % 360;
         if (phase < minAngle || phase > maxAngle || !Number.isFinite(current)) {
           started = false;
           previousPhase = null;
@@ -1037,8 +1058,9 @@ export default function FlipperLab({
       ctx.stroke();
       if (!errors) return;
       ctx.lineWidth = 0.8;
-      for (let i = 0; i < series.currents.length; i++) {
-        const phase = ((series.angles[i] % 360) + 360) % 360;
+      const errorStride = Math.max(stride, Math.ceil(series.currents.length / Math.max(40, w / 12)));
+      for (let i = 0; i < series.currents.length; i += errorStride) {
+        const phase = sequentialCartesian ? series.angles[i] : ((series.angles[i] % 360) + 360) % 360;
         if (phase < minAngle || phase > maxAngle || !Number.isFinite(series.currents[i])) continue;
         const x = X(phase), y = Y(series.currents[i]);
         const y0 = Y(series.currents[i] - series.currentErr[i]);
@@ -1065,27 +1087,33 @@ export default function FlipperLab({
           angleErr: meanSeries.angleErr.filter((_, index) => valid[index]),
           currentErr: meanSeries.currentErr.filter((_, index) => valid[index]),
         };
-        plotSeries(compact, "rgba(240,245,255,0.62)", 2.4, false);
+        const meanCopies = Array.from(
+          { length: sequentialCartesian ? basicPasses.length : 1 },
+          (_, revolution) => ({ ...compact, angles: compact.angles.map((angle) => angle + revolution * 360) }),
+        );
+        meanCopies.forEach((series) => plotSeries(series, "rgba(240,245,255,0.62)", 2.4, false));
         ctx.strokeStyle = "rgba(240,245,255,0.6)";
         ctx.lineWidth = 0.8;
         const pixelsPerDegree = (w - L - Rg) / Math.max(1, maxAngle - minAngle);
         const barStride = Math.max(1, Math.floor(12 / Math.max(0.1, pixelsPerDegree)));
-        for (let i = 0; i < compact.currents.length; i += barStride) {
-          if (compact.angles[i] < minAngle || compact.angles[i] > maxAngle) continue;
-          const x = X(compact.angles[i]);
-          const y = Y(compact.currents[i]);
-          const y0 = Y(compact.currents[i] - compact.currentErr[i]);
-          const y1 = Y(compact.currents[i] + compact.currentErr[i]);
-          const x0 = X(Math.max(minAngle, compact.angles[i] - compact.angleErr[i]));
-          const x1 = X(Math.min(maxAngle, compact.angles[i] + compact.angleErr[i]));
-          ctx.beginPath();
-          ctx.moveTo(x, y0); ctx.lineTo(x, y1);
-          ctx.moveTo(x - 2, y0); ctx.lineTo(x + 2, y0);
-          ctx.moveTo(x - 2, y1); ctx.lineTo(x + 2, y1);
-          ctx.moveTo(x0, y); ctx.lineTo(x1, y);
-          ctx.moveTo(x0, y - 2); ctx.lineTo(x0, y + 2);
-          ctx.moveTo(x1, y - 2); ctx.lineTo(x1, y + 2);
-          ctx.stroke();
+        for (const series of meanCopies) {
+          for (let i = 0; i < series.currents.length; i += barStride) {
+            if (series.angles[i] < minAngle || series.angles[i] > maxAngle) continue;
+            const x = X(series.angles[i]);
+            const y = Y(series.currents[i]);
+            const y0 = Y(series.currents[i] - series.currentErr[i]);
+            const y1 = Y(series.currents[i] + series.currentErr[i]);
+            const x0 = X(Math.max(minAngle, series.angles[i] - series.angleErr[i]));
+            const x1 = X(Math.min(maxAngle, series.angles[i] + series.angleErr[i]));
+            ctx.beginPath();
+            ctx.moveTo(x, y0); ctx.lineTo(x, y1);
+            ctx.moveTo(x - 2, y0); ctx.lineTo(x + 2, y0);
+            ctx.moveTo(x - 2, y1); ctx.lineTo(x + 2, y1);
+            ctx.moveTo(x0, y); ctx.lineTo(x1, y);
+            ctx.moveTo(x0, y - 2); ctx.lineTo(x0, y + 2);
+            ctx.moveTo(x1, y - 2); ctx.lineTo(x1, y + 2);
+            ctx.stroke();
+          }
         }
       }
     } else if (flip.overlayRevs && data) {
@@ -1232,9 +1260,12 @@ export default function FlipperLab({
 
   const pickMountPosition = (kind: "polar" | "cartesiano", x: number, y: number, clientX: number, clientY: number) => {
     if (!derived?.plot?.length) return;
-    const angle = kind === "polar"
+    const absoluteAngle = kind === "polar"
       ? ((Math.atan2(x - 0.5, -(y - 0.5)) * 180) / Math.PI + 360) % 360
-      : Math.min(360, Math.max(0, ((x - 0.04) / 0.95) * 360));
+      : Math.min(cartesianFullAngleDeg, Math.max(0,
+          (viewports.cartesiano.x0 + ((x - 0.04) / 0.95) * (viewports.cartesiano.x1 - viewports.cartesiano.x0)) * cartesianFullAngleDeg,
+        ));
+    const angle = ((absoluteAngle % 360) + 360) % 360;
     setMovePrompt({
       angle,
       x: Math.min(clientX + 10, window.innerWidth - 270),
@@ -1288,6 +1319,11 @@ export default function FlipperLab({
   };
 
   const chartFor = useMemo(() => {
+    const renderToken = [
+      view, n, flip.tick, flip.avgFactor, Number(flip.overlayRevs), Number(flip.capturing),
+      selectedFftSeries, Number(overlayFftSeries), Number(showExtendedMean),
+      [...hiddenExtendedSeries].sort().join(","), selectedPeaks.length,
+    ].join("|");
     const interaction = {
       viewport: viewports[view],
       onViewport: setViewport,
@@ -1296,6 +1332,7 @@ export default function FlipperLab({
       cursorLabel,
       regionZoom,
       onRegionZoomDone: () => setRegionZoom(false),
+      renderToken,
     };
     switch (view) {
       case "polar":
