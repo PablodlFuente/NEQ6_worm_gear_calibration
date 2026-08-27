@@ -294,7 +294,8 @@ export default function FlipperLab({
   const basicPasses = useMemo(() => derived?.basicPasses ?? [], [derived]);
   const comparisonPasses = useMemo(() => extendedPasses.length ? extendedPasses : basicPasses, [extendedPasses, basicPasses]);
   const isExtendedTest = extendedPasses.length > 0;
-  const sequentialCartesian = !flip.overlayRevs && !isExtendedTest && basicPasses.length > 1;
+  const independentRevs = !flip.overlayRevs && !isExtendedTest && basicPasses.length > 1;
+  const sequentialCartesian = independentRevs;
   const cartesianFullAngleDeg = sequentialCartesian ? basicPasses.length * 360 : 360;
   const extendedFftSeries = useMemo(() => {
     const passes = comparisonPasses.flatMap((pass, index) => pass.spectrum ? [{
@@ -304,9 +305,14 @@ export default function FlipperLab({
       spectrum: pass.spectrum,
     }] : []);
     const movingSpectra = passes.filter((series) => comparisonPasses.find((pass) => pass.id === series.id)?.direction !== "stationary");
-    const average = averageFftSpectra((movingSpectra.length ? movingSpectra : passes).map((series) => series.spectrum));
-    return average && passes.length > 1 ? [...passes, { id: "average", label: "Promedio", color: "#f0f5ff", spectrum: average }] : passes;
-  }, [comparisonPasses]);
+    const joined = independentRevs && derived?.mag
+      ? { dfHz: derived.df, magnitude: Array.from(derived.mag) }
+      : null;
+    const average = joined ?? averageFftSpectra((movingSpectra.length ? movingSpectra : passes).map((series) => series.spectrum));
+    return average && passes.length > 1
+      ? [...passes, { id: "average", label: joined ? "Serie unida" : "Promedio", color: "#f0f5ff", spectrum: average }]
+      : passes;
+  }, [comparisonPasses, independentRevs, derived?.mag, derived?.df]);
   const selectedExtendedPass = comparisonPasses.find((pass) => pass.id === selectedFftSeries);
   const manualPeakKey = extendedFftSeries.length ? selectedFftSeries : "current";
   const selectedPeaks = manualPeaksBySeries[manualPeakKey] ?? [];
@@ -510,7 +516,26 @@ export default function FlipperLab({
       ? circularStats(directionValues.map((item) => item.circularMeanDeg!), directionValues.map((item) => item.circularR!))
       : null;
     const ellipses = passStats.map((item) => item.ellipse).filter((ellipse): ellipse is NonNullable<typeof ellipse> => ellipse !== null);
+    if (independentRevs && derived) {
+      const ellipse = derived.ellipse;
+      return {
+        mode: "joined" as const,
+        current: { mean: derived.st.mean, uncertainty: derived.st.sem },
+        rate: { mean: derived.st.rateEst, uncertainty: 0 },
+        speed: { mean: derived.st.feedbackSpeedDegS ?? 0, uncertainty: 0 },
+        circularR: { mean: derived.st.circ?.R ?? 0, uncertainty: 0 },
+        direction: derived.st.circ ? { mean: derived.st.circ.meanDeg, uncertainty: derived.st.circ.stdDeg } : null,
+        semiMajor: ellipse ? { mean: ellipse.semiMajor, uncertainty: 0 } : null,
+        semiMinor: ellipse ? { mean: ellipse.semiMinor, uncertainty: 0 } : null,
+        ellipseRatio: ellipse ? { mean: ellipse.semiMajor / ellipse.semiMinor, uncertainty: 0 } : null,
+        ellipseAngle: ellipse ? { mean: ellipse.angleDeg, uncertainty: 0 } : null,
+        maxA: derived.st.maxA,
+        totalSamples: derived.st.n,
+        totalDurationS: derived.st.durS,
+      };
+    }
     return {
+      mode: "between" as const,
       current: summarize(passStats.map((item) => item.meanA)),
       rate: summarize(passStats.map((item) => item.effectiveRateHz)),
       speed: summarize(passStats.map((item) => item.measuredSpeedDegS ?? 0)),
@@ -524,7 +549,7 @@ export default function FlipperLab({
       totalSamples: passStats.reduce((sum, item) => sum + item.n, 0),
       totalDurationS: passStats.reduce((sum, item) => sum + item.durationS, 0),
     };
-  }, [comparisonPasses]);
+  }, [comparisonPasses, independentRevs, derived]);
   void flip.tick;
   useEffect(() => {
     if (!n) setManualPeaksBySeries({});
@@ -1087,10 +1112,14 @@ export default function FlipperLab({
           angleErr: meanSeries.angleErr.filter((_, index) => valid[index]),
           currentErr: meanSeries.currentErr.filter((_, index) => valid[index]),
         };
-        const meanCopies = Array.from(
-          { length: sequentialCartesian ? basicPasses.length : 1 },
-          (_, revolution) => ({ ...compact, angles: compact.angles.map((angle) => angle + revolution * 360) }),
-        );
+        const meanCopies = independentRevs && data
+          ? [{
+              angles: Array.from(data.angles),
+              currents: Array.from(data.amps),
+              angleErr: Array.from(data.angleErr),
+              currentErr: Array.from(data.ampsErr),
+            }]
+          : [compact];
         meanCopies.forEach((series) => plotSeries(series, "rgba(240,245,255,0.62)", 2.4, false));
         ctx.strokeStyle = "rgba(240,245,255,0.6)";
         ctx.lineWidth = 0.8;
@@ -1409,14 +1438,17 @@ export default function FlipperLab({
             />
             <datalist id="average-presets">{AVGS.map((value) => <option key={value} value={value} />)}</datalist>
           </label>
-          <label className="hidden cursor-pointer items-center gap-1.5 font-mono text-[10px] text-dim md:flex">
+          <label
+            className="hidden cursor-pointer items-center gap-1.5 font-mono text-[10px] text-dim md:flex"
+            title="Activada: cada revolución ocupa su tramo consecutivo (0–360°, 360–720°…), y el promedio, la FFT y las estadísticas se calculan sobre la serie unida. Desactivada: las vueltas se superponen en 0–360° y se promedian entre sí."
+          >
             <input
               type="checkbox"
-              checked={flip.overlayRevs}
-              onChange={(e) => flip.setOverlayRevs(e.target.checked)}
+              checked={!flip.overlayRevs}
+              onChange={(e) => flip.setOverlayRevs(!e.target.checked)}
               className="accent-[#f5a524]"
             />
-            superponer revs
+            revs. independientes
           </label>
           {view !== "stats" && (
             <>
@@ -1443,6 +1475,14 @@ export default function FlipperLab({
           <span className="text-dim">muestras </span>
           <span className="tabular-nums text-fog">{n.toLocaleString("es-ES")}</span>
         </span>
+        {(view === "stats" || view === "fft") && basicPasses.length > 1 && !isExtendedTest && (
+          <span
+            className="rounded border border-ion/40 bg-ion/5 px-1.5 py-px text-ion"
+            title={independentRevs ? "Estadísticas y FFT calculadas sobre todas las revoluciones concatenadas." : "Estadísticas y FFT promediadas entre revoluciones sobre el dominio 0–360°."}
+          >
+            {independentRevs ? "REVS. INDEPENDIENTES · SERIE UNIDA" : "REVS. SUPERPUESTAS · PROMEDIO ENTRE VUELTAS"}
+          </span>
+        )}
         <span className="rounded border border-line bg-[#0c1930] px-1.5 py-px">
           <span className="text-dim">I </span>
           <span className="tabular-nums text-ember">{stats.lastA.toFixed(3)} A</span>
@@ -1497,7 +1537,7 @@ export default function FlipperLab({
                     onClick={() => setShowExtendedMean((visible) => !visible)}
                     className={`rounded border border-fog px-2 py-0.5 text-fog transition-opacity ${showExtendedMean ? "opacity-80" : "opacity-35"}`}
                   >
-                    ━ PROMEDIO
+                    ━ {independentRevs ? "SERIE UNIDA" : "PROMEDIO"}
                   </button>
                 )}
               </div>
@@ -1649,24 +1689,26 @@ export default function FlipperLab({
         ) : extendedSummary ? (
           <div className="space-y-2">
             <StatSection
-              title={isExtendedTest ? "Resumen medio del test extendido" : "Resumen medio del test básico"}
-              subtitle={isExtendedTest
+              title={independentRevs ? "Resumen de la serie unida" : isExtendedTest ? "Resumen medio del test extendido" : "Resumen medio del test básico"}
+              subtitle={independentRevs
+                ? `${comparisonPasses.length} revoluciones consecutivas · estadísticas sobre la adquisición completa`
+                : isExtendedTest
                 ? `${comparisonPasses.length}/5 fases terminadas · ± = incertidumbre estándar entre las vueltas`
                 : `${comparisonPasses.length} ${comparisonPasses.length === 1 ? "revolución" : "revoluciones"} · ± = incertidumbre estándar entre vueltas`}
             >
               <StatCell k="corriente media" v={`${extendedSummary.current.mean.toFixed(5)} ± ${extendedSummary.current.uncertainty.toFixed(5)} A`} tone="text-mint" />
               <StatCell k="N total" v={extendedSummary.totalSamples.toLocaleString("es-ES")} />
               <StatCell k="tiempo total adquisición" v={`${extendedSummary.totalDurationS.toFixed(1)} s`} />
-              <StatCell k="tasa ADC media" v={`${extendedSummary.rate.mean.toFixed(1)} ± ${extendedSummary.rate.uncertainty.toFixed(1)} Hz`} />
-              <StatCell k="velocidad media" v={`${extendedSummary.speed.mean.toFixed(4)} ± ${extendedSummary.speed.uncertainty.toFixed(4)} °/s`} tone="text-ion" />
+              <StatCell k={independentRevs ? "tasa ADC efectiva" : "tasa ADC media"} v={independentRevs ? `${extendedSummary.rate.mean.toFixed(1)} Hz` : `${extendedSummary.rate.mean.toFixed(1)} ± ${extendedSummary.rate.uncertainty.toFixed(1)} Hz`} />
+              <StatCell k={independentRevs ? "velocidad de la serie" : "velocidad media"} v={independentRevs ? `${extendedSummary.speed.mean.toFixed(4)} °/s` : `${extendedSummary.speed.mean.toFixed(4)} ± ${extendedSummary.speed.uncertainty.toFixed(4)} °/s`} tone="text-ion" />
               <StatCell k="máximo global" v={`${extendedSummary.maxA.toFixed(4)} A`} tone="text-ember" />
-              <StatCell k="concentración R̄ media" v={`${extendedSummary.circularR.mean.toFixed(4)} ± ${extendedSummary.circularR.uncertainty.toFixed(4)}`} tone="text-ion" />
+              <StatCell k={independentRevs ? "concentración R̄" : "concentración R̄ media"} v={independentRevs ? extendedSummary.circularR.mean.toFixed(4) : `${extendedSummary.circularR.mean.toFixed(4)} ± ${extendedSummary.circularR.uncertainty.toFixed(4)}`} tone="text-ion" />
               {extendedSummary.direction && <StatCell k="dirección de carga media" v={`${extendedSummary.direction.mean.toFixed(2)}° ± ${extendedSummary.direction.uncertainty.toFixed(2)}°${extendedSummary.circularR.mean < 0.05 ? " · no representativa" : ""}`} tone="text-ion" />}
               {polarLoadAnalysis?.dominantZone && <StatCell k="zona sobre la media" v={`${polarLoadAnalysis.dominantZone.startDeg.toFixed(0)}° → ${polarLoadAnalysis.dominantZone.endDeg.toFixed(0)}° · ancho ${polarLoadAnalysis.dominantZone.widthDeg.toFixed(0)}° · ${polarLoadAnalysis.dominantZone.meanA.toFixed(4)} ± ${polarLoadAnalysis.dominantZone.uncertaintyA.toFixed(4)} A`} tone="text-ember" />}
-              {extendedSummary.semiMajor && <StatCell k="semieje a medio" v={`${extendedSummary.semiMajor.mean.toFixed(4)} ± ${extendedSummary.semiMajor.uncertainty.toFixed(4)} A`} tone="text-ion" />}
-              {extendedSummary.semiMinor && <StatCell k="semieje b medio" v={`${extendedSummary.semiMinor.mean.toFixed(4)} ± ${extendedSummary.semiMinor.uncertainty.toFixed(4)} A`} tone="text-ion" />}
-              {extendedSummary.ellipseRatio && <StatCell k="cociente a/b medio" v={`${extendedSummary.ellipseRatio.mean.toFixed(4)} ± ${extendedSummary.ellipseRatio.uncertainty.toFixed(4)}`} tone="text-ion" />}
-              {extendedSummary.ellipseAngle && <StatCell k="inclinación φ media" v={`${extendedSummary.ellipseAngle.mean.toFixed(2)}° ± ${extendedSummary.ellipseAngle.uncertainty.toFixed(2)}°`} tone="text-ion" />}
+              {extendedSummary.semiMajor && <StatCell k={independentRevs ? "semieje a" : "semieje a medio"} v={independentRevs ? `${extendedSummary.semiMajor.mean.toFixed(4)} A` : `${extendedSummary.semiMajor.mean.toFixed(4)} ± ${extendedSummary.semiMajor.uncertainty.toFixed(4)} A`} tone="text-ion" />}
+              {extendedSummary.semiMinor && <StatCell k={independentRevs ? "semieje b" : "semieje b medio"} v={independentRevs ? `${extendedSummary.semiMinor.mean.toFixed(4)} A` : `${extendedSummary.semiMinor.mean.toFixed(4)} ± ${extendedSummary.semiMinor.uncertainty.toFixed(4)} A`} tone="text-ion" />}
+              {extendedSummary.ellipseRatio && <StatCell k={independentRevs ? "cociente a/b" : "cociente a/b medio"} v={independentRevs ? extendedSummary.ellipseRatio.mean.toFixed(4) : `${extendedSummary.ellipseRatio.mean.toFixed(4)} ± ${extendedSummary.ellipseRatio.uncertainty.toFixed(4)}`} tone="text-ion" />}
+              {extendedSummary.ellipseAngle && <StatCell k={independentRevs ? "inclinación φ" : "inclinación φ media"} v={independentRevs ? `${extendedSummary.ellipseAngle.mean.toFixed(2)}°` : `${extendedSummary.ellipseAngle.mean.toFixed(2)}° ± ${extendedSummary.ellipseAngle.uncertainty.toFixed(2)}°`} tone="text-ion" />}
             </StatSection>
             {comparisonPasses.map((pass, index) => {
               const st = pass.statistics;
