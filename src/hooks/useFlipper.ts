@@ -19,6 +19,7 @@ import {
   median,
   movingWindowStats,
   parseCsv,
+  refreshExtendedAnalysisSpectra,
   std,
   timedFftSpectrum,
   topPeaks,
@@ -1064,7 +1065,7 @@ export function useFlipper({ cpr1 }: Props) {
     angleRef.current = s.angleTb.map((tb, i) => ({ tb, deg: s.angleDeg[i] }));
     setCaptureMetadata(s.metadata ?? { ...EMPTY_CAPTURE_METADATA });
     if (s.calibration) setCalibration(s.calibration);
-    setExtendedAnalysis(s.extendedAnalysis ?? null);
+    setExtendedAnalysis(s.extendedAnalysis ? refreshExtendedAnalysisSpectra(s.extendedAnalysis) : null);
     extendedFilesRef.current = s.extendedFiles?.map((file) => ({ ...file })) ?? [];
     setRate(s.rateHz);
     setVersion((v) => v + 1);

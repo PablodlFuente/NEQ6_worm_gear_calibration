@@ -19,6 +19,7 @@ import {
   fitPolarEllipse,
   fftMag,
   parseCsv,
+  refreshExtendedAnalysisSpectra,
   travelFromCaptureOrigin,
   timedFftSpectrum,
   unwrapDegrees,
@@ -181,6 +182,35 @@ test("la FFT radix-2 asigna una senoide a su frecuencia real", () => {
     if (magnitude[index] > magnitude[peakBin]) peakBin = index;
   }
   assert.ok(Math.abs(peakBin * rateHz / size - frequencyHz) < rateHz / size);
+});
+
+test("una sesión extendida antigua regenera FFT, picos y Nyquist", () => {
+  const rateHz = 500;
+  const durationS = 4;
+  const count = rateHz * durationS;
+  const currentA = Array.from({ length: count }, (_, index) =>
+    0.5 + 0.05 * Math.sin(2 * Math.PI * 40 * index / rateHz));
+  const pass = {
+    id: "old",
+    label: "antigua",
+    direction: "cw" as const,
+    requestedSpeedDegS: 2,
+    measuredSpeedDegS: 2,
+    peaks: [],
+    statistics: {
+      n: count, durationS, effectiveRateHz: rateHz, meanA: 0.5, medianA: 0.5,
+      sdA: 0.05, semA: 0, maxA: 0.55, maxAngleDeg: 0, angleSpanDeg: 360,
+      measuredSpeedDegS: 2, samplesPerDeg: count / 360, circularMeanDeg: 0,
+      circularR: 0, circularStdDeg: 0, ellipse: null,
+    },
+    spectrum: { dfHz: 1, magnitude: [0, 1, 0] },
+    revolutionSpectra: [],
+    samples: { anglesDeg: Array.from({ length: count }, (_, index) => index * 360 / count), currentA },
+  };
+  const refreshed = refreshExtendedAnalysisSpectra({ createdAt: 0, passes: [pass], groups: [] });
+  const spectrum = refreshed.passes[0].spectrum!;
+  assert.ok(Math.abs(refreshed.passes[0].peaks[0].frequencyHz - 40) < spectrum.dfHz);
+  assert.ok((spectrum.magnitude.length - 1) * spectrum.dfHz <= rateHz / 2);
 });
 
 test("reposiciona un ángulo relativo respetando origen y sentido", () => {
