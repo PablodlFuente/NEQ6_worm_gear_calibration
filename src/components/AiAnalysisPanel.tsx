@@ -1,5 +1,28 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { analysisFingerprint, getAiResponse, saveAiResponse, useAiSettings } from "../hooks/useAiAnalysis";
+
+function inlineMarkup(text: string): ReactNode[] {
+  return text.split(/(\*\*[^*]+\*\*|`[^`]+`)/g).filter(Boolean).map((part, index) => {
+    if (part.startsWith("**") && part.endsWith("**")) return <strong key={index} className="font-semibold text-fog">{part.slice(2, -2)}</strong>;
+    if (part.startsWith("`") && part.endsWith("`")) return <code key={index} className="rounded bg-[#10213b] px-1 text-ion">{part.slice(1, -1)}</code>;
+    return <span key={index}>{part}</span>;
+  });
+}
+
+function FormattedAiResponse({ text }: { text: string }) {
+  if (!text.trim()) return <p className="py-16 text-center font-mono text-[10px] text-dim">La respuesta automática aparecerá aquí.</p>;
+  return <div className="space-y-1.5 font-mono text-[10.5px] leading-relaxed text-[#aebbd0]">
+    {text.split(/\r?\n/).map((raw, index) => {
+      const line = raw.trim();
+      if (!line) return <div key={index} className="h-1" />;
+      const heading = line.match(/^(?:#{1,4}\s*|\d+[.)]\s*)?(análisis(?: de (?:los )?resultados)?|posibles causas(?: más probables)?|análisis de riesgo|riesgos?|conclusión)\s*:?(.*)$/i);
+      if (heading) return <h4 key={index} className="mt-3 border-l-2 border-ion/70 bg-ion/5 px-2 py-1 font-display text-[10px] font-bold uppercase tracking-[0.14em] text-ion">{heading[1]}{heading[2]}</h4>;
+      const bullet = line.match(/^[-*•]\s+(.+)$/);
+      if (bullet) return <p key={index} className="flex gap-2 pl-2"><span className="text-mint">•</span><span>{inlineMarkup(bullet[1])}</span></p>;
+      return <p key={index}>{inlineMarkup(line.replace(/^#{1,4}\s*/, ""))}</p>;
+    })}
+  </div>;
+}
 
 export default function AiAnalysisPanel({ prompt }: { prompt: string }) {
   const [settings] = useAiSettings();
@@ -94,7 +117,7 @@ export default function AiAnalysisPanel({ prompt }: { prompt: string }) {
           <h3 className="mr-auto font-display text-[10px] font-bold uppercase tracking-[0.16em] text-fog">Respuesta · {provider.name}</h3>
           {savedAt && <span className="font-mono text-[9px] text-mint">guardada {new Date(savedAt).toLocaleString("es-ES")}</span>}
         </div>
-        <textarea value={response} readOnly placeholder="La respuesta automática aparecerá aquí." className="min-h-72 w-full resize-y rounded border border-line bg-[#07101e] p-2 font-mono text-[10.5px] leading-relaxed text-fog focus:outline-none" />
+        <div className="min-h-72 rounded border border-line bg-[#07101e] p-3"><FormattedAiResponse text={response} /></div>
         {notice && <p className="mt-1.5 font-mono text-[9px] text-dim">{notice}</p>}
       </section>
     </div>

@@ -23,7 +23,6 @@ const BUILT_INS = {
     send: "button.send-button, .chat-prompt-send-button button, div.message-input-right-button-send button, button[aria-label='Enviar'], button[aria-label='Send']",
     response: "div.response-message-content.phase-answer, div.response-message-content, div.chat-response-message, div[id^='chat-response-message-']",
     stop: "button.stop-button, button[aria-label*='Detener'], button[aria-label*='Stop']",
-    insertText: true,
   },
   gemini: {
     url: "https://gemini.google.com/app",
@@ -207,12 +206,11 @@ async function run(provider, prompt) {
     const initialCount = await responses.count().catch(() => 0);
     const initialText = initialCount > 0 ? (await responses.last().innerText().catch(() => "")).trim() : "";
     const initialTurnCount = adapter.turns ? await page.locator(adapter.turns).count().catch(() => 0) : 0;
-    if (adapter.insertText) {
+    await input.fill(prompt);
+    const sendReady = await page.locator(adapter.send).filter({ visible: true }).count().catch(() => 0) > 0;
+    if (!sendReady) {
       await input.fill("");
-      await input.focus();
-      await page.keyboard.insertText(prompt);
-    } else {
-      await input.fill(prompt);
+      await input.type(prompt, { delay: 0, timeout: 120_000 });
     }
     await submitPrompt(page, input, adapter);
     const response = await waitStableResponse(page, adapter, { count: initialCount, text: initialText, turnCount: initialTurnCount }, prompt);
