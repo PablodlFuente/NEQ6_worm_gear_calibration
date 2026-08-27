@@ -3,6 +3,7 @@ import { useBle } from "./useBle";
 import { useFlipperSerial } from "./useFlipperSerial";
 import {
   adcToAmps,
+  averageAngularSeriesSpectrum,
   averageFftSpectra,
   chooseSampleClockOffset,
   averageAngleSeries,
@@ -953,10 +954,26 @@ export function useFlipper({ cpr1 }: Props) {
           files.push({ name: `${root}/fft/revoluciones/${pass.id}-rev-${revolutionIndex + 1}.csv`, data: revolutionCsv });
         });
       }
-      const movingSpectra = extendedAnalysis.passes.filter((pass) => pass.direction !== "stationary" && pass.spectrum).map((pass) => pass.spectrum!);
-      const averageSpectrum = averageFftSpectra(movingSpectra.length ? movingSpectra : extendedAnalysis.passes.flatMap((pass) => pass.spectrum ? [pass.spectrum] : []));
+      const movingPasses = extendedAnalysis.passes.filter((pass) => pass.direction !== "stationary");
+      const movingSpectra = movingPasses.filter((pass) => pass.spectrum).map((pass) => pass.spectrum!);
+      const averageSpectrum = averageAngularSeriesSpectrum(movingPasses.flatMap((pass) => {
+        if (pass.samples?.anglesDeg?.length && pass.samples.currentA.length) return [{
+          anglesDeg: pass.samples.anglesDeg,
+          currentA: pass.samples.currentA,
+          speedDegS: pass.measuredSpeedDegS,
+        }];
+        if (!pass.profile?.currentA?.length) return [];
+        const anglesDeg: number[] = [];
+        const currentA: number[] = [];
+        pass.profile.currentA.forEach((current, index) => {
+          if (current === null) return;
+          anglesDeg.push(pass.profile!.anglesDeg[index] ?? index + 0.5);
+          currentA.push(current);
+        });
+        return [{ anglesDeg, currentA, speedDegS: pass.measuredSpeedDegS }];
+      })) ?? averageFftSpectra(movingSpectra.length ? movingSpectra : extendedAnalysis.passes.flatMap((pass) => pass.spectrum ? [pass.spectrum] : []));
       if (averageSpectrum) {
-        let csv = "# promedio interpolado de todos los espectros del test extendido\nfrequency_hz,period_s,magnitude\n";
+        let csv = "# FFT calculada a partir de la serie angular promedio del test extendido\nfrequency_hz,period_s,magnitude\n";
         for (let i = 1; i < averageSpectrum.magnitude.length; i++) {
           const frequency = i * averageSpectrum.dfHz;
           csv += `${frequency.toFixed(9)},${(1 / frequency).toFixed(9)},${averageSpectrum.magnitude[i].toExponential(9)}\n`;

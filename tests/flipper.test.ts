@@ -9,6 +9,7 @@ import {
   basicRevolutionSeriesCount,
   angleAt,
   averageFftSpectra,
+  averageAngularSeriesSpectrum,
   averageSpeedNormalizedSpectra,
   buildMeasurementCsv,
   buildProcCsv,
@@ -22,6 +23,7 @@ import {
   refreshExtendedAnalysisSpectra,
   travelFromCaptureOrigin,
   timedFftSpectrum,
+  topPeaks,
   unwrapDegrees,
 } from "../src/lib/flipper.ts";
 import { calculateMotionTiming, lowSpeedGotoMarginSteps, MAX_GOTO_STEPS, MAX_POSITION_DELTA, MAX_SAFE_ABSOLUTE_GOTO_DELTA, MIN_T1_TICKS, NEQ6_MAX_SLEW_RATE, requiresDangerConfirmation, SIDEREAL_DEG_PER_SEC } from "../src/lib/protocol.ts";
@@ -158,6 +160,23 @@ test("el promedio mecánico alinea picos por velocidad sin cambiar su escala Hz"
   assert.equal(average.dfHz, 1.5);
   assert.equal(average.magnitude.indexOf(Math.max(...average.magnitude)), 2);
   assert.equal(average.dfHz * 2, 3);
+});
+
+test("la FFT promedio se calcula desde la serie angular promedio", () => {
+  const build = (samples: number, speedDegS: number, phaseOffset: number) => {
+    const anglesDeg = Array.from({ length: samples }, (_, index) => (index * 360) / samples + phaseOffset);
+    const currentA = anglesDeg.map((angle) => 0.6 + 0.03 * Math.sin((20 * angle * Math.PI) / 180));
+    return { anglesDeg, currentA, speedDegS };
+  };
+  const spectrum = averageAngularSeriesSpectrum([build(8192, 1, 0.01), build(16384, 2, 0.02)]);
+  assert.ok(spectrum);
+  const peak = topPeaks(Float64Array.from(spectrum!.magnitude), spectrum!.dfHz, 1)[0];
+  assert.ok(Math.abs(peak.freq - (20 * 1.5) / 360) < spectrum!.dfHz);
+  const first = averageAngularSeriesSpectrum([build(8192, 1, 0.01)], 1.5)!;
+  const second = averageAngularSeriesSpectrum([build(16384, 2, 0.02)], 1.5)!;
+  const firstPeak = topPeaks(Float64Array.from(first.magnitude), first.dfHz, 1)[0];
+  const secondPeak = topPeaks(Float64Array.from(second.magnitude), second.dfHz, 1)[0];
+  assert.equal(firstPeak.freq, secondPeak.freq);
 });
 
 test("la FFT temporal termina en el Nyquist de la tasa efectiva", () => {

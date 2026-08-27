@@ -71,9 +71,12 @@ fft/analisis-comparativo.csv
 resumen-estadisticas-y-fft.txt
 ```
 
-El promedio FFT se interpola sobre el eje común más conservador y excluye la
-fase de ruido estacionario. Esta fase sí se exporta individualmente y participa
-en la clasificación de picos eléctricos o de muestreo.
+La FFT promedio se calcula después de construir la serie angular promedio; no
+es una media de magnitudes FFT ya calculadas. Las pasadas móviles se registran
+sobre una rejilla angular común y se expresan en Hz con la velocidad media
+medida. Esto alinea los rasgos ligados a la posición aunque difieran ligeramente
+los relojes o la velocidad. La fase estacionaria se exporta individualmente y
+participa en la clasificación de picos eléctricos o de muestreo.
 
 El resumen TXT está pensado para lectura humana: identifica test, eje,
 calibración y promedio, presenta las estadísticas por fase y separa las
