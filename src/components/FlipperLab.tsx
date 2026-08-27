@@ -1,8 +1,8 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import type { FlipperApi } from "../hooks/useFlipper";
-import { averageAngularSeriesSpectrum, averageFftSpectra, circularStats, fitPolarEllipse, movingWindowStats, topPeaks, travelFromCaptureOrigin } from "../lib/flipper";
+import { averageAngularSeriesSpectrum, averageFftSpectra, circularStats, fitPolarEllipse, movingWindowStats, topPeaks, travelFromCaptureOrigin, type ExtendedPassResult } from "../lib/flipper";
 import { IconAlert, IconDownload, IconTrash, IconZoom } from "./icons";
-import AiAnalysisPanel from "./AiAnalysisPanel";
+import AiAnalysisPanel, { type AiDataAttachment } from "./AiAnalysisPanel";
 import { analysisFingerprint, getAiResponse, saveAiResponse, useAiResponseVersion, useAiSettings } from "../hooks/useAiAnalysis";
 
 const AVGS = [1, 2, 5, 10, 20, 50, 100];
@@ -15,6 +15,43 @@ const renderStride = (length: number, pixelWidth: number, pointsPerPixel = 3) =>
 
 type View = "vivo" | "polar" | "cartesiano" | "fft" | "stats" | "ai";
 type Peak = { bin: number; freq: number; period: number; mag: number };
+
+const csvCell = (value: string | number | null | undefined) => {
+  if (value === null || value === undefined) return "";
+  const text = String(value);
+  return /[",\r\n]/.test(text) ? `"${text.replace(/"/g, '""')}"` : text;
+};
+
+function buildAiDataAttachment(passes: readonly ExtendedPassResult[]): AiDataAttachment | null {
+  if (!passes.length) return null;
+  const availableSamples = passes.reduce((sum, pass) => sum + Math.min(pass.samples?.anglesDeg?.length ?? 0, pass.samples?.currentA?.length ?? 0), 0);
+  const maxSampleRows = 100_000;
+  const stride = Math.max(1, Math.ceil(availableSamples / maxSampleRows));
+  const rows = [
+    "# Datos de resultado para análisis técnico",
+    `# muestras_angulares_disponibles=${availableSamples}; paso_exportacion=${stride}; ${stride === 1 ? "sin reducción" : "submuestreo uniforme"}`,
+    "tipo,serie,sentido,velocidad_deg_s,angulo_deg,corriente_a,frecuencia_hz,incertidumbre_hz,periodo_montura_deg,magnitud",
+  ];
+  passes.forEach((pass) => {
+    const angles: number[] = pass.samples?.anglesDeg ?? [];
+    const current: number[] = pass.samples?.currentA ?? [];
+    const length = Math.min(angles.length, current.length);
+    for (let index = 0; index < length; index += stride) {
+      rows.push(["muestra_angular", pass.label, pass.direction, pass.measuredSpeedDegS ?? pass.requestedSpeedDegS, angles[index], current[index], null, null, null, null].map(csvCell).join(","));
+    }
+    if (!length && pass.profile?.anglesDeg?.length) {
+      pass.profile.anglesDeg.forEach((angle: number, index: number) => {
+        const amps = pass.profile?.currentA?.[index];
+        if (amps !== null && Number.isFinite(amps)) rows.push(["perfil_angular", pass.label, pass.direction, pass.measuredSpeedDegS ?? pass.requestedSpeedDegS, angle, amps, null, null, null, null].map(csvCell).join(","));
+      });
+    }
+    pass.peaks?.forEach((peak) => rows.push([
+      "pico_fft", pass.label, pass.direction, pass.measuredSpeedDegS ?? pass.requestedSpeedDegS,
+      null, null, peak.frequencyHz, peak.uncertaintyHz ?? null, peak.periodMountDeg, peak.magnitude,
+    ].map(csvCell).join(",")));
+  });
+  return { name: "resultados-medicion.csv", mimeType: "text/csv", text: rows.join("\n") };
+}
 /** Fracción visible de los dominios completos X/Y. Es el equivalente a
  * set_xlim/set_ylim: los dibujantes vuelven a proyectar los datos, no se
  * recorta una imagen de la gráfica. */
@@ -596,9 +633,10 @@ export default function FlipperLab({
     const axis = flip.captureMetadata.axis === 1 ? "AR" : flip.captureMetadata.axis === 2 ? "DEC" : "no indicado";
     const direction = flip.captureMetadata.direction?.toUpperCase() ?? "no indicada";
     const lines = [
-      "Actúa como analista técnico de una montura Sky-Watcher NEQ6.",
-      "Interpreta el perfil de corriente como indicador del esfuerzo mecánico del conjunto sinfín-corona.",
-      "Distingue indicios mecánicos, del tren motor y eléctricos/muestreo; no afirmes una causa sin evidencia suficiente.",
+      "Actúa como analista técnico de una montura astronómica Sky-Watcher NEQ6.",
+      "Interpreta el perfil angular de corriente y sus espectros sin presuponer el origen del problema.",
+      "Contrasta hipótesis de ejes o alineación, rodamientos, transmisión, motor/driver, electrónica y adquisición; no favorezcas una familia ni afirmes una causa sin evidencia suficiente.",
+      "Si se adjunta un CSV, úsalo como fuente principal junto al resumen y señala cualquier limitación del muestreo.",
       "Responde de forma concisa, sin introducción ni explicaciones generales, usando exactamente estas tres secciones:",
       "1. ANÁLISIS DE RESULTADOS: resume los patrones relevantes y cita los valores que los sostienen.",
       "2. CAUSAS MÁS PROBABLES: hipótesis ordenadas por plausibilidad, indicando brevemente la evidencia y una comprobación discriminante.",
@@ -1633,7 +1671,7 @@ export default function FlipperLab({
       {/* zona de gráfico / estadísticas */}
       <div className="min-h-0 flex-1 overflow-y-auto p-3">
         {view === "ai" ? (
-          <AiAnalysisPanel prompt={aiPrompt} />
+          <AiAnalysisPanel prompt={aiPrompt} getAttachment={() => buildAiDataAttachment(comparisonPasses)} />
         ) : view !== "stats" ? (
           <div className="flex min-h-[300px] flex-col gap-2">
             {(view === "polar" || view === "cartesiano") && extendedDisplaySeries.length > 0 && (

@@ -1,6 +1,12 @@
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { analysisFingerprint, getAiResponse, saveAiResponse, useAiSettings } from "../hooks/useAiAnalysis";
 
+export interface AiDataAttachment {
+  name: string;
+  mimeType: string;
+  text: string;
+}
+
 function inlineMarkup(text: string): ReactNode[] {
   return text.split(/(\*\*[^*]+\*\*|`[^`]+`)/g).filter(Boolean).map((part, index) => {
     if (part.startsWith("**") && part.endsWith("**")) return <strong key={index} className="font-semibold text-fog">{part.slice(2, -2)}</strong>;
@@ -24,7 +30,7 @@ function FormattedAiResponse({ text }: { text: string }) {
   </div>;
 }
 
-export default function AiAnalysisPanel({ prompt }: { prompt: string }) {
+export default function AiAnalysisPanel({ prompt, getAttachment }: { prompt: string; getAttachment?: () => AiDataAttachment | null }) {
   const [settings] = useAiSettings();
   const [providerId, setProviderId] = useState(settings.providers[0]?.id ?? "");
   const fingerprint = useMemo(() => analysisFingerprint(prompt), [prompt]);
@@ -56,7 +62,7 @@ export default function AiAnalysisPanel({ prompt }: { prompt: string }) {
       const request = await fetch("/api/ai/run", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ provider: target, prompt }),
+        body: JSON.stringify({ provider: target, prompt, attachment: getAttachment?.() ?? null }),
       });
       const result = await request.json();
       if (!request.ok || !result.ok) throw new Error(result.error ?? "El chat no devolvió respuesta.");
@@ -66,7 +72,9 @@ export default function AiAnalysisPanel({ prompt }: { prompt: string }) {
         setResponse(text);
         setSavedAt(saved.updatedAt);
       }
-      setNotice(`Análisis de ${target.name} recibido y guardado.`);
+      setNotice(result.attachmentAdded
+        ? `Análisis de ${target.name} recibido con los datos CSV y guardado.`
+        : `Análisis de ${target.name} recibido y guardado; el proveedor no admitió el adjunto.`);
     } catch (error) {
       const message = String(error instanceof Error ? error.message : error);
       if (/failed to fetch/i.test(message)) {

@@ -16,6 +16,7 @@ const BUILT_INS = {
     bodyAfterPrompt: true,
     stop: "button[data-testid='stop-button'], button[aria-label*='Detener'], button[aria-label*='Stop']",
     blocked: "div[data-testid='rate-limit-message'], div.captcha-container, iframe[src*='captcha']",
+    fileInput: "input[type='file']",
   },
   qwen: {
     url: "https://chat.qwen.ai/",
@@ -23,6 +24,7 @@ const BUILT_INS = {
     send: "button.send-button, .chat-prompt-send-button button, div.message-input-right-button-send button, button[aria-label='Enviar'], button[aria-label='Send']",
     response: "div.response-message-content.phase-answer, div.response-message-content, div.chat-response-message, div[id^='chat-response-message-']",
     stop: "button.stop-button, button[aria-label*='Detener'], button[aria-label*='Stop']",
+    fileInput: "input[type='file']",
   },
   gemini: {
     url: "https://gemini.google.com/app",
@@ -30,6 +32,7 @@ const BUILT_INS = {
     send: "button[aria-label='Enviar mensaje'], button[aria-label*='Enviar'], button[aria-label*='Send']",
     response: "model-response .markdown, model-response, .model-response-text, message-content",
     stop: "button[aria-label*='Detener'], button[aria-label*='Stop']",
+    fileInput: "input[type='file']",
   },
 };
 
@@ -104,7 +107,7 @@ function localRequest(request) {
   return address === "127.0.0.1" || address === "::1" || address === "::ffff:127.0.0.1";
 }
 
-function readBody(request, limit = 512_000) {
+function readBody(request, limit = 12_000_000) {
   return new Promise((resolveBody, reject) => {
     let body = "";
     let settled = false;
@@ -135,7 +138,7 @@ function customAdapter(provider) {
       throw new Error(`Falta el selector ${key}.`);
     }
   }
-  return { url: url.href, input: adapter.input, send: adapter.send, response: adapter.response, stop: adapter.stop || "" };
+  return { url: url.href, input: adapter.input, send: adapter.send, response: adapter.response, stop: adapter.stop || "", fileInput: adapter.fileInput || "input[type='file']" };
 }
 
 function providerAdapter(provider) {
@@ -220,7 +223,33 @@ async function submitPrompt(page, input, adapter) {
   }
 }
 
-async function run(provider, prompt) {
+async function attachData(page, adapter, attachment) {
+  if (!attachment || typeof attachment.text !== "string" || !attachment.text.trim()) return false;
+  if (attachment.text.length > 10_000_000) throw new Error("El fichero de datos para IA supera 10 MB.");
+  const name = String(attachment.name || "resultados-medicion.csv").replace(/[^a-zA-Z0-9._-]/g, "-").slice(0, 120);
+  const mimeType = typeof attachment.mimeType === "string" ? attachment.mimeType : "text/csv";
+  let fileInput = page.locator(adapter.fileInput || "input[type='file']").first();
+  if (!await fileInput.count().catch(() => 0)) {
+    const attachButton = page.locator([
+      "button[data-testid='composer-plus-btn']",
+      "button[aria-label*='Adjuntar']",
+      "button[aria-label*='Attach']",
+      "button[aria-label*='Subir']",
+      "button[aria-label*='Upload']",
+    ].join(", ")).filter({ visible: true }).first();
+    if (await attachButton.count().catch(() => 0)) {
+      await attachButton.click().catch(() => {});
+      await page.waitForTimeout(500);
+      fileInput = page.locator(adapter.fileInput || "input[type='file']").first();
+    }
+  }
+  if (!await fileInput.count().catch(() => 0)) return false;
+  await fileInput.setInputFiles({ name, mimeType, buffer: Buffer.from(attachment.text, "utf8") });
+  await page.waitForTimeout(750);
+  return true;
+}
+
+async function run(provider, prompt, attachment) {
   const adapter = providerAdapter(provider);
   const context = await browserContext();
   const page = await context.newPage();
@@ -233,16 +262,20 @@ async function run(provider, prompt) {
     const initialCount = await responses.count().catch(() => 0);
     const initialText = initialCount > 0 ? (await responses.last().innerText().catch(() => "")).trim() : "";
     const initialTurnCount = adapter.turns ? await page.locator(adapter.turns).count().catch(() => 0) : 0;
-    await input.fill(prompt);
+    const attachmentAdded = await attachData(page, adapter, attachment).catch(() => false);
+    const submittedPrompt = attachmentAdded
+      ? `${prompt}\n\nSe adjunta un CSV con los datos de resultado. Analízalo junto con este resumen.`
+      : prompt;
+    await input.fill(submittedPrompt);
     const sendReady = await page.locator(adapter.send).filter({ visible: true }).count().catch(() => 0) > 0;
     if (!sendReady) {
       await input.fill("");
-      await input.type(prompt, { delay: 0, timeout: 120_000 });
+      await input.type(submittedPrompt, { delay: 0, timeout: 120_000 });
     }
     await submitPrompt(page, input, adapter);
-    const response = await waitStableResponse(page, adapter, { count: initialCount, text: initialText, turnCount: initialTurnCount }, prompt);
+    const response = await waitStableResponse(page, adapter, { count: initialCount, text: initialText, turnCount: initialTurnCount }, submittedPrompt);
     await page.close();
-    return response;
+    return { response, attachmentAdded };
   } catch (error) {
     const details = `${await page.title().catch(() => "sin título")} · ${page.url()}`;
     const pageText = (await page.locator("body").innerText().catch(() => "")).replace(/\s+/g, " ").trim().slice(0, 300);
@@ -302,8 +335,8 @@ export function aiScraperMiddleware() {
       try {
         const payload = JSON.parse(await readBody(request));
         if (typeof payload.prompt !== "string" || !payload.prompt.trim()) throw new Error("Informe vacío.");
-        const result = await run(payload.provider, payload.prompt);
-        response.end(JSON.stringify({ ok: true, response: result }));
+        const result = await run(payload.provider, payload.prompt, payload.attachment);
+        response.end(JSON.stringify({ ok: true, ...result }));
       } catch (error) {
         response.statusCode = 500;
         response.end(JSON.stringify({ ok: false, error: String(error?.message ?? error) }));
