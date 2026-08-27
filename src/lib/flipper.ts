@@ -40,6 +40,8 @@ export interface CaptureMetadata {
 
 export interface ExtendedPeak {
   frequencyHz: number;
+  /** Semiancho del bin FFT. Dos picos dentro de sus intervalos son compatibles. */
+  uncertaintyHz?: number;
   periodMountDeg: number | null;
   magnitude: number;
 }
@@ -178,6 +180,11 @@ export interface ExtendedAnalysis {
 }
 
 const relativeDifference = (a: number, b: number) => Math.abs(a - b) / Math.max(Math.abs(a), Math.abs(b), 1e-12);
+const frequencyCompatible = (a: ExtendedPeak, b: ExtendedPeak, relativeTolerance = 0.05) =>
+  Math.abs(a.frequencyHz - b.frequencyHz) <= Math.max(
+    relativeTolerance * Math.max(a.frequencyHz, b.frequencyHz),
+    (a.uncertaintyHz ?? 0) + (b.uncertaintyHz ?? 0),
+  );
 
 /** Clasificación comparativa; es evidencia experimental, no identificación
  * automática de una pieza concreta. */
@@ -196,7 +203,7 @@ export function classifyExtendedPeaks(
       const a = observations[i];
       const b = observations[j];
       if (a.pass.id === b.pass.id) continue;
-      const sameHz = relativeDifference(a.peak.frequencyHz, b.peak.frequencyHz) <= 0.05;
+      const sameHz = frequencyCompatible(a.peak, b.peak);
       const sameDeg = a.peak.periodMountDeg !== null && b.peak.periodMountDeg !== null &&
         relativeDifference(a.peak.periodMountDeg, b.peak.periodMountDeg) <= 0.08;
       if (sameHz || sameDeg) {
@@ -210,7 +217,7 @@ export function classifyExtendedPeaks(
       a.pass.id !== b.pass.id && a.peak.periodMountDeg !== null && b.peak.periodMountDeg !== null &&
       relativeDifference(a.peak.periodMountDeg, b.peak.periodMountDeg) <= 0.08));
     const hzStable = differentSpeeds && members.some((a) => members.some((b) =>
-      a.pass.id !== b.pass.id && relativeDifference(a.peak.frequencyHz, b.peak.frequencyHz) <= 0.05));
+      a.pass.id !== b.pass.id && frequencyCompatible(a.peak, b.peak)));
     const stationaryPresent = members.some((member) => member.pass.direction === "stationary");
     const motionDirections = new Set(members.map((member) => member.pass.direction).filter((direction) => direction !== "stationary"));
     const bothDirections = motionDirections.size > 1;
@@ -694,6 +701,7 @@ export function refreshExtendedAnalysisSpectra(analysis: ExtendedAnalysis): Exte
     const speed = pass.measuredSpeedDegS;
     const peaks = topPeaks(Float64Array.from(spectrum.magnitude), spectrum.dfHz, 40).map((peak) => ({
       frequencyHz: peak.freq,
+      uncertaintyHz: spectrum.dfHz / 2,
       periodMountDeg: speed ? peak.period * speed : null,
       magnitude: peak.mag,
     }));

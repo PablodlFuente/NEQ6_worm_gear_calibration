@@ -435,8 +435,9 @@ export function useFlipper({ cpr1 }: Props) {
       direction,
       requestedSpeedDegS,
       measuredSpeedDegS,
-      peaks: topPeaks(magnitude, 1 / durationS, 40).map((peak) => ({
+      peaks: topPeaks(magnitude, dfHz, 40).map((peak) => ({
         frequencyHz: peak.freq,
+        uncertaintyHz: dfHz / 2,
         periodMountDeg: measuredSpeedDegS ? peak.period * measuredSpeedDegS : null,
         magnitude: peak.mag,
       })),
@@ -671,6 +672,7 @@ export function useFlipper({ cpr1 }: Props) {
           measuredSpeedDegS,
           peaks: spectrum ? topPeaks(Float64Array.from(spectrum.magnitude), spectrum.dfHz, 40).map((peak) => ({
             frequencyHz: peak.freq,
+            uncertaintyHz: spectrum.dfHz / 2,
             periodMountDeg: measuredSpeedDegS ? peak.period * measuredSpeedDegS : null,
             magnitude: peak.mag,
           })) : [],

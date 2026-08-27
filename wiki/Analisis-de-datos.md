@@ -129,6 +129,12 @@ La frecuencia máxima mostrada nunca supera el Nyquist de la tasa ADC efectiva,
 `f_N = f_ADC/2`. La respuesta analógica de la entrada puede imponer un límite
 práctico inferior.
 
+Cada frecuencia se presenta con una incertidumbre de cuantización de medio bin,
+`±Δf/2`. Al comparar pasadas, dos máximos son compatibles si se solapan sus
+intervalos de resolución, aunque sus centros caigan en bins vecinos. Una
+separación mayor puede proceder de deriva entre relojes, variación real de la
+velocidad o falta de estacionariedad de la señal.
+
 En un test básico se muestran cinco máximos automáticos y selecciones manuales.
 En el extendido se puede seleccionar una pasada, el promedio o superponer todos
 los espectros. También se conservan hasta 40 máximos locales por pasada para el

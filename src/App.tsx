@@ -35,6 +35,8 @@ const {
   requiresDangerConfirmation,
 } = ACTIVE_MOUNT_DRIVER;
 import HelpModal from "./components/HelpModal";
+import ExtendedTestProfilesModal from "./components/ExtendedTestProfilesModal";
+import { useExtendedTestProfiles } from "./hooks/useExtendedTestProfiles";
 import {
   IconActivity,
   IconAlert,
@@ -188,6 +190,8 @@ export default function App() {
   });
   const [extendedTest, setExtendedTest] = useState<ExtendedTestState>({ running: false, pass: 0, total: 5, message: "" });
   const [helpOpen, setHelpOpen] = useState(false);
+  const [extendedProfilesOpen, setExtendedProfilesOpen] = useState(false);
+  const extendedProfiles = useExtendedTestProfiles();
 
   /* pestaña activa + ancho del panel lateral */
   const [tab, setTab] = useState<Tab>("mov");
@@ -1309,53 +1313,54 @@ export default function App() {
     return success && !cancelled;
   };
 
-  const startExtendedAxisTest = async () => {
+  const startExtendedAxisTest = async (profileId: string) => {
     if (extendedTest.running || axisTest.running || move.running || auto.running || jogRef.current) return;
-    const fast = Number(axisTestInputs.speed.replace(",", "."));
-    if (!(fast > 0)) return;
-    const slow = Math.max(0.01, fast / 2);
-    const fastRate = axisTestInputs.sampleRate;
-    /* Hz/velocidad constante => aproximadamente las mismas muestras por grado
-     * en las dos velocidades. */
-    const slowRate = Math.max(10, Math.min(1000, Math.round(fastRate * slow / fast)));
-    const passes = [
-      { id: "noise", label: `ruido · motores parados · ${fastRate} Hz`, direction: "stationary" as const, speed: 0, sampleRate: fastRate, stationary: true as const },
-      { id: "fast-cw", label: `rápida CW · ${fast.toFixed(3)}°/s · ${fastRate} Hz`, direction: "cw" as const, speed: fast, sampleRate: fastRate, stationary: false as const },
-      { id: "fast-ccw", label: `rápida CCW · ${fast.toFixed(3)}°/s · ${fastRate} Hz`, direction: "ccw" as const, speed: fast, sampleRate: fastRate, stationary: false as const },
-      { id: "slow-cw", label: `lenta CW · ${slow.toFixed(3)}°/s · ${slowRate} Hz`, direction: "cw" as const, speed: slow, sampleRate: slowRate, stationary: false as const },
-      { id: "slow-ccw", label: `lenta CCW · ${slow.toFixed(3)}°/s · ${slowRate} Hz`, direction: "ccw" as const, speed: slow, sampleRate: slowRate, stationary: false as const },
-    ];
+    const selectedProfile = extendedProfiles.profiles.find((item) => item.id === profileId);
+    if (!selectedProfile?.steps.length) return;
+    extendedProfiles.setSelectedId(selectedProfile.id);
+    const passes = selectedProfile.steps;
     extendedTestCancelRef.current = false;
     flip.setExtendedAnalysis(null);
     flip.resetExtendedArchive();
-    setExtendedTest({ running: true, pass: 0, total: passes.length, message: "Preparando test extendido…" });
+    setExtendedTest({ running: true, pass: 0, total: passes.length, message: `Preparando · ${selectedProfile.name}` });
     const results = [];
     for (let index = 0; index < passes.length; index++) {
       if (extendedTestCancelRef.current) break;
       const pass = passes[index];
-      setExtendedTest({ running: true, pass: index + 1, total: passes.length, message: `Fase ${index + 1}/${passes.length} · ${pass.label}` });
+      const label = pass.kind === "stationary"
+        ? `${pass.name} · ${pass.sampleRateHz} Hz`
+        : `${pass.name} · ${pass.direction.toUpperCase()} · eje ${pass.axis === 1 ? "AR" : "DEC"} · ${pass.speedDegS.toFixed(3)}°/s · ${pass.sampleRateHz} Hz`;
+      setExtendedTest({ running: true, pass: index + 1, total: passes.length, message: `Fase ${index + 1}/${passes.length} · ${label}` });
       let ok = false;
-      if (pass.stationary) {
+      if (pass.kind === "stationary") {
         flip.clearData();
-        flip.setCaptureMetadata({ axis: axisTestInputs.axis, direction: null, originSteps: null });
-        ok = await flip.startCapture(pass.sampleRate);
+        flip.setCaptureMetadata({ axis: pass.axis, direction: null, originSteps: null });
+        ok = await flip.startCapture(pass.sampleRateHz);
         if (ok) {
-          const noiseDurationMs = 20_000;
+          const noiseDurationMs = pass.durationSec * 1000;
           const started = performance.now();
           while (!extendedTestCancelRef.current && performance.now() - started < noiseDurationMs) {
             const remaining = Math.max(0, (noiseDurationMs - (performance.now() - started)) / 1000);
-            setExtendedTest({ running: true, pass: index + 1, total: passes.length, message: `Midiendo ruido con motores parados · ${remaining.toFixed(0)} s` });
+            setExtendedTest({ running: true, pass: index + 1, total: passes.length, message: `${pass.name} · ${remaining.toFixed(0)} s` });
             await sleep(250);
           }
           await flip.stopCapture();
           ok = !extendedTestCancelRef.current;
         }
       } else {
-        const inputs: AxisTestInputs = { ...axisTestInputs, direction: pass.direction, speed: String(pass.speed), sampleRate: pass.sampleRate };
+        const inputs: AxisTestInputs = {
+          axis: pass.axis,
+          direction: pass.direction,
+          speed: String(pass.speedDegS),
+          sampleRate: pass.sampleRateHz,
+          revolutions: String(pass.revolutions),
+        };
         ok = await startAxisTest(inputs, true);
       }
       if (!ok || extendedTestCancelRef.current) break;
-      const result = flip.snapshotExtendedPass(pass.id, pass.label, pass.direction, pass.speed);
+      const direction = pass.kind === "stationary" ? "stationary" as const : pass.direction;
+      const speed = pass.kind === "stationary" ? 0 : pass.speedDegS;
+      const result = flip.snapshotExtendedPass(pass.id, label, direction, speed);
       if (result) {
         results.push(result);
         flip.archiveExtendedPass(pass.id);
@@ -1693,8 +1698,12 @@ export default function App() {
             axisTest={axisTest}
             extendedTest={extendedTest}
             onStartAxisTest={() => void startAxisTest(axisTestInputs, false)}
-            onStartExtendedTest={() => void startExtendedAxisTest()}
+            onStartExtendedTest={(profileId) => void startExtendedAxisTest(profileId)}
             onStopAxisTest={stopAxisTest}
+            extendedProfiles={extendedProfiles.profiles}
+            selectedExtendedProfileId={extendedProfiles.selectedId}
+            onSelectedExtendedProfile={extendedProfiles.setSelectedId}
+            onOpenExtendedProfiles={() => setExtendedProfilesOpen(true)}
             onInsertFlipperCommand={(command) => {
               setFlipCmd(command);
               barRef.current?.focus();
@@ -1710,6 +1719,14 @@ export default function App() {
         <a className="ml-auto text-dim transition-colors hover:text-ion" href="https://github.com/PablodlFuente?tab=repositories" target="_blank" rel="noreferrer">Pablo de la Fuente · GitHub</a>
       </footer>
       <HelpModal open={helpOpen} onClose={() => setHelpOpen(false)} />
+      <ExtendedTestProfilesModal
+        open={extendedProfilesOpen}
+        profiles={extendedProfiles.profiles}
+        selectedId={extendedProfiles.selectedId}
+        onProfiles={extendedProfiles.setProfiles}
+        onSelect={extendedProfiles.setSelectedId}
+        onClose={() => setExtendedProfilesOpen(false)}
+      />
     </div>
   );
 }
