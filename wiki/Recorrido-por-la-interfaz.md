@@ -25,11 +25,12 @@ TMR determinan la conversión entre cuentas, grados, T1 y velocidad. También se
 elige la calibración del shunt y se administran los perfiles del test extendido.
 
 El editor de perfiles ocupa una ventana independiente. Su columna izquierda
-permite añadir, seleccionar, editar y eliminar perfiles con nombre propio. La
+permite añadir, seleccionar, editar y eliminar perfiles con nombre propio. El
+botón derecho sobre un perfil abre la opción para duplicarlo. La
 secuencia de la derecha se ejecuta de arriba abajo y admite dos tipos de paso:
 
 - **Mover eje**: eje AR/DEC, CW/CCW, velocidad, revoluciones y tasa ADC.
-- **Medir sin mover**: eje asociado a la sesión, duración y tasa ADC.
+- **Medición de ruido**: eje asociado a la sesión, duración y tasa ADC, con los motores parados.
 
 Los pasos se pueden reordenar y cada perfil queda guardado en el navegador. El
 perfil inicial reproduce el ensayo comparativo anterior: ruido estacionario y
