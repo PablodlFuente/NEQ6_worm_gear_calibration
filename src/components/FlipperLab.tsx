@@ -585,7 +585,7 @@ export default function FlipperLab({
       `Sentido: ${direction}`,
       `Tipo: ${flip.extendedAnalysis ? "test extendido" : "test básico"}`,
       `Media móvil: ${flip.avgFactor} muestras`,
-      `Modo de revoluciones: ${independentRevs ? "independientes; serie temporal concatenada" : "superpuestas; promedio angular entre vueltas"}`,
+      `Modo de revoluciones: ${independentRevs ? "serie continua; adquisición temporal concatenada" : "revoluciones independientes; superpuestas y promediadas entre vueltas"}`,
     ];
     if (derived && !flip.extendedAnalysis) {
       lines.push(
