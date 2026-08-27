@@ -49,4 +49,10 @@ respuesta como `analisis-ia/<proveedor>.txt`; la exportación conjunta hace lo
 mismo para cada sesión guardada. Con el interruptor en `OFF` no se adjuntan ni
 restauran informes de IA.
 
-El navegador se inicia minimizado y utiliza un perfil local propio. El proveedor puede exigir inicio de sesión, limitar el uso o cambiar su estructura HTML. El programa no evade CAPTCHA ni controles de acceso; en esos casos la automatización se detiene y muestra el error.
+Chrome se ejecuta fuera del escritorio visible y utiliza un perfil local propio.
+No se utiliza el modo *headless*, porque ChatGPT lo rechaza antes de mostrar el
+editor. Si un reinicio deja bloqueado el perfil habitual, el servidor crea uno
+aislado para no interrumpir el resto de proveedores. El proveedor puede exigir
+inicio de sesión, limitar el uso o cambiar su estructura HTML. El programa no
+evade CAPTCHA ni controles de acceso; en esos casos la automatización se detiene
+y muestra el error.

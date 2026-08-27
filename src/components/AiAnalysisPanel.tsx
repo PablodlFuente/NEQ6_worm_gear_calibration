@@ -15,7 +15,7 @@ function FormattedAiResponse({ text }: { text: string }) {
     {text.split(/\r?\n/).map((raw, index) => {
       const line = raw.trim();
       if (!line) return <div key={index} className="h-1" />;
-      const heading = line.match(/^(?:#{1,4}\s*|\d+[.)]\s*)?(análisis(?: de (?:los )?resultados)?|(?:posibles causas|causas)(?: más probables)?|análisis de riesgo|riesgos?|conclusión)\s*:?(.*)$/i);
+      const heading = line.match(/^(?:#{1,4}\s*|\d+[.)]\s*)?(análisis(?: de (?:los )?resultados)?|(?:posibles causas|causas)(?: m[aá]s probables)?|análisis de riesgo|riesgos?|conclusión)\s*:?(.*)$/i);
       if (heading) return <h4 key={index} className="mt-3 border-l-2 border-ion/70 bg-ion/5 px-2 py-1 font-display text-[10px] font-bold uppercase tracking-[0.14em] text-ion">{heading[1]}{heading[2]}</h4>;
       const bullet = line.match(/^[-*•]\s+(.+)$/);
       if (bullet) return <p key={index} className="flex gap-2 pl-2"><span className="text-mint">•</span><span>{inlineMarkup(bullet[1])}</span></p>;

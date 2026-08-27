@@ -44,7 +44,7 @@ async function executablePath() {
 }
 
 async function browserContext() {
-  const mode = process.env.NEQ6_AI_SHOW_BROWSER === "1" ? "visible" : "headless";
+  const mode = process.env.NEQ6_AI_SHOW_BROWSER === "1" ? "visible" : "background";
   if (state.contextPromise && state.mode === mode) return state.contextPromise;
   if (state.contextPromise) {
     const previous = await state.contextPromise.catch(() => null);
@@ -57,17 +57,35 @@ async function browserContext() {
     // Fuera del proyecto: Vite no debe intentar vigilar los ficheros de
     // cookies que Chromium mantiene bloqueados mientras el puente está activo.
     const profileRoot = process.env.LOCALAPPDATA || process.env.TEMP || process.cwd();
-    const profile = resolve(profileRoot, "NEQ6-worm-gear", "ai-browser-profile");
-    await mkdir(profile, { recursive: true });
-    const context = await chromium.launchPersistentContext(profile, {
-      executablePath: await executablePath(),
-      headless: mode === "headless",
-      viewport: null,
-      args: [
-        "--no-first-run",
-        "--disable-features=Translate",
-      ],
-    });
+    const profileBase = resolve(profileRoot, "NEQ6-worm-gear");
+    const primaryProfile = resolve(profileBase, "ai-browser-profile");
+    const recoveryProfile = resolve(profileBase, `ai-browser-profile-${process.pid}`);
+    const launch = async (profile) => {
+      await mkdir(profile, { recursive: true });
+      return chromium.launchPersistentContext(profile, {
+        executablePath: await executablePath(),
+        /* ChatGPT rechaza Chromium headless con su pantalla «Un momento…».
+         * Se ejecuta Chrome real fuera del escritorio visible; el modo visible
+         * sigue disponible para diagnóstico mediante la variable de entorno. */
+        headless: false,
+        viewport: null,
+        args: [
+          "--no-first-run",
+          "--disable-features=Translate",
+          ...(mode === "background" ? ["--window-position=-32000,-32000", "--window-size=1280,900"] : []),
+        ],
+      });
+    };
+    /* Vite puede reiniciarse mientras un Chrome anterior conserva bloqueado
+     * el perfil persistente. Se intenta primero el perfil habitual y, sólo si
+     * Chrome muere al arrancar, se usa un perfil aislado para este servidor. */
+    let context;
+    try {
+      context = await launch(primaryProfile);
+    } catch (error) {
+      if (!/Target page, context or browser has been closed|exitCode=21|profile/i.test(String(error?.message ?? error))) throw error;
+      context = await launch(recoveryProfile);
+    }
     context.on("close", () => { state.contextPromise = null; });
     return context;
   })().catch((error) => { state.contextPromise = null; throw error; });
@@ -241,7 +259,7 @@ async function probe(provider) {
     await page.goto(adapter.url, { waitUntil: "domcontentloaded", timeout: 45_000 });
     await dismissCookies(page);
     const input = page.locator(adapter.input).filter({ visible: true });
-    await input.first().waitFor({ state: "visible", timeout: 45_000 });
+    await input.first().waitFor({ state: "visible", timeout: 20_000 });
     return {
       title: await page.title(),
       url: page.url(),
