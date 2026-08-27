@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import type { FlipperApi } from "../hooks/useFlipper";
-import { averageFftSpectra, circularStats, fftMag, fitPolarEllipse, movingWindowStats, topPeaks, travelFromCaptureOrigin } from "../lib/flipper";
+import { averageFftSpectra, averageSpeedNormalizedSpectra, circularStats, fitPolarEllipse, movingWindowStats, topPeaks, travelFromCaptureOrigin } from "../lib/flipper";
 import { IconAlert, IconDownload, IconTrash, IconZoom } from "./icons";
 import AiAnalysisPanel from "./AiAnalysisPanel";
 import { analysisFingerprint, getAiResponse, saveAiResponse, useAiResponseVersion, useAiSettings } from "../hooks/useAiAnalysis";
@@ -319,28 +319,13 @@ export default function FlipperLab({
     const joined = independentRevs && derived?.mag
       ? { dfHz: derived.df, magnitude: Array.from(derived.mag) }
       : null;
-    const angularAverage = !independentRevs && !isExtendedTest && basicPasses.length > 1 ? (() => {
-      const sums = new Float64Array(360);
-      const counts = new Uint32Array(360);
-      for (const pass of basicPasses) {
-        pass.samples.anglesDeg.forEach((angle, index) => {
-          const current = pass.samples.currentA[index];
-          if (!Number.isFinite(current)) return;
-          const bin = Math.min(359, Math.floor(((angle % 360) + 360) % 360));
-          sums[bin] += current;
-          counts[bin]++;
-        });
-      }
-      const populated = Array.from(sums, (sum, index) => counts[index] ? sum / counts[index] : NaN).filter(Number.isFinite);
-      if (populated.length < 180) return null;
-      const fallback = populated.reduce((sum, value) => sum + value, 0) / populated.length;
-      const profile = Float64Array.from(sums, (sum, index) => counts[index] ? sum / counts[index] : fallback);
-      const magnitude = fftMag(profile);
-      const speeds = basicPasses.map((pass) => pass.measuredSpeedDegS).filter((speed): speed is number => Boolean(speed && speed > 0));
-      const speed = speeds.length ? speeds.reduce((sum, value) => sum + value, 0) / speeds.length : derived?.st.feedbackSpeedDegS ?? 0;
-      return speed > 0 ? { dfHz: speed / (magnitude.length * 2), magnitude: Array.from(magnitude) } : null;
-    })() : null;
-    const average = joined ?? angularAverage ?? averageFftSpectra((movingSpectra.length ? movingSpectra : passes).map((series) => series.spectrum));
+    const mechanicalAverage = !independentRevs && !isExtendedTest && basicPasses.length > 1
+      ? averageSpeedNormalizedSpectra(basicPasses.flatMap((pass) => pass.spectrum ? [{
+          spectrum: pass.spectrum,
+          speedDegS: pass.measuredSpeedDegS,
+        }] : []))
+      : null;
+    const average = joined ?? mechanicalAverage ?? averageFftSpectra((movingSpectra.length ? movingSpectra : passes).map((series) => series.spectrum));
     return average && passes.length > 1
       ? [...passes, { id: "average", label: joined ? "Serie unida" : "Promedio", color: "#f0f5ff", spectrum: average }]
       : passes;
@@ -1553,12 +1538,12 @@ export default function FlipperLab({
           </label>
           {!isExtendedTest && basicPasses.length > 1 && <label
             className="hidden cursor-pointer items-center gap-1.5 font-mono text-[10px] text-dim md:flex"
-            title="Activada: cada revolución ocupa su tramo consecutivo (0–360°, 360–720°…), y el promedio, la FFT y las estadísticas se calculan sobre la serie unida. Desactivada: las vueltas se superponen en 0–360° y se promedian entre sí."
+            title="Activada: las revoluciones se consideran independientes, se superponen en 0–360° y se promedian. Desactivada: forman una serie continua en 0–360°, 360–720°…; la FFT y las estadísticas usan la adquisición concatenada."
           >
             <input
               type="checkbox"
-              checked={!flip.overlayRevs}
-              onChange={(e) => flip.setOverlayRevs(!e.target.checked)}
+              checked={flip.overlayRevs}
+              onChange={(e) => flip.setOverlayRevs(e.target.checked)}
               className="accent-[#f5a524]"
             />
             revs. independientes
@@ -1591,9 +1576,9 @@ export default function FlipperLab({
         {(view === "stats" || view === "fft") && basicPasses.length > 1 && !isExtendedTest && (
           <span
             className="rounded border border-ion/40 bg-ion/5 px-1.5 py-px text-ion"
-            title={independentRevs ? "Estadísticas y FFT calculadas sobre todas las revoluciones concatenadas." : "Estadísticas y FFT promediadas entre revoluciones sobre el dominio 0–360°."}
+            title={independentRevs ? "Serie continua: estadísticas y FFT calculadas sobre todas las revoluciones concatenadas." : "Revoluciones independientes superpuestas: estadísticas y FFT promediadas entre vueltas sobre 0–360°."}
           >
-            {independentRevs ? "REVS. INDEPENDIENTES · SERIE UNIDA" : "REVS. SUPERPUESTAS · PROMEDIO ENTRE VUELTAS"}
+            {independentRevs ? "SERIE CONTINUA" : "REVS. INDEPENDIENTES · SUPERPUESTAS"}
           </span>
         )}
         <span className="rounded border border-line bg-[#0c1930] px-1.5 py-px">

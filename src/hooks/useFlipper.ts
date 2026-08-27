@@ -13,15 +13,14 @@ import {
   buildProcCsv,
   buildRawCsv,
   circularStats,
-  fftMag,
   fitPolarEllipse,
   idb,
   mean,
   median,
   movingWindowStats,
   parseCsv,
-  resampleUniform,
   std,
+  timedFftSpectrum,
   topPeaks,
   unwrapDegrees,
   type AnglePoint,
@@ -419,14 +418,15 @@ export function useFlipper({ cpr1 }: Props) {
       maxA = 0;
       for (let i = 0; i < amps.length; i++) maxA = Math.max(maxA, amps[i]);
     }
-    const magnitude = fftMag(resampleUniform(tsRef.current, amps, 4096));
-    const dfHz = 1 / durationS;
+    const spectrum = timedFftSpectrum(tsRef.current, amps);
+    if (!spectrum) return null;
+    const magnitude = Float64Array.from(spectrum.magnitude);
+    const dfHz = spectrum.dfHz;
     const revolutionSpectra = revolutionTs.flatMap((timestamps, index) => {
       const values = revolutionAmps[index];
       if (!values || timestamps.length < 64) return [];
-      const revolutionDurationS = (timestamps[timestamps.length - 1] - timestamps[0]) / 1e6;
-      if (!(revolutionDurationS > 0.5)) return [];
-      return [{ dfHz: 1 / revolutionDurationS, magnitude: Array.from(fftMag(resampleUniform(timestamps, Float64Array.from(values), 4096))) }];
+      const revolutionSpectrum = timedFftSpectrum(timestamps, Float64Array.from(values));
+      return revolutionSpectrum ? [revolutionSpectrum] : [];
     });
     return {
       id,
@@ -457,7 +457,7 @@ export function useFlipper({ cpr1 }: Props) {
         circularStdDeg: circular?.stdDeg ?? null,
         ellipse: positionedAngles.length >= 12 ? fitPolarEllipse(positionedAngles, positionedCurrents) : null,
       },
-      spectrum: { dfHz, magnitude: Array.from(magnitude) },
+      spectrum,
       revolutionSpectra,
       samples: {
         anglesDeg: positionedAngles,
@@ -562,11 +562,14 @@ export function useFlipper({ cpr1 }: Props) {
     const D = (tsRef.current[n - 1] - tsRef.current[0]) / 1e6;
     let mag: Float64Array | null = null;
     let peaks: ReturnType<typeof topPeaks> = [];
-    const NFFT = 4096;
+    let spectrumDfHz = 0;
     if (n >= 64 && D > 0.5) {
-      const uni = resampleUniform(tsRef.current, amps, NFFT);
-      mag = fftMag(uni);
-      peaks = topPeaks(mag, 1 / D, 5);
+      const spectrum = timedFftSpectrum(tsRef.current, amps, capturing ? 4096 : 65536);
+      if (spectrum) {
+        mag = Float64Array.from(spectrum.magnitude);
+        spectrumDfHz = spectrum.dfHz;
+        peaks = topPeaks(mag, spectrumDfHz, 5);
+      }
     }
 
     const st = {
@@ -656,7 +659,7 @@ export function useFlipper({ cpr1 }: Props) {
         });
         const circular = circularStats(angles, currents);
         const spectrum = !capturing && currents.length >= 64 && durationS > 0.5
-          ? { dfHz: 1 / durationS, magnitude: Array.from(fftMag(resampleUniform(timestamps, currentArray, 4096))) }
+          ? timedFftSpectrum(timestamps, currentArray) ?? undefined
           : undefined;
         const measuredSpeedDegS = speeds.length ? median(speeds) : null;
         basicPasses.push({
@@ -714,7 +717,7 @@ export function useFlipper({ cpr1 }: Props) {
       mag,
       peaks,
       basicPasses,
-      df: D > 0 ? 1 / D : 0,
+      df: spectrumDfHz,
       st,
       hasAngle: Boolean(plot?.length),
     };

@@ -107,6 +107,42 @@ export function averageFftSpectra(spectra: FftSpectrum[]): FftSpectrum | null {
   return { dfHz, magnitude };
 }
 
+/** Promedio ligado a la posición: alinea cada espectro en ciclos/grado y
+ * vuelve a expresarlo en Hz usando la velocidad media. Conserva como techo el
+ * menor Nyquist real de las series de entrada. */
+export function averageSpeedNormalizedSpectra(
+  series: { spectrum: FftSpectrum; speedDegS: number | null }[],
+): FftSpectrum | null {
+  const valid = series.filter((item) => item.speedDegS !== null && item.speedDegS > 0
+    && item.spectrum.dfHz > 0 && item.spectrum.magnitude.length > 2) as {
+      spectrum: FftSpectrum;
+      speedDegS: number;
+    }[];
+  if (!valid.length) return null;
+  const referenceSpeed = valid.reduce((sum, item) => sum + item.speedDegS, 0) / valid.length;
+  const dfPerDeg = Math.max(...valid.map((item) => item.spectrum.dfHz / item.speedDegS));
+  const maxPerDeg = Math.min(...valid.map((item) =>
+    ((item.spectrum.magnitude.length - 1) * item.spectrum.dfHz) / item.speedDegS));
+  const rawNyquistHz = Math.min(...valid.map((item) =>
+    (item.spectrum.magnitude.length - 1) * item.spectrum.dfHz));
+  const dfHz = dfPerDeg * referenceSpeed;
+  const maxHz = Math.min(rawNyquistHz, maxPerDeg * referenceSpeed);
+  const length = Math.floor(maxHz / dfHz) + 1;
+  const magnitude = Array.from({ length }, (_, index) => {
+    const spatialFrequency = (index * dfHz) / referenceSpeed;
+    let sum = 0;
+    for (const item of valid) {
+      const position = (spatialFrequency * item.speedDegS) / item.spectrum.dfHz;
+      const left = Math.min(item.spectrum.magnitude.length - 1, Math.floor(position));
+      const right = Math.min(item.spectrum.magnitude.length - 1, left + 1);
+      const fraction = position - left;
+      sum += item.spectrum.magnitude[left] * (1 - fraction) + item.spectrum.magnitude[right] * fraction;
+    }
+    return sum / valid.length;
+  });
+  return { dfHz, magnitude };
+}
+
 export interface ExtendedPassResult {
   id: string;
   label: string;
@@ -537,7 +573,7 @@ export function resampleUniform(ts: number[], vals: Float64Array, n: number): Fl
 export function fftMag(input: Float64Array): Float64Array {
   let n = 1;
   while (n < input.length) n <<= 1;
-  n = Math.min(n, 8192);
+  n = Math.min(n, 65536);
   const re = new Float64Array(n);
   const im = new Float64Array(n);
   const m = Math.min(input.length, n);
@@ -545,6 +581,21 @@ export function fftMag(input: Float64Array): Float64Array {
   for (let i = 0; i < m; i++) {
     const w = 0.5 - 0.5 * Math.cos((2 * Math.PI * i) / (m - 1 || 1));
     re[i] = input[i] * w;
+  }
+  /* Orden bit-reversed requerido por Cooley–Tukey iterativo. Sin esta
+   * permutación las magnitudes parecen espectrales, pero sus bins no
+   * corresponden a las frecuencias reales. */
+  for (let i = 1, j = 0; i < n; i++) {
+    let bit = n >> 1;
+    while (j & bit) {
+      j ^= bit;
+      bit >>= 1;
+    }
+    j ^= bit;
+    if (i < j) {
+      const real = re[i]; re[i] = re[j]; re[j] = real;
+      const imaginary = im[i]; im[i] = im[j]; im[j] = imaginary;
+    }
   }
   for (let len = 2; len <= n; len <<= 1) {
     const ang = (-2 * Math.PI) / len;
@@ -571,6 +622,61 @@ export function fftMag(input: Float64Array): Float64Array {
   const mag = new Float64Array(n / 2);
   for (let i = 0; i < n / 2; i++) mag[i] = Math.hypot(re[i], im[i]);
   return mag;
+}
+
+/** Espectro temporal hasta el Nyquist de la tasa efectiva. Para adquisiciones
+ * largas usa Welch con ventanas de 65536 muestras, evitando reducir toda la
+ * captura a 4096 puntos y perder banda. */
+export function timedFftSpectrum(
+  timestampsUs: ArrayLike<number>,
+  values: Float64Array,
+  maxFftSize = 65536,
+): FftSpectrum | null {
+  const length = Math.min(timestampsUs.length, values.length);
+  if (length < 64) return null;
+  const durationS = (timestampsUs[length - 1] - timestampsUs[0]) / 1e6;
+  if (!(durationS > 0)) return null;
+  const effectiveRateHz = (length - 1) / durationS;
+  const ceiling = 2 ** Math.floor(Math.log2(Math.max(64, maxFftSize)));
+
+  if (length <= ceiling) {
+    let fftSize = 64;
+    while (fftSize < length && fftSize < ceiling) fftSize <<= 1;
+    const timestamps = Array.from({ length }, (_, index) => timestampsUs[index]);
+    const uniform = resampleUniform(timestamps, values.subarray(0, length), fftSize);
+    const full = fftMag(uniform);
+    const resampledRateHz = (fftSize - 1) / durationS;
+    const dfHz = resampledRateHz / fftSize;
+    const nyquistHz = effectiveRateHz / 2;
+    const bins = Math.min(full.length, Math.floor(nyquistHz / dfHz) + 1);
+    return { dfHz, magnitude: Array.from(full.subarray(0, bins)) };
+  }
+
+  const fftSize = ceiling;
+  const hop = fftSize >> 1;
+  const starts: number[] = [];
+  for (let start = 0; start + fftSize <= length; start += hop) starts.push(start);
+  const finalStart = length - fftSize;
+  if (starts[starts.length - 1] !== finalStart) starts.push(finalStart);
+  const sum = new Float64Array(fftSize / 2);
+  const dfHz = effectiveRateHz / fftSize;
+  for (const start of starts) {
+    const timestamps = Array.from({ length: fftSize }, (_, index) => timestampsUs[start + index]);
+    const segmentDurationS = (timestamps[fftSize - 1] - timestamps[0]) / 1e6;
+    if (!(segmentDurationS > 0)) continue;
+    const uniform = resampleUniform(timestamps, values.subarray(start, start + fftSize), fftSize);
+    const magnitude = fftMag(uniform);
+    const segmentDfHz = ((fftSize - 1) / segmentDurationS) / fftSize;
+    for (let bin = 0; bin < sum.length; bin++) {
+      const position = Math.min(magnitude.length - 1, (bin * dfHz) / segmentDfHz);
+      const left = Math.floor(position);
+      const right = Math.min(magnitude.length - 1, left + 1);
+      const fraction = position - left;
+      sum[bin] += magnitude[left] * (1 - fraction) + magnitude[right] * fraction;
+    }
+  }
+  const magnitude = Array.from(sum, (value) => value / starts.length);
+  return { dfHz, magnitude };
 }
 
 export function topPeaks(

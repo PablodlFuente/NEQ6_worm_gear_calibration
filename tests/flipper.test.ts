@@ -9,6 +9,7 @@ import {
   basicRevolutionSeriesCount,
   angleAt,
   averageFftSpectra,
+  averageSpeedNormalizedSpectra,
   buildMeasurementCsv,
   buildProcCsv,
   buildRawCsv,
@@ -16,8 +17,10 @@ import {
   classifyExtendedPeaks,
   circularStats,
   fitPolarEllipse,
+  fftMag,
   parseCsv,
   travelFromCaptureOrigin,
+  timedFftSpectrum,
   unwrapDegrees,
 } from "../src/lib/flipper.ts";
 import { calculateMotionTiming, lowSpeedGotoMarginSteps, MAX_GOTO_STEPS, MAX_POSITION_DELTA, MAX_SAFE_ABSOLUTE_GOTO_DELTA, MIN_T1_TICKS, NEQ6_MAX_SLEW_RATE, requiresDangerConfirmation, SIDEREAL_DEG_PER_SEC } from "../src/lib/protocol.ts";
@@ -143,6 +146,41 @@ test("promedia FFT con distinta resolución sobre un eje común", () => {
     { dfHz: 0.5, magnitude: [0, 1, 2, 3, 4, 5, 6] },
   ]);
   assert.deepEqual(average, { dfHz: 1, magnitude: [0, 2, 4, 6] });
+});
+
+test("el promedio mecánico alinea picos por velocidad sin cambiar su escala Hz", () => {
+  const average = averageSpeedNormalizedSpectra([
+    { speedDegS: 2, spectrum: { dfHz: 1, magnitude: [0, 0, 10, 0, 0, 0, 0] } },
+    { speedDegS: 4, spectrum: { dfHz: 1, magnitude: [0, 0, 0, 0, 10, 0, 0, 0, 0] } },
+  ]);
+  assert.ok(average);
+  assert.equal(average.dfHz, 1.5);
+  assert.equal(average.magnitude.indexOf(Math.max(...average.magnitude)), 2);
+  assert.equal(average.dfHz * 2, 3);
+});
+
+test("la FFT temporal termina en el Nyquist de la tasa efectiva", () => {
+  const timestamps = Array.from({ length: 1000 }, (_, index) => index * 2000);
+  const values = Float64Array.from(timestamps, (timestamp) => Math.sin(2 * Math.PI * 40 * timestamp / 1e6));
+  const spectrum = timedFftSpectrum(timestamps, values);
+  assert.ok(spectrum);
+  const maxHz = (spectrum.magnitude.length - 1) * spectrum.dfHz;
+  assert.ok(maxHz <= 250);
+  assert.ok(maxHz > 249);
+});
+
+test("la FFT radix-2 asigna una senoide a su frecuencia real", () => {
+  const rateHz = 500;
+  const frequencyHz = 40;
+  const size = 4096;
+  const values = Float64Array.from({ length: size }, (_, index) =>
+    Math.sin(2 * Math.PI * frequencyHz * index / rateHz));
+  const magnitude = fftMag(values);
+  let peakBin = 2;
+  for (let index = 3; index < magnitude.length; index++) {
+    if (magnitude[index] > magnitude[peakBin]) peakBin = index;
+  }
+  assert.ok(Math.abs(peakBin * rateHz / size - frequencyHz) < rateHz / size);
 });
 
 test("reposiciona un ángulo relativo respetando origen y sentido", () => {
