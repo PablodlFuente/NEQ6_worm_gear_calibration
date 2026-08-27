@@ -54,7 +54,10 @@ async function browserContext() {
   state.mode = mode;
   state.contextPromise = (async () => {
     const { chromium } = await import("playwright-core");
-    const profile = resolve(process.cwd(), ".tools", "ai-browser-profile");
+    // Fuera del proyecto: Vite no debe intentar vigilar los ficheros de
+    // cookies que Chromium mantiene bloqueados mientras el puente está activo.
+    const profileRoot = process.env.LOCALAPPDATA || process.env.TEMP || process.cwd();
+    const profile = resolve(profileRoot, "NEQ6-worm-gear", "ai-browser-profile");
     await mkdir(profile, { recursive: true });
     const context = await chromium.launchPersistentContext(profile, {
       executablePath: await executablePath(),
