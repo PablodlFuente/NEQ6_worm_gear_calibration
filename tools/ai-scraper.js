@@ -9,17 +9,21 @@ const CHROME_PATHS = [
 const BUILT_INS = {
   chatgpt: {
     url: "https://chatgpt.com/",
-    input: "#prompt-textarea, #mobile-composer-prompt, textarea[placeholder*='ChatGPT']",
-    send: "button[data-testid='send-button'], button[aria-label='Enviar mensaje'], button[aria-label='Send message']",
-    response: "[data-message-author-role='assistant']",
+    input: "div#prompt-textarea, #mobile-composer-prompt, div[contenteditable='true'][role='textbox'], textarea[placeholder*='ChatGPT']",
+    send: "button[data-testid='send-button'], button[aria-label='Send prompt'], button[aria-label='Enviar prompt'], button[aria-label='Enviar mensaje'], button[aria-label='Send message']",
+    response: "div[data-message-author-role='assistant'], div.markdown.prose",
+    turns: "article[data-testid^='conversation-turn']",
+    bodyAfterPrompt: true,
     stop: "button[data-testid='stop-button'], button[aria-label*='Detener'], button[aria-label*='Stop']",
+    blocked: "div[data-testid='rate-limit-message'], div.captcha-container, iframe[src*='captcha']",
   },
   qwen: {
     url: "https://chat.qwen.ai/",
     input: "textarea.message-input-textarea, textarea[placeholder*='Qwen']",
-    send: "button.send-button, button[aria-label='Enviar'], button[aria-label='Send']",
-    response: ".message-content, .chat-message.assistant, [data-role='assistant']",
-    stop: "button[aria-label*='Detener'], button[aria-label*='Stop'], .stop-button",
+    send: "button.send-button, .chat-prompt-send-button button, div.message-input-right-button-send button, button[aria-label='Enviar'], button[aria-label='Send']",
+    response: "div.response-message-content.phase-answer, div.response-message-content, div.chat-response-message, div[id^='chat-response-message-']",
+    stop: "button.stop-button, button[aria-label*='Detener'], button[aria-label*='Stop']",
+    sequentialInput: true,
   },
   gemini: {
     url: "https://gemini.google.com/app",
@@ -30,7 +34,8 @@ const BUILT_INS = {
   },
 };
 
-let contextPromise = null;
+const STATE_KEY = "__neq6AiScraperState";
+const state = globalThis[STATE_KEY] ?? (globalThis[STATE_KEY] = { contextPromise: null });
 
 async function executablePath() {
   for (const path of CHROME_PATHS) {
@@ -40,8 +45,15 @@ async function executablePath() {
 }
 
 async function browserContext() {
-  if (contextPromise) return contextPromise;
-  contextPromise = (async () => {
+  const mode = process.env.NEQ6_AI_SHOW_BROWSER === "1" ? "visible" : "background";
+  if (state.contextPromise && state.mode === mode) return state.contextPromise;
+  if (state.contextPromise) {
+    const previous = await state.contextPromise.catch(() => null);
+    await previous?.close().catch(() => {});
+    state.contextPromise = null;
+  }
+  state.mode = mode;
+  state.contextPromise = (async () => {
     const { chromium } = await import("playwright-core");
     const profile = resolve(process.cwd(), ".tools", "ai-browser-profile");
     await mkdir(profile, { recursive: true });
@@ -49,12 +61,16 @@ async function browserContext() {
       executablePath: await executablePath(),
       headless: false,
       viewport: null,
-      args: ["--no-first-run", "--disable-features=Translate"],
+      args: [
+        "--no-first-run",
+        "--disable-features=Translate",
+        ...(mode === "background" ? ["--start-minimized", "--window-position=-32000,-32000", "--window-size=1280,900"] : []),
+      ],
     });
-    context.on("close", () => { contextPromise = null; });
+    context.on("close", () => { state.contextPromise = null; });
     return context;
-  })().catch((error) => { contextPromise = null; throw error; });
-  return contextPromise;
+  })().catch((error) => { state.contextPromise = null; throw error; });
+  return state.contextPromise;
 }
 
 function localRequest(request) {
@@ -107,15 +123,37 @@ async function dismissCookies(page) {
   }
 }
 
-async function waitStableResponse(page, adapter, initialCount, initialText) {
+async function waitStableResponse(page, adapter, initial, prompt) {
   const responses = page.locator(adapter.response);
+  const turns = adapter.turns ? page.locator(adapter.turns) : null;
   let last = "";
   let stableAt = 0;
   const deadline = Date.now() + 180_000;
   while (Date.now() < deadline) {
+    if (adapter.blocked && await page.locator(adapter.blocked).count().catch(() => 0) > 0) {
+      throw new Error("El proveedor ha mostrado una verificación o un límite de uso.");
+    }
     const count = await responses.count().catch(() => 0);
-    const current = count > 0 ? (await responses.last().innerText().catch(() => "")).trim() : "";
-    const isNewResponse = count > initialCount || (current && current !== initialText);
+    const responseText = count > 0 ? (await responses.last().innerText().catch(() => "")).trim() : "";
+    const turnCount = turns ? await turns.count().catch(() => 0) : 0;
+    const turnText = turns && turnCount >= initial.turnCount + 2
+      ? (await turns.last().innerText().catch(() => "")).trim()
+      : "";
+    let bodyResponse = "";
+    if (adapter.bodyAfterPrompt && !responseText && !turnText) {
+      const bodyText = await page.locator("body").innerText().catch(() => "");
+      const promptAt = bodyText.lastIndexOf(prompt);
+      if (promptAt >= 0) {
+        bodyResponse = bodyText.slice(promptAt + prompt.length).trim().replace(/^ChatGPT(?:\s+Plus)?\s*/i, "").trim();
+        const footerAt = ["\n\nChatGPT es una IA", "\n\nChat con ChatGPT", "\n\nChatGPT can make mistakes"]
+          .map((marker) => bodyResponse.indexOf(marker))
+          .filter((index) => index >= 0)
+          .sort((a, b) => a - b)[0];
+        if (footerAt !== undefined) bodyResponse = bodyResponse.slice(0, footerAt).trim();
+      }
+    }
+    const current = responseText || turnText || bodyResponse;
+    const isNewResponse = count > initial.count || (responseText && responseText !== initial.text) || Boolean(turnText || bodyResponse);
     const generating = adapter.stop
       ? await page.locator(adapter.stop).filter({ visible: true }).count().catch(() => 0) > 0
       : false;
@@ -128,7 +166,18 @@ async function waitStableResponse(page, adapter, initialCount, initialText) {
     }
     await page.waitForTimeout(500);
   }
-  throw new Error("No se obtuvo una respuesta completa en tres minutos.");
+  const count = await responses.count().catch(() => 0);
+  throw new Error(`No se detectó una respuesta completa en tres minutos (coincidencias: ${count}).`);
+}
+
+async function submitPrompt(page, input, adapter) {
+  const send = page.locator(adapter.send).filter({ visible: true }).first();
+  try {
+    await send.waitFor({ state: "visible", timeout: 5000 });
+    await send.click();
+  } catch {
+    await input.press("Enter");
+  }
 }
 
 async function run(provider, prompt) {
@@ -143,16 +192,46 @@ async function run(provider, prompt) {
     const responses = page.locator(adapter.response);
     const initialCount = await responses.count().catch(() => 0);
     const initialText = initialCount > 0 ? (await responses.last().innerText().catch(() => "")).trim() : "";
-    await input.fill(prompt);
-    const send = page.locator(adapter.send).filter({ visible: true }).first();
-    await send.waitFor({ state: "visible", timeout: 15_000 });
-    await send.click();
-    const response = await waitStableResponse(page, adapter, initialCount, initialText);
+    const initialTurnCount = adapter.turns ? await page.locator(adapter.turns).count().catch(() => 0) : 0;
+    if (adapter.sequentialInput) {
+      await input.fill("");
+      await input.pressSequentially(prompt, { delay: 0 });
+    } else {
+      await input.fill(prompt);
+    }
+    await submitPrompt(page, input, adapter);
+    const response = await waitStableResponse(page, adapter, { count: initialCount, text: initialText, turnCount: initialTurnCount }, prompt);
     await page.close();
     return response;
   } catch (error) {
-    await page.bringToFront().catch(() => {});
-    throw error;
+    const details = `${await page.title().catch(() => "sin título")} · ${page.url()}`;
+    const pageText = (await page.locator("body").innerText().catch(() => "")).replace(/\s+/g, " ").trim().slice(0, 300);
+    await page.close().catch(() => {});
+    throw new Error(`${String(error?.message ?? error)} [${details} · ${pageText}]`);
+  }
+}
+
+async function probe(provider) {
+  const adapter = BUILT_INS[provider.id] ?? customAdapter(provider);
+  const context = await browserContext();
+  const page = await context.newPage();
+  try {
+    await page.goto(adapter.url, { waitUntil: "domcontentloaded", timeout: 45_000 });
+    await dismissCookies(page);
+    const input = page.locator(adapter.input).filter({ visible: true });
+    await input.first().waitFor({ state: "visible", timeout: 45_000 });
+    return {
+      title: await page.title(),
+      url: page.url(),
+      inputCount: await input.count(),
+      blocked: adapter.blocked ? await page.locator(adapter.blocked).count().catch(() => 0) > 0 : false,
+    };
+  } catch (error) {
+    const title = await page.title().catch(() => "sin título");
+    const text = (await page.locator("body").innerText().catch(() => "")).replace(/\s+/g, " ").trim().slice(0, 240);
+    throw new Error(`${String(error?.message ?? error)} [${title} · ${page.url()} · ${text}]`);
+  } finally {
+    await page.close().catch(() => {});
   }
 }
 
@@ -180,6 +259,16 @@ export function aiScraperMiddleware() {
         if (typeof payload.prompt !== "string" || !payload.prompt.trim()) throw new Error("Informe vacío.");
         const result = await run(payload.provider, payload.prompt);
         response.end(JSON.stringify({ ok: true, response: result }));
+      } catch (error) {
+        response.statusCode = 500;
+        response.end(JSON.stringify({ ok: false, error: String(error?.message ?? error) }));
+      }
+      return;
+    }
+    if (request.method === "POST" && request.url === "/api/ai/probe") {
+      try {
+        const payload = JSON.parse(await readBody(request));
+        response.end(JSON.stringify({ ok: true, ...(await probe(payload.provider)) }));
       } catch (error) {
         response.statusCode = 500;
         response.end(JSON.stringify({ ok: false, error: String(error?.message ?? error) }));

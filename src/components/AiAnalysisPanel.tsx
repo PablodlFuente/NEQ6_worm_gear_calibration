@@ -45,7 +45,13 @@ export default function AiAnalysisPanel({ prompt }: { prompt: string }) {
       }
       setNotice(`Análisis de ${target.name} recibido y guardado.`);
     } catch (error) {
-      setNotice(String(error instanceof Error ? error.message : error));
+      const message = String(error instanceof Error ? error.message : error);
+      if (/failed to fetch/i.test(message)) {
+        setServiceReady(false);
+        setNotice("El servidor local se ha detenido. Reinicia la aplicación y vuelve a intentarlo.");
+      } else {
+        setNotice(message);
+      }
     } finally {
       setRunningProviders((current) => {
         const next = new Set(current); next.delete(target.id); return next;
@@ -76,7 +82,7 @@ export default function AiAnalysisPanel({ prompt }: { prompt: string }) {
           <button onClick={() => void runAutomatic()} disabled={serviceReady !== true || runningProviders.has(provider.id)} className="rounded border border-mint/50 bg-mint/10 px-3 py-2 font-display text-[9px] font-bold tracking-wider text-mint hover:bg-mint/20 disabled:opacity-40">
             {runningProviders.has(provider.id) ? "ANALIZANDO…" : "ANALIZAR"}
           </button>
-          <button onClick={runAll} disabled={runningProviders.size > 0} className="rounded border border-ion/50 bg-ion/10 px-3 py-2 font-display text-[9px] font-bold tracking-wider text-ion hover:bg-ion/20 disabled:opacity-40">ANALIZAR CON TODAS</button>
+          <button onClick={runAll} disabled={serviceReady !== true || runningProviders.size > 0} className="rounded border border-ion/50 bg-ion/10 px-3 py-2 font-display text-[9px] font-bold tracking-wider text-ion hover:bg-ion/20 disabled:opacity-40">ANALIZAR CON TODAS</button>
         </div>
         <details className="mt-2 rounded border border-line/70">
           <summary className="cursor-pointer px-2 py-1.5 font-mono text-[9px] text-dim">Informe enviado · {fingerprint}</summary>
@@ -87,7 +93,7 @@ export default function AiAnalysisPanel({ prompt }: { prompt: string }) {
         <div className="mb-2 flex flex-wrap items-center gap-2">
           <h3 className="mr-auto font-display text-[10px] font-bold uppercase tracking-[0.16em] text-fog">Respuesta · {provider.name}</h3>
           {savedAt && <span className="font-mono text-[9px] text-mint">guardada {new Date(savedAt).toLocaleString("es-ES")}</span>}
-          <button onClick={() => void runAutomatic()} disabled={runningProviders.has(provider.id)} className="rounded border border-ember/50 px-2 py-1 font-display text-[9px] font-bold text-ember hover:bg-ember/10 disabled:opacity-40">RECALCULAR</button>
+          <button onClick={() => void runAutomatic()} disabled={serviceReady !== true || runningProviders.has(provider.id)} className="rounded border border-ember/50 px-2 py-1 font-display text-[9px] font-bold text-ember hover:bg-ember/10 disabled:opacity-40">RECALCULAR</button>
         </div>
         <textarea value={response} readOnly placeholder="La respuesta automática aparecerá aquí." className="min-h-72 w-full resize-y rounded border border-line bg-[#07101e] p-2 font-mono text-[10.5px] leading-relaxed text-fog focus:outline-none" />
         {notice && <p className="mt-1.5 font-mono text-[9px] text-dim">{notice}</p>}

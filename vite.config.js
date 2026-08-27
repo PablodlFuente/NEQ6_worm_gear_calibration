@@ -62,7 +62,7 @@ export default defineConfig({
     port: 3000,
     strictPort: true,
     watch: {
-      ignored: ["**/logs/**", "**/docs/docs_dev/**"],
+      ignored: ["**/logs/**", "**/docs/docs_dev/**", "**/.tools/**"],
     },
     hmr: {
       port: 3000,
