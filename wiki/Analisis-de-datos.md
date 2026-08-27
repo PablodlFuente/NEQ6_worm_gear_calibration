@@ -114,18 +114,20 @@ mismas condiciones.
 ## FFT
 
 La corriente se interpola sobre una rejilla temporal uniforme y se aplica una
-ventana de Hann antes de la FFT. Para una duración `T`:
+ventana de Hann antes de la FFT. Las capturas largas se calculan mediante
+Welch con solapamiento, sin reducir toda la adquisición a 4096 puntos. Para una
+duración `T`:
 
 ```text
-resolucion_frecuencia = 1 / T
+resolucion_frecuencia = 1 / T                 (FFT de la captura completa)
+resolucion_frecuencia = f_ADC / N_segmento    (Welch)
 periodo_s = 1 / frecuencia_hz
 periodicidad_angular = periodo_s * velocidad_medida_deg_s
 ```
 
-La interpolación a 4096 puntos facilita la FFT, pero no crea ancho de banda. La
-banda físicamente interpretable sigue limitada por aproximadamente la mitad de
-la tasa ADC efectiva y por la respuesta analógica de la entrada. Los bins por
-encima de ese límite no deben atribuirse a un fenómeno real.
+La frecuencia máxima mostrada nunca supera el Nyquist de la tasa ADC efectiva,
+`f_N = f_ADC/2`. La respuesta analógica de la entrada puede imponer un límite
+práctico inferior.
 
 En un test básico se muestran cinco máximos automáticos y selecciones manuales.
 En el extendido se puede seleccionar una pasada, el promedio o superponer todos
@@ -137,15 +139,13 @@ análisis comparativo.
 La opción **revs. independientes** cambia el dominio de cálculo, no sólo la
 apariencia de la gráfica:
 
-- Desactivada: cada vuelta se representa en `0–360°`. El perfil blanco, las
-  estadísticas finales y el espectro promedio se calculan comparando las
-  revoluciones entre sí. La FFT del promedio se obtiene del perfil angular
-  medio; así, pequeñas diferencias de duración entre vueltas no desdoblan un
-  mismo pico.
-- Activada: las vueltas ocupan intervalos consecutivos (`0–360°`, `360–720°`,
-  etc.). La línea blanca es la media móvil de la adquisición concatenada; las
-  estadísticas pertenecen a esa serie completa y la FFT se calcula sobre toda
-  su duración. Las curvas individuales conservan su color.
+- Activada: las revoluciones se consideran independientes y se superponen en
+  `0–360°`. El perfil blanco y las estadísticas comparan las vueltas. La FFT
+  promedio alinea los espectros en ciclos/grado y los devuelve a Hz con la
+  velocidad media, sin perder la banda temporal original.
+- Desactivada: las vueltas forman una serie continua en intervalos consecutivos
+  (`0–360°`, `360–720°`, etc.). La línea blanca es la media móvil de la
+  adquisición concatenada; sus estadísticas y FFT usan la serie completa.
 
 La segunda opción proporciona mayor resolución frecuencial por su mayor tiempo
 de observación; la primera facilita valorar la repetibilidad angular entre
