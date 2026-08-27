@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import type { FlipperApi } from "../hooks/useFlipper";
-import { averageFftSpectra, averageSpeedNormalizedSpectra, circularStats, fitPolarEllipse, movingWindowStats, topPeaks, travelFromCaptureOrigin } from "../lib/flipper";
+import { averageAngularSeriesSpectrum, averageFftSpectra, circularStats, fitPolarEllipse, movingWindowStats, topPeaks, travelFromCaptureOrigin } from "../lib/flipper";
 import { IconAlert, IconDownload, IconTrash, IconZoom } from "./icons";
 
 const AVGS = [1, 2, 5, 10, 20, 50, 100];
@@ -302,28 +302,54 @@ export default function FlipperLab({
   const cartesianAngle = (angle: number) => independentRevs
     ? travelFromCaptureOrigin(angle, sequenceOriginDeg)
     : ((angle % 360) + 360) % 360;
+  const fftReferenceSpeed = useMemo(() => {
+    const speeds = comparisonPasses
+      .filter((pass) => pass.direction !== "stationary")
+      .map((pass) => pass.measuredSpeedDegS)
+      .filter((speed): speed is number => speed !== null && speed > 0);
+    return speeds.length ? speeds.reduce((sum, speed) => sum + speed, 0) / speeds.length : null;
+  }, [comparisonPasses]);
   const extendedFftSeries = useMemo(() => {
     const passes = comparisonPasses.flatMap((pass, index) => pass.spectrum ? [{
       id: pass.id,
       label: pass.label,
       color: REV_COLORS[index % REV_COLORS.length],
-      spectrum: pass.spectrum,
+      spectrum: pass.direction !== "stationary" && fftReferenceSpeed && pass.samples?.anglesDeg?.length
+        ? averageAngularSeriesSpectrum([{
+            anglesDeg: pass.samples.anglesDeg,
+            currentA: pass.samples.currentA,
+            speedDegS: pass.measuredSpeedDegS,
+          }], fftReferenceSpeed) ?? pass.spectrum
+        : pass.spectrum,
     }] : []);
     const movingSpectra = passes.filter((series) => comparisonPasses.find((pass) => pass.id === series.id)?.direction !== "stationary");
     const joined = independentRevs && derived?.mag
       ? { dfHz: derived.df, magnitude: Array.from(derived.mag) }
       : null;
-    const mechanicalAverage = !independentRevs && !isExtendedTest && basicPasses.length > 1
-      ? averageSpeedNormalizedSpectra(basicPasses.flatMap((pass) => pass.spectrum ? [{
-          spectrum: pass.spectrum,
-          speedDegS: pass.measuredSpeedDegS,
-        }] : []))
-      : null;
-    const average = joined ?? mechanicalAverage ?? averageFftSpectra((movingSpectra.length ? movingSpectra : passes).map((series) => series.spectrum));
+    const angularAverage = !independentRevs ? averageAngularSeriesSpectrum(comparisonPasses.flatMap((pass) => {
+      if (pass.direction === "stationary") return [];
+      if (pass.samples?.anglesDeg?.length && pass.samples.currentA.length) return [{
+        anglesDeg: pass.samples.anglesDeg,
+        currentA: pass.samples.currentA,
+        speedDegS: pass.measuredSpeedDegS,
+      }];
+      if (pass.profile?.currentA?.length) {
+        const anglesDeg: number[] = [];
+        const currentA: number[] = [];
+        pass.profile.currentA.forEach((current, index) => {
+          if (current === null) return;
+          anglesDeg.push(pass.profile!.anglesDeg[index] ?? index + 0.5);
+          currentA.push(current);
+        });
+        return [{ anglesDeg, currentA, speedDegS: pass.measuredSpeedDegS }];
+      }
+      return [];
+    })) : null;
+    const average = joined ?? angularAverage ?? averageFftSpectra((movingSpectra.length ? movingSpectra : passes).map((series) => series.spectrum));
     return average && passes.length > 1
       ? [...passes, { id: "average", label: joined ? "Serie unida" : "Promedio", color: "#f0f5ff", spectrum: average }]
       : passes;
-  }, [comparisonPasses, independentRevs, isExtendedTest, basicPasses, derived?.mag, derived?.df, derived?.st.feedbackSpeedDegS]);
+  }, [comparisonPasses, independentRevs, derived?.mag, derived?.df, fftReferenceSpeed]);
   const selectedExtendedPass = comparisonPasses.find((pass) => pass.id === selectedFftSeries);
   const manualPeakKey = extendedFftSeries.length ? selectedFftSeries : "current";
   const selectedPeaks = manualPeaksBySeries[manualPeakKey] ?? [];
@@ -331,19 +357,14 @@ export default function FlipperLab({
     setManualPeaksBySeries((all) => ({ ...all, [manualPeakKey]: update(all[manualPeakKey] ?? []) }));
   };
   const displayedFftPeaks: Peak[] = extendedFftSeries.length
-    ? selectedExtendedPass
-      ? selectedExtendedPass.peaks.slice(0, 5).map((peak) => ({
-          bin: Math.round(peak.frequencyHz / (selectedExtendedPass.spectrum?.dfHz || 1)),
-          freq: peak.frequencyHz,
-          period: 1 / peak.frequencyHz,
-          mag: peak.magnitude,
-        }))
-      : (() => {
-          const average = extendedFftSeries.find((series) => series.id === "average")?.spectrum;
-          return average ? topPeaks(Float64Array.from(average.magnitude), average.dfHz, 5) : [];
-        })()
+    ? (() => {
+        const selected = extendedFftSeries.find((series) => series.id === selectedFftSeries)?.spectrum;
+        return selected ? topPeaks(Float64Array.from(selected.magnitude), selected.dfHz, 5) : [];
+      })()
     : derived?.peaks ?? [];
-  const displayedFftSpeed = selectedExtendedPass?.measuredSpeedDegS ?? (extendedFftSeries.length ? null : derived?.st.feedbackSpeedDegS ?? null);
+  const displayedFftSpeed = extendedFftSeries.length
+    ? selectedExtendedPass?.direction === "stationary" ? null : fftReferenceSpeed
+    : derived?.st.feedbackSpeedDegS ?? null;
   const displayedFftDfHz = extendedFftSeries.length
     ? extendedFftSeries.find((series) => series.id === selectedFftSeries)?.spectrum.dfHz ?? derived?.df ?? 0
     : derived?.df ?? 0;
@@ -1650,6 +1671,7 @@ export default function FlipperLab({
             {view === "fft" && derived && (
               <p className="font-mono text-[9.5px] text-dim">
                 Espectro · {derived.st.durS.toFixed(1)} s de señal · resolución {displayedFftDfHz.toFixed(3)} Hz · ventana de Hann · grados calculados con el feedback de posición de la montura
+                {extendedFftSeries.length && fftReferenceSpeed ? ` · pasadas móviles en dominio angular referidas a ${fftReferenceSpeed.toFixed(4)} °/s` : ""}
               </p>
             )}
             {view === "fft" && flip.extendedAnalysis && (

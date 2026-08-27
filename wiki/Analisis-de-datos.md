@@ -140,6 +140,14 @@ En el extendido se puede seleccionar una pasada, el promedio o superponer todos
 los espectros. También se conservan hasta 40 máximos locales por pasada para el
 análisis comparativo.
 
+En la comparación multipasada, cada señal móvil se reconstruye primero en el
+dominio angular usando el feedback de posición y se refiere a la velocidad
+media del conjunto. Los rasgos mecánicos aparecen así en el mismo bin aunque
+cambien ligeramente la velocidad o la relación entre el reloj ADC y el reloj
+del controlador. La FFT marcada como **Promedio** se calcula sobre la corriente
+promedio de esas señales alineadas, no promediando sus espectros. La captura de
+ruido estacionario conserva necesariamente su eje temporal original.
+
 ## Revoluciones superpuestas o independientes
 
 La opción **revs. independientes** cambia el dominio de cálculo, no sólo la

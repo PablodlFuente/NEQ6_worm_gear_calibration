@@ -145,6 +145,85 @@ export function averageSpeedNormalizedSpectra(
   return { dfHz, magnitude };
 }
 
+export interface AngularFftSeries {
+  anglesDeg: ArrayLike<number>;
+  currentA: ArrayLike<number>;
+  speedDegS: number | null;
+}
+
+/** Calcula la FFT de la serie promedio, no el promedio de FFT ya calculadas.
+ * Las señales se registran primero sobre una rejilla angular común; así un
+ * mismo rasgo físico coincide aunque haya pequeñas diferencias de reloj o
+ * velocidad entre pasadas. El eje vuelve a expresarse en Hz con la velocidad
+ * media medida. */
+export function averageAngularSeriesSpectrum(series: AngularFftSeries[], referenceSpeedDegS?: number): FftSpectrum | null {
+  const valid = series.filter((item) => {
+    const length = Math.min(item.anglesDeg.length, item.currentA.length);
+    return length >= 64 && item.speedDegS !== null && item.speedDegS > 0;
+  }) as Array<AngularFftSeries & { speedDegS: number }>;
+  if (!valid.length) return null;
+
+  const samplesPerRevolution = valid.map((item) => {
+    const length = Math.min(item.anglesDeg.length, item.currentA.length);
+    let min = Infinity;
+    let max = -Infinity;
+    for (let index = 0; index < length; index++) {
+      const angle = item.anglesDeg[index];
+      if (!Number.isFinite(angle)) continue;
+      min = Math.min(min, angle);
+      max = Math.max(max, angle);
+    }
+    const revolutions = Number.isFinite(min) && Number.isFinite(max) ? Math.max(1, Math.abs(max - min) / 360) : 1;
+    return length / revolutions;
+  });
+  const available = Math.floor(Math.min(...samplesPerRevolution));
+  if (available < 64) return null;
+  const gridSize = 2 ** Math.floor(Math.log2(Math.min(65536, available)));
+  const profiles: Float64Array[] = [];
+
+  for (const item of valid) {
+    const sums = new Float64Array(gridSize);
+    const counts = new Uint32Array(gridSize);
+    const length = Math.min(item.anglesDeg.length, item.currentA.length);
+    for (let index = 0; index < length; index++) {
+      const angle = item.anglesDeg[index];
+      const current = item.currentA[index];
+      if (!Number.isFinite(angle) || !Number.isFinite(current)) continue;
+      const phase = ((angle % 360) + 360) % 360;
+      const bin = Math.min(gridSize - 1, Math.floor((phase / 360) * gridSize));
+      sums[bin] += current;
+      counts[bin]++;
+    }
+    const populated = Array.from(counts, (count, index) => count ? index : -1).filter((index) => index >= 0);
+    if (populated.length < 32) continue;
+    const profile = new Float64Array(gridSize);
+    for (const index of populated) profile[index] = sums[index] / counts[index];
+    /* Interpolación circular sólo para huecos entre muestras; no altera los
+     * bins que contienen medidas reales. */
+    for (let segment = 0; segment < populated.length; segment++) {
+      const left = populated[segment];
+      const rightRaw = populated[(segment + 1) % populated.length] + (segment === populated.length - 1 ? gridSize : 0);
+      const span = rightRaw - left;
+      const leftValue = profile[left];
+      const rightValue = profile[rightRaw % gridSize];
+      for (let offset = 1; offset < span; offset++) {
+        profile[(left + offset) % gridSize] = leftValue + (rightValue - leftValue) * offset / span;
+      }
+    }
+    profiles.push(profile);
+  }
+  if (!profiles.length) return null;
+  const average = new Float64Array(gridSize);
+  for (let index = 0; index < gridSize; index++) {
+    for (const profile of profiles) average[index] += profile[index];
+    average[index] /= profiles.length;
+  }
+  const referenceSpeed = referenceSpeedDegS && referenceSpeedDegS > 0
+    ? referenceSpeedDegS
+    : valid.reduce((sum, item) => sum + item.speedDegS, 0) / valid.length;
+  return { dfHz: referenceSpeed / 360, magnitude: Array.from(fftMag(average)) };
+}
+
 export interface ExtendedPassResult {
   id: string;
   label: string;
