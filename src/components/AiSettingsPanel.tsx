@@ -9,6 +9,17 @@ export default function AiSettingsPanel() {
   const [sendSelector, setSendSelector] = useState("");
   const [responseSelector, setResponseSelector] = useState("");
   const [stopSelector, setStopSelector] = useState("");
+  const updateProvider = (id: string, update: Partial<(typeof settings.providers)[number]>) => {
+    setSettings({ ...settings, providers: settings.providers.map((provider) => provider.id === id ? { ...provider, ...update } : provider) });
+  };
+  const updateAdapter = (id: string, key: "input" | "send" | "response" | "stop", value: string) => {
+    setSettings({
+      ...settings,
+      providers: settings.providers.map((provider) => provider.id === id
+        ? { ...provider, adapter: { input: "", send: "", response: "", ...provider.adapter, [key]: value } }
+        : provider),
+    });
+  };
   const add = () => {
     const trimmedName = name.trim();
     const trimmedUrl = url.trim();
@@ -36,10 +47,21 @@ export default function AiSettingsPanel() {
       {settings.enabled && (
         <div className="mt-3 space-y-2">
           {settings.providers.map((provider) => (
-            <div key={provider.id} className="flex items-center gap-2 rounded border border-line bg-[#0c1930] px-2 py-1.5 font-mono text-[10px]">
-              <span className="min-w-20 text-fog">{provider.name}</span>
-              <span className="min-w-0 flex-1 truncate text-dim">{provider.url}</span>
-              <button onClick={() => setSettings({ ...settings, providers: settings.providers.filter((item) => item.id !== provider.id) })} className="text-dim hover:text-alert" aria-label={`Eliminar ${provider.name}`}>×</button>
+            <div key={provider.id} className="rounded border border-line bg-[#0c1930] p-2 font-mono text-[10px]">
+              <div className="flex items-center gap-1.5">
+                <input value={provider.name} onChange={(event) => updateProvider(provider.id, { name: event.target.value })} aria-label={`Nombre de ${provider.name}`} className="w-28 rounded border border-line bg-[#091426] px-2 py-1 text-fog focus:border-ion/60 focus:outline-none" />
+                <input value={provider.url} onChange={(event) => updateProvider(provider.id, { url: event.target.value })} aria-label={`URL de ${provider.name}`} className="min-w-0 flex-1 rounded border border-line bg-[#091426] px-2 py-1 text-dim focus:border-ion/60 focus:outline-none" />
+                <button onClick={() => setSettings({ ...settings, providers: settings.providers.filter((item) => item.id !== provider.id) })} className="px-1 text-dim hover:text-alert" aria-label={`Eliminar ${provider.name}`}>×</button>
+              </div>
+              <details className="mt-1.5 border-t border-line/60 pt-1.5">
+                <summary className="cursor-pointer text-[9px] uppercase tracking-wider text-dim">Selectores de automatización</summary>
+                <div className="mt-1.5 grid grid-cols-1 gap-1.5 sm:grid-cols-2">
+                  <input value={provider.adapter?.input ?? ""} onChange={(event) => updateAdapter(provider.id, "input", event.target.value)} placeholder="Selector del campo de entrada" className="rounded border border-line bg-[#091426] px-2 py-1 text-fog focus:border-ion/60 focus:outline-none" />
+                  <input value={provider.adapter?.send ?? ""} onChange={(event) => updateAdapter(provider.id, "send", event.target.value)} placeholder="Selector del botón enviar" className="rounded border border-line bg-[#091426] px-2 py-1 text-fog focus:border-ion/60 focus:outline-none" />
+                  <input value={provider.adapter?.response ?? ""} onChange={(event) => updateAdapter(provider.id, "response", event.target.value)} placeholder="Selector de la respuesta" className="rounded border border-line bg-[#091426] px-2 py-1 text-fog focus:border-ion/60 focus:outline-none" />
+                  <input value={provider.adapter?.stop ?? ""} onChange={(event) => updateAdapter(provider.id, "stop", event.target.value)} placeholder="Selector de generación (opcional)" className="rounded border border-line bg-[#091426] px-2 py-1 text-fog focus:border-ion/60 focus:outline-none" />
+                </div>
+              </details>
             </div>
           ))}
           <div className="grid grid-cols-1 gap-1.5 sm:grid-cols-2">

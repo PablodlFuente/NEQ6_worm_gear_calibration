@@ -23,7 +23,7 @@ const BUILT_INS = {
     send: "button.send-button, .chat-prompt-send-button button, div.message-input-right-button-send button, button[aria-label='Enviar'], button[aria-label='Send']",
     response: "div.response-message-content.phase-answer, div.response-message-content, div.chat-response-message, div[id^='chat-response-message-']",
     stop: "button.stop-button, button[aria-label*='Detener'], button[aria-label*='Stop']",
-    sequentialInput: true,
+    insertText: true,
   },
   gemini: {
     url: "https://gemini.google.com/app",
@@ -112,6 +112,20 @@ function customAdapter(provider) {
   return { url: url.href, input: adapter.input, send: adapter.send, response: adapter.response, stop: adapter.stop || "" };
 }
 
+function providerAdapter(provider) {
+  const builtIn = BUILT_INS[provider?.id];
+  if (!builtIn) return customAdapter(provider);
+  const edited = provider?.adapter ?? {};
+  const url = new URL(provider?.url || builtIn.url);
+  if (url.protocol !== "https:") throw new Error("La IA requiere HTTPS.");
+  return {
+    ...builtIn,
+    ...edited,
+    url: url.href,
+    stop: edited.stop ?? builtIn.stop ?? "",
+  };
+}
+
 async function dismissCookies(page) {
   const names = [/Rechazar todo/i, /Reject all/i, /Sólo necesarias/i, /Only necessary/i, /Cerrar/i, /Close/i];
   for (const name of names) {
@@ -181,7 +195,7 @@ async function submitPrompt(page, input, adapter) {
 }
 
 async function run(provider, prompt) {
-  const adapter = BUILT_INS[provider.id] ?? customAdapter(provider);
+  const adapter = providerAdapter(provider);
   const context = await browserContext();
   const page = await context.newPage();
   try {
@@ -193,9 +207,10 @@ async function run(provider, prompt) {
     const initialCount = await responses.count().catch(() => 0);
     const initialText = initialCount > 0 ? (await responses.last().innerText().catch(() => "")).trim() : "";
     const initialTurnCount = adapter.turns ? await page.locator(adapter.turns).count().catch(() => 0) : 0;
-    if (adapter.sequentialInput) {
+    if (adapter.insertText) {
       await input.fill("");
-      await input.pressSequentially(prompt, { delay: 0 });
+      await input.focus();
+      await page.keyboard.insertText(prompt);
     } else {
       await input.fill(prompt);
     }
@@ -212,7 +227,7 @@ async function run(provider, prompt) {
 }
 
 async function probe(provider) {
-  const adapter = BUILT_INS[provider.id] ?? customAdapter(provider);
+  const adapter = providerAdapter(provider);
   const context = await browserContext();
   const page = await context.newPage();
   try {

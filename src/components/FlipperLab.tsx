@@ -290,18 +290,21 @@ export default function FlipperLab({
   /* Sesiones guardadas antes de incorporar perfiles/estadísticas extendidas
    * siguen siendo cargables; sencillamente no se dibujan como multipasada. */
   const extendedPasses = (flip.extendedAnalysis?.passes ?? []).filter((pass) => Boolean(pass.statistics));
+  const basicPasses = derived?.basicPasses ?? [];
+  const comparisonPasses = extendedPasses.length ? extendedPasses : basicPasses;
+  const isExtendedTest = extendedPasses.length > 0;
   const extendedFftSeries = useMemo(() => {
-    const passes = extendedPasses.flatMap((pass, index) => pass.spectrum ? [{
+    const passes = comparisonPasses.flatMap((pass, index) => pass.spectrum ? [{
       id: pass.id,
       label: pass.label,
       color: REV_COLORS[index % REV_COLORS.length],
       spectrum: pass.spectrum,
     }] : []);
-    const movingSpectra = passes.filter((series) => extendedPasses.find((pass) => pass.id === series.id)?.direction !== "stationary");
+    const movingSpectra = passes.filter((series) => comparisonPasses.find((pass) => pass.id === series.id)?.direction !== "stationary");
     const average = averageFftSpectra((movingSpectra.length ? movingSpectra : passes).map((series) => series.spectrum));
-    return average ? [...passes, { id: "average", label: "Promedio", color: "#f0f5ff", spectrum: average }] : passes;
-  }, [extendedPasses]);
-  const selectedExtendedPass = extendedPasses.find((pass) => pass.id === selectedFftSeries);
+    return average && passes.length > 1 ? [...passes, { id: "average", label: "Promedio", color: "#f0f5ff", spectrum: average }] : passes;
+  }, [comparisonPasses]);
+  const selectedExtendedPass = comparisonPasses.find((pass) => pass.id === selectedFftSeries);
   const manualPeakKey = extendedFftSeries.length ? selectedFftSeries : "current";
   const selectedPeaks = manualPeaksBySeries[manualPeakKey] ?? [];
   const updateSelectedPeaks = (update: (peaks: Peak[]) => Peak[]) => {
@@ -321,7 +324,7 @@ export default function FlipperLab({
         })()
     : derived?.peaks ?? [];
   const displayedFftSpeed = selectedExtendedPass?.measuredSpeedDegS ?? (extendedFftSeries.length ? null : derived?.st.feedbackSpeedDegS ?? null);
-  const extendedDisplaySeries = useMemo(() => extendedPasses
+  const extendedDisplaySeries = useMemo(() => comparisonPasses
     .filter((pass) => pass.direction !== "stationary")
     .flatMap((pass, passIndex) => {
     const factor = Math.max(1, Math.floor(flip.avgFactor));
@@ -353,7 +356,7 @@ export default function FlipperLab({
       return [{ id: pass.id, label: `${pass.label} · sesión antigua`, color: REV_COLORS[passIndex % REV_COLORS.length], angles, currents, angleErr: currents.map(() => 0), currentErr: currents.map(() => 0) }];
     }
       return [];
-    }), [extendedPasses, flip.avgFactor]);
+    }), [comparisonPasses, flip.avgFactor]);
   const activeExtendedSeries = extendedDisplaySeries.filter((series) => !hiddenExtendedSeries.has(series.id));
   const extendedMeanProfile = useMemo(() => {
     if (activeExtendedSeries.length < 2) return null;
@@ -488,9 +491,9 @@ export default function FlipperLab({
     };
   }, [polarProfile]);
   const extendedSummary = useMemo(() => {
-    if (!extendedPasses.length) return null;
-    const motionPasses = extendedPasses.filter((pass) => pass.direction !== "stationary");
-    const passStats = (motionPasses.length ? motionPasses : extendedPasses).map((pass) => pass.statistics);
+    if (!comparisonPasses.length) return null;
+    const motionPasses = comparisonPasses.filter((pass) => pass.direction !== "stationary");
+    const passStats = (motionPasses.length ? motionPasses : comparisonPasses).map((pass) => pass.statistics);
     const summarize = (values: number[]) => {
       const mean = values.reduce((sum, value) => sum + value, 0) / values.length;
       const variance = values.length > 1 ? values.reduce((sum, value) => sum + (value - mean) ** 2, 0) / (values.length - 1) : 0;
@@ -515,7 +518,7 @@ export default function FlipperLab({
       totalSamples: passStats.reduce((sum, item) => sum + item.n, 0),
       totalDurationS: passStats.reduce((sum, item) => sum + item.durationS, 0),
     };
-  }, [extendedPasses]);
+  }, [comparisonPasses]);
   const aiPrompt = useMemo(() => {
     if (!derived && !extendedSummary) return "";
     const axis = flip.captureMetadata.axis === 1 ? "AR" : flip.captureMetadata.axis === 2 ? "DEC" : "no indicado";
@@ -549,6 +552,19 @@ export default function FlipperLab({
       lines.push("Picos FFT:");
       derived.peaks.forEach((peak, index) => lines.push(`${index + 1}. ${peak.freq.toFixed(6)} Hz; periodo angular ${derived.st.feedbackSpeedDegS ? (peak.period * derived.st.feedbackSpeedDegS).toFixed(6) : "?"}°; magnitud ${peak.mag.toExponential(6)}`));
     }
+    if (!flip.extendedAnalysis && extendedSummary && basicPasses.length) {
+      lines.push(
+        `Revoluciones analizadas: ${basicPasses.length}`,
+        `Corriente media entre vueltas: ${extendedSummary.current.mean.toFixed(6)} ± ${extendedSummary.current.uncertainty.toFixed(6)} A`,
+        `Velocidad media: ${extendedSummary.speed.mean.toFixed(6)} ± ${extendedSummary.speed.uncertainty.toFixed(6)} °/s`,
+        `Concentración circular media: ${extendedSummary.circularR.mean.toFixed(6)} ± ${extendedSummary.circularR.uncertainty.toFixed(6)}`,
+        "Resumen por revolución:",
+      );
+      basicPasses.forEach((pass) => {
+        lines.push(`${pass.label}: ${pass.statistics.meanA.toFixed(6)} ± ${pass.statistics.semA.toFixed(6)} A; máximo ${pass.statistics.maxA.toFixed(6)} A a ${pass.statistics.maxAngleDeg?.toFixed(3) ?? "?"}°; ${pass.statistics.measuredSpeedDegS?.toFixed(6) ?? "?"} °/s`);
+        pass.peaks.slice(0, 8).forEach((peak) => lines.push(`  FFT ${peak.frequencyHz.toFixed(6)} Hz; ${peak.periodMountDeg?.toFixed(6) ?? "?"}°; magnitud ${peak.magnitude.toExponential(4)}`));
+      });
+    }
     if (flip.extendedAnalysis && extendedSummary) {
       lines.push(
         `Fases móviles: ${extendedPasses.filter((pass) => pass.direction !== "stationary").length}`,
@@ -562,7 +578,7 @@ export default function FlipperLab({
       extendedPasses.forEach((pass) => lines.push(`${pass.label}: ${pass.statistics.meanA.toFixed(6)} ± ${pass.statistics.semA.toFixed(6)} A; ${pass.statistics.measuredSpeedDegS?.toFixed(6) ?? "?"} °/s; ${pass.statistics.angleSpanDeg.toFixed(3)}°; ${pass.peaks.length} picos`));
     }
     return lines.join("\n");
-  }, [derived, extendedSummary, extendedPasses, flip.avgFactor, flip.captureMetadata, flip.extendedAnalysis, polarLoadAnalysis]);
+  }, [derived, extendedSummary, extendedPasses, basicPasses, flip.avgFactor, flip.captureMetadata, flip.extendedAnalysis, polarLoadAnalysis]);
   void flip.tick;
   useEffect(() => {
     if (!n) setManualPeaksBySeries({});
@@ -963,6 +979,20 @@ export default function FlipperLab({
     const maxAngle = viewport.x1 * 360;
     const X = (a: number) => L + ((a - minAngle) / (maxAngle - minAngle || 1)) * (w - L - Rg);
     const Y = (v: number) => h - Bm - ((v - minI) / (maxI - minI || 1)) * (h - T - Bm);
+    if (polarLoadAnalysis?.zones.length && extendedDisplaySeries.length) {
+      for (const zone of polarLoadAnalysis.zones) {
+        const ranges = zone.startDeg + zone.widthDeg <= 360
+          ? [[zone.startDeg, zone.startDeg + zone.widthDeg]]
+          : [[zone.startDeg, 360], [0, zone.startDeg + zone.widthDeg - 360]];
+        const dominant = polarLoadAnalysis.dominantZone === zone;
+        ctx.fillStyle = dominant ? "rgba(245,165,36,0.12)" : "rgba(245,165,36,0.055)";
+        for (const [start, end] of ranges) {
+          const visibleStart = Math.max(start, minAngle);
+          const visibleEnd = Math.min(end, maxAngle);
+          if (visibleEnd > visibleStart) ctx.fillRect(X(visibleStart), T, X(visibleEnd) - X(visibleStart), h - T - Bm);
+        }
+      }
+    }
     if (derived?.minSector && !extendedDisplaySeries.length) {
       ctx.fillStyle = "rgba(76,201,240,0.09)";
       ctx.fillRect(X(derived.minSector.angle - 5), T, X(derived.minSector.angle + 5) - X(derived.minSector.angle - 5), h - T - Bm);
@@ -1661,7 +1691,12 @@ export default function FlipperLab({
           </p>
         ) : extendedSummary ? (
           <div className="space-y-2">
-            <StatSection title="Resumen medio del test extendido" subtitle={`${extendedPasses.length}/5 fases terminadas · ± = incertidumbre estándar entre las vueltas`}>
+            <StatSection
+              title={isExtendedTest ? "Resumen medio del test extendido" : "Resumen medio del test básico"}
+              subtitle={isExtendedTest
+                ? `${comparisonPasses.length}/5 fases terminadas · ± = incertidumbre estándar entre las vueltas`
+                : `${comparisonPasses.length} ${comparisonPasses.length === 1 ? "revolución" : "revoluciones"} · ± = incertidumbre estándar entre vueltas`}
+            >
               <StatCell k="corriente media" v={`${extendedSummary.current.mean.toFixed(5)} ± ${extendedSummary.current.uncertainty.toFixed(5)} A`} tone="text-mint" />
               <StatCell k="N total" v={extendedSummary.totalSamples.toLocaleString("es-ES")} />
               <StatCell k="tiempo total adquisición" v={`${extendedSummary.totalDurationS.toFixed(1)} s`} />
@@ -1676,14 +1711,14 @@ export default function FlipperLab({
               {extendedSummary.ellipseRatio && <StatCell k="cociente a/b medio" v={`${extendedSummary.ellipseRatio.mean.toFixed(4)} ± ${extendedSummary.ellipseRatio.uncertainty.toFixed(4)}`} tone="text-ion" />}
               {extendedSummary.ellipseAngle && <StatCell k="inclinación φ media" v={`${extendedSummary.ellipseAngle.mean.toFixed(2)}° ± ${extendedSummary.ellipseAngle.uncertainty.toFixed(2)}°`} tone="text-ion" />}
             </StatSection>
-            {extendedPasses.map((pass, index) => {
+            {comparisonPasses.map((pass, index) => {
               const st = pass.statistics;
               const ellipse = st.ellipse;
               return (
                 <section key={pass.id} className="overflow-hidden rounded border border-line">
                   <header className="flex items-center gap-2 border-b border-line bg-[#0c1930] px-2.5 py-2">
                     <span className="h-2 w-2 rounded-full" style={{ background: REV_COLORS[index % REV_COLORS.length] }} />
-                    <h3 className="font-display text-[9.5px] font-bold uppercase tracking-[0.14em] text-fog">Pasada {index + 1} · {pass.label}</h3>
+                    <h3 className="font-display text-[9.5px] font-bold uppercase tracking-[0.14em] text-fog">{isExtendedTest ? `Pasada ${index + 1} · ${pass.label}` : pass.label}</h3>
                   </header>
                   <div className="space-y-1.5 bg-[#091426]/70 p-2">
                     <div className="grid grid-cols-1 gap-1.5 font-mono text-[10px] sm:grid-cols-2">

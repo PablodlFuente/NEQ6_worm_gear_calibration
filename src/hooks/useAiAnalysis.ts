@@ -27,9 +27,33 @@ const RESPONSES_KEY = "neq6-ai-analysis-responses-v1";
 const EVENT = "neq6-ai-analysis-settings";
 
 export const DEFAULT_AI_PROVIDERS: AiProvider[] = [
-  { id: "chatgpt", name: "ChatGPT", url: "https://chatgpt.com/" },
-  { id: "qwen", name: "Qwen", url: "https://chat.qwen.ai/" },
-  { id: "gemini", name: "Gemini", url: "https://gemini.google.com/app" },
+  {
+    id: "chatgpt", name: "ChatGPT", url: "https://chatgpt.com/",
+    adapter: {
+      input: "div#prompt-textarea, #mobile-composer-prompt, div[contenteditable='true'][role='textbox'], textarea[placeholder*='ChatGPT']",
+      send: "button[data-testid='send-button'], button[aria-label='Send prompt'], button[aria-label='Enviar prompt'], button[aria-label='Enviar mensaje'], button[aria-label='Send message']",
+      response: "div[data-message-author-role='assistant'], div.markdown.prose",
+      stop: "button[data-testid='stop-button'], button[aria-label*='Detener'], button[aria-label*='Stop']",
+    },
+  },
+  {
+    id: "qwen", name: "Qwen", url: "https://chat.qwen.ai/",
+    adapter: {
+      input: "textarea.message-input-textarea, textarea[placeholder*='Qwen']",
+      send: "button.send-button, .chat-prompt-send-button button, div.message-input-right-button-send button, button[aria-label='Enviar'], button[aria-label='Send']",
+      response: "div.response-message-content.phase-answer, div.response-message-content, div.chat-response-message, div[id^='chat-response-message-']",
+      stop: "button.stop-button, button[aria-label*='Detener'], button[aria-label*='Stop']",
+    },
+  },
+  {
+    id: "gemini", name: "Gemini", url: "https://gemini.google.com/app",
+    adapter: {
+      input: "rich-textarea [contenteditable='true'], div[contenteditable='true']",
+      send: "button[aria-label='Enviar mensaje'], button[aria-label*='Enviar'], button[aria-label*='Send']",
+      response: "model-response .markdown, model-response, .model-response-text, message-content",
+      stop: "button[aria-label*='Detener'], button[aria-label*='Stop']",
+    },
+  },
 ];
 
 const defaults = (): AiAnalysisSettings => ({ enabled: false, providers: DEFAULT_AI_PROVIDERS.map((provider) => ({ ...provider })) });
@@ -41,6 +65,10 @@ export function loadAiSettings(): AiAnalysisSettings {
     const providers = Array.isArray(parsed.providers)
       ? parsed.providers.filter((provider): provider is AiProvider => Boolean(provider?.id && provider?.name && provider?.url))
       : DEFAULT_AI_PROVIDERS;
+    providers.forEach((provider) => {
+      const builtIn = DEFAULT_AI_PROVIDERS.find((item) => item.id === provider.id);
+      if (!provider.adapter && builtIn?.adapter) provider.adapter = { ...builtIn.adapter };
+    });
     providers.sort((a, b) => Number(b.id === "chatgpt") - Number(a.id === "chatgpt"));
     return { enabled: Boolean(parsed.enabled), providers };
   } catch {
