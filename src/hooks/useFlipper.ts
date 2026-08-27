@@ -56,8 +56,13 @@ export function useFlipper({ cpr1 }: Props) {
   const [syncing, setSyncing] = useState(false);
   const [sync, setSync] = useState<{ offsetMs: number; jitterMs: number; rtt: number; n: number } | null>(null);
   const [angleOn, setAngleOn] = useState(true);
-  const [avgFactor, setAvgFactor] = useState(1);
-  const [overlayRevs, setOverlayRevs] = useState(true);
+  const [avgFactor, setAvgFactorState] = useState(() => {
+    const saved = Number(localStorage.getItem("neq6-ui-average-window"));
+    return Number.isFinite(saved) && saved >= 1 ? Math.min(100_000, Math.floor(saved)) : 1;
+  });
+  const [overlayRevs, setOverlayRevsState] = useState(
+    () => localStorage.getItem("neq6-ui-overlay-revolutions") !== "false",
+  );
   const [notice, setNotice] = useState<string | null>(null);
   const [consoleLines, setConsoleLines] = useState<Array<{ id: number; time: number; direction: "tx" | "rx"; text: string }>>([]);
   const consoleIdRef = useRef(0);
@@ -86,6 +91,17 @@ export function useFlipper({ cpr1 }: Props) {
   const [extendedAnalysis, setExtendedAnalysis] = useState<ExtendedAnalysis | null>(null);
   const captureMetadataRef = useRef<CaptureMetadata>({ ...EMPTY_CAPTURE_METADATA });
   const extendedFilesRef = useRef<{ name: string; data: string }[]>([]);
+
+  const setAvgFactor = (value: number) => {
+    const next = Math.max(1, Math.min(100_000, Math.floor(value)));
+    setAvgFactorState(next);
+    localStorage.setItem("neq6-ui-average-window", String(next));
+  };
+
+  const setOverlayRevs = (value: boolean) => {
+    setOverlayRevsState(value);
+    localStorage.setItem("neq6-ui-overlay-revolutions", String(value));
+  };
 
   const pendingLineRef = useRef<((line: string) => void) | null>(null);
   const commandQueueRef = useRef<Promise<unknown>>(Promise.resolve());
@@ -319,7 +335,7 @@ export function useFlipper({ cpr1 }: Props) {
 
   useEffect(() => {
     if (!capturing) return;
-    const iv = window.setInterval(() => setTick((t) => t + 1), 300);
+    const iv = window.setInterval(() => setTick((t) => t + 1), 500);
     return () => window.clearInterval(iv);
   }, [capturing]);
 
@@ -524,7 +540,7 @@ export function useFlipper({ cpr1 }: Props) {
     const angleSpanDeg = unwrapped.length >= 2
       ? Math.abs(unwrapped[unwrapped.length - 1].deg - unwrapped[0].deg)
       : 0;
-    const ellipse = plot && angleSpanDeg >= 330 ? fitPolarEllipse(plot.angles, plot.amps) : null;
+    const ellipse = !capturing && plot && angleSpanDeg >= 330 ? fitPolarEllipse(plot.angles, plot.amps) : null;
     const sectorAngles: number[] = [];
     const sectorCurrents: number[] = [];
     if (perUnw) {
@@ -639,7 +655,7 @@ export function useFlipper({ cpr1 }: Props) {
           if (current > maxA) { maxA = current; maxAngleDeg = phase; }
         });
         const circular = circularStats(angles, currents);
-        const spectrum = currents.length >= 64 && durationS > 0.5
+        const spectrum = !capturing && currents.length >= 64 && durationS > 0.5
           ? { dfHz: 1 / durationS, magnitude: Array.from(fftMag(resampleUniform(timestamps, currentArray, 4096))) }
           : undefined;
         const measuredSpeedDegS = speeds.length ? median(speeds) : null;
@@ -670,7 +686,7 @@ export function useFlipper({ cpr1 }: Props) {
             circularMeanDeg: circular.meanDeg,
             circularR: circular.R,
             circularStdDeg: circular.stdDeg,
-            ellipse: angleSpan >= 330 && currents.length >= 12 ? fitPolarEllipse(angles, currents) : null,
+            ellipse: !capturing && angleSpan >= 330 && currents.length >= 12 ? fitPolarEllipse(angles, currents) : null,
           },
           spectrum,
           revolutionSpectra: spectrum ? [spectrum] : [],
@@ -703,7 +719,7 @@ export function useFlipper({ cpr1 }: Props) {
       hasAngle: Boolean(plot?.length),
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [version, avgFactor, cpr1, tick, calibration, captureMetadata.direction]);
+  }, [version, avgFactor, cpr1, tick, calibration, captureMetadata.direction, capturing]);
 
   /* ── export / import / sesiones ──────────────────────── */
   const makeSamples = (): Sample[] =>

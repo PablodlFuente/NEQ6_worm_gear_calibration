@@ -5,9 +5,6 @@ import { asciiOf, fmtBytes, fmtDuration, portLabel, TERMINATIONS, timeNow } from
 import { audit, installUiAudit } from "./lib/audit";
 import {
   cmdParts,
-  calculateMotionTiming,
-  decodeResponse,
-  DIAG_SEQUENCE,
   hexLE,
   le24,
   lowSpeedGotoMarginSteps,
@@ -16,11 +13,11 @@ import {
   MAX_POSITION_DELTA,
   POS_OFFSET,
   posField,
-  requiresDangerConfirmation,
   statusFromChars,
   type MountProfile,
   type QuickCmd,
 } from "./lib/protocol";
+import { ACTIVE_MOUNT_DRIVER } from "./mounts/active";
 import { capturedAngleDeltaDeg, classifyExtendedPeaks } from "./lib/flipper";
 import TerminalLog, { type DisplayMode, type EntryKind, type LogEntry } from "./components/TerminalLog";
 import CommandBar, { type CommandBarHandle } from "./components/CommandBar";
@@ -30,6 +27,13 @@ import { type AutoState } from "./components/SidePanel";
 import { IDLE_MOVE, type MoveInputs, type MoveState } from "./components/DrivePanel";
 import type { AxisTestInputs, AxisTestState, ExtendedTestState } from "./components/AxisTestPanel";
 import type { DecodedState } from "./components/DecoderPanel";
+
+const {
+  calculateMotionTiming,
+  decodeResponse,
+  diagnosticSequence: DIAG_SEQUENCE,
+  requiresDangerConfirmation,
+} = ACTIVE_MOUNT_DRIVER;
 import HelpModal from "./components/HelpModal";
 import {
   IconActivity,
@@ -138,12 +142,7 @@ export default function App() {
   const supported = typeof navigator !== "undefined" && "serial" in navigator;
   const secure = typeof window !== "undefined" && window.isSecureContext;
 
-  const [settings, setSettings] = useState<SerialSettings>({
-    baudRate: 9600,
-    dataBits: 8,
-    stopBits: 1,
-    parity: "none",
-  });
+  const [settings, setSettings] = useState<SerialSettings>({ ...ACTIVE_MOUNT_DRIVER.serial });
   const [entries, setEntries] = useState<LogEntry[]>([]);
   const [displayMode, setDisplayMode] = useState<DisplayMode>("ascii");
   const [autoscroll, setAutoscroll] = useState(true);
@@ -385,7 +384,10 @@ export default function App() {
     } else if (!secure) {
       logFault("Web Serial necesita un contexto seguro: sirve esta página por HTTPS o localhost.");
     } else {
-      logSys("Web Serial disponible · NEQ6: 9600 8N1, protocolo MC (el de EQDIRect/EQASCOM).");
+      const serial = ACTIVE_MOUNT_DRIVER.serial;
+      logSys(
+        `Web Serial disponible · ${ACTIVE_MOUNT_DRIVER.model}: ${serial.baudRate} ${serial.dataBits}${serial.parity === "none" ? "N" : serial.parity === "even" ? "E" : "O"}${serial.stopBits} · ${ACTIVE_MOUNT_DRIVER.protocolName}.`,
+      );
       logSys("Abre Ajustes → Conexión montura y elige el conversor UART-USB; el escaneo se inicia al conectar.");
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps

@@ -1,6 +1,7 @@
 import { useEffect, useState, type ReactNode } from "react";
 import { BAUD_RATES, portLabel } from "../lib/serial";
-import { DIAG_SEQUENCE, QUICK, type MountProfile, type QuickCmd } from "../lib/protocol";
+import { type MountProfile, type QuickCmd } from "../lib/protocol";
+import { ACTIVE_MOUNT_DRIVER } from "../mounts/active";
 import type { SerialSettings, SerialStatus } from "../hooks/useSerial";
 import type { FlipperApi } from "../hooks/useFlipper";
 import type { DecodedState } from "./DecoderPanel";
@@ -308,7 +309,7 @@ export default function SidePanel({
         >
           <Head>Autodiagnóstico</Head>
           <p className="mt-1.5 font-mono text-[10.5px] leading-relaxed text-dim">
-            Secuencia de apertura recomendada: {DIAG_SEQUENCE.length} consultas de solo lectura (versión,
+            Secuencia de apertura recomendada: {ACTIVE_MOUNT_DRIVER.diagnosticSequence.length} consultas de solo lectura (versión,
             CPR, timer, ratio, estado, posición), una a una y esperando respuesta.
           </p>
 
@@ -360,7 +361,7 @@ export default function SidePanel({
           </p>
 
           <div className="mt-2.5 flex flex-col gap-3">
-            {QUICK.map((g) => (
+            {ACTIVE_MOUNT_DRIVER.quickCommands.map((g) => (
               <div key={g.title}>
                 <p className="mb-1 font-display text-[10px] font-semibold uppercase tracking-[0.2em] text-[#4d6389]">
                   {g.title}
