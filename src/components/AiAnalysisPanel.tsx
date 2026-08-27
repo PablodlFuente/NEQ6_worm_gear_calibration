@@ -59,10 +59,11 @@ export default function AiAnalysisPanel({ prompt, getAttachment }: { prompt: str
     setRunningProviders((current) => new Set(current).add(target.id));
     setNotice(`Esperando respuesta de ${target.name}…`);
     try {
+      const attachment = getAttachment?.() ?? null;
       const request = await fetch("/api/ai/run", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ provider: target, prompt, attachment: getAttachment?.() ?? null }),
+        body: JSON.stringify({ provider: target, prompt, attachment }),
       });
       const result = await request.json();
       if (!request.ok || !result.ok) throw new Error(result.error ?? "El chat no devolvió respuesta.");
@@ -74,7 +75,9 @@ export default function AiAnalysisPanel({ prompt, getAttachment }: { prompt: str
       }
       setNotice(result.attachmentAdded
         ? `Análisis de ${target.name} recibido con los datos CSV y guardado.`
-        : `Análisis de ${target.name} recibido y guardado; el proveedor no admitió el adjunto.`);
+        : attachment
+          ? `Análisis de ${target.name} recibido y guardado; el proveedor no admitió el adjunto.`
+          : `Análisis de ${target.name} recibido y guardado.`);
     } catch (error) {
       const message = String(error instanceof Error ? error.message : error);
       if (/failed to fetch/i.test(message)) {
