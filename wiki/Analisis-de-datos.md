@@ -139,7 +139,9 @@ apariencia de la gráfica:
 
 - Desactivada: cada vuelta se representa en `0–360°`. El perfil blanco, las
   estadísticas finales y el espectro promedio se calculan comparando las
-  revoluciones entre sí.
+  revoluciones entre sí. La FFT del promedio se obtiene del perfil angular
+  medio; así, pequeñas diferencias de duración entre vueltas no desdoblan un
+  mismo pico.
 - Activada: las vueltas ocupan intervalos consecutivos (`0–360°`, `360–720°`,
   etc.). La línea blanca es la media móvil de la adquisición concatenada; las
   estadísticas pertenecen a esa serie completa y la FFT se calcula sobre toda
@@ -147,7 +149,9 @@ apariencia de la gráfica:
 
 La segunda opción proporciona mayor resolución frecuencial por su mayor tiempo
 de observación; la primera facilita valorar la repetibilidad angular entre
-vueltas. La interfaz identifica el modo activo en FFT y Estadísticas.
+vueltas. Los espectros individuales siguen disponibles para comprobar deriva
+temporal. La interfaz identifica el modo activo en FFT y Estadísticas. El
+selector sólo aparece en tests básicos con dos o más revoluciones.
 
 ### Clasificación comparativa
 

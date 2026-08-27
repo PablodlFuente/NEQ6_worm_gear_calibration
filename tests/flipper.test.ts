@@ -17,6 +17,7 @@ import {
   circularStats,
   fitPolarEllipse,
   parseCsv,
+  travelFromCaptureOrigin,
   unwrapDegrees,
 } from "../src/lib/flipper.ts";
 import { calculateMotionTiming, lowSpeedGotoMarginSteps, MAX_GOTO_STEPS, MAX_POSITION_DELTA, MAX_SAFE_ABSOLUTE_GOTO_DELTA, MIN_T1_TICKS, NEQ6_MAX_SLEW_RATE, requiresDangerConfirmation, SIDEREAL_DEG_PER_SEC } from "../src/lib/protocol.ts";
@@ -42,6 +43,12 @@ test("el test básico conserva la vuelta parcial sin crear una residual en 360°
   assert.equal(basicRevolutionSeriesCount(540), 2);
   assert.equal(basicRevolutionSeriesCount(720), 2);
   assert.equal(basicRevolutionSeriesCount(721), 3);
+});
+
+test("el recorrido secuencial CCW crece desde cero", () => {
+  assert.equal(travelFromCaptureOrigin(331, 331), 0);
+  assert.equal(travelFromCaptureOrigin(151, 331), 180);
+  assert.equal(travelFromCaptureOrigin(-389, 331), 720);
 });
 
 test("separa respuestas ASCII de tramas binarias partidas", () => {
