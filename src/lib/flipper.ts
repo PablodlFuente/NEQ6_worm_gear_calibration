@@ -254,6 +254,12 @@ export function basicRevolutionSeriesCount(angleTravelDeg: number): number {
   return Math.max(1, completed + (endsOnBoundary ? 0 : 1));
 }
 
+/** Recorrido positivo desde el origen de captura, también cuando el
+ * feedback absoluto decrece durante un giro CCW. */
+export function travelFromCaptureOrigin(angleDeg: number, originDeg: number): number {
+  return Math.abs(angleDeg - originDeg);
+}
+
 export interface Session {
   id: string;
   name: string;

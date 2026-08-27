@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import type { FlipperApi } from "../hooks/useFlipper";
-import { averageFftSpectra, circularStats, fitPolarEllipse, movingWindowStats, topPeaks } from "../lib/flipper";
+import { averageFftSpectra, circularStats, fftMag, fitPolarEllipse, movingWindowStats, topPeaks, travelFromCaptureOrigin } from "../lib/flipper";
 import { IconAlert, IconDownload, IconTrash, IconZoom } from "./icons";
 import AiAnalysisPanel from "./AiAnalysisPanel";
 import { analysisFingerprint, getAiResponse, saveAiResponse, useAiResponseVersion, useAiSettings } from "../hooks/useAiAnalysis";
@@ -303,6 +303,11 @@ export default function FlipperLab({
   const independentRevs = !flip.overlayRevs && !isExtendedTest && basicPasses.length > 1;
   const sequentialCartesian = independentRevs;
   const cartesianFullAngleDeg = sequentialCartesian ? basicPasses.length * 360 : 360;
+  const sequenceOriginDeg = basicPasses[0]?.samples.anglesDeg[0]
+    ?? (derived?.plot?.length ? derived.plot.angles[0] : 0);
+  const cartesianAngle = (angle: number) => independentRevs
+    ? travelFromCaptureOrigin(angle, sequenceOriginDeg)
+    : ((angle % 360) + 360) % 360;
   const extendedFftSeries = useMemo(() => {
     const passes = comparisonPasses.flatMap((pass, index) => pass.spectrum ? [{
       id: pass.id,
@@ -314,11 +319,32 @@ export default function FlipperLab({
     const joined = independentRevs && derived?.mag
       ? { dfHz: derived.df, magnitude: Array.from(derived.mag) }
       : null;
-    const average = joined ?? averageFftSpectra((movingSpectra.length ? movingSpectra : passes).map((series) => series.spectrum));
+    const angularAverage = !independentRevs && !isExtendedTest && basicPasses.length > 1 ? (() => {
+      const sums = new Float64Array(360);
+      const counts = new Uint32Array(360);
+      for (const pass of basicPasses) {
+        pass.samples.anglesDeg.forEach((angle, index) => {
+          const current = pass.samples.currentA[index];
+          if (!Number.isFinite(current)) return;
+          const bin = Math.min(359, Math.floor(((angle % 360) + 360) % 360));
+          sums[bin] += current;
+          counts[bin]++;
+        });
+      }
+      const populated = Array.from(sums, (sum, index) => counts[index] ? sum / counts[index] : NaN).filter(Number.isFinite);
+      if (populated.length < 180) return null;
+      const fallback = populated.reduce((sum, value) => sum + value, 0) / populated.length;
+      const profile = Float64Array.from(sums, (sum, index) => counts[index] ? sum / counts[index] : fallback);
+      const magnitude = fftMag(profile);
+      const speeds = basicPasses.map((pass) => pass.measuredSpeedDegS).filter((speed): speed is number => Boolean(speed && speed > 0));
+      const speed = speeds.length ? speeds.reduce((sum, value) => sum + value, 0) / speeds.length : derived?.st.feedbackSpeedDegS ?? 0;
+      return speed > 0 ? { dfHz: speed / (magnitude.length * 2), magnitude: Array.from(magnitude) } : null;
+    })() : null;
+    const average = joined ?? angularAverage ?? averageFftSpectra((movingSpectra.length ? movingSpectra : passes).map((series) => series.spectrum));
     return average && passes.length > 1
       ? [...passes, { id: "average", label: joined ? "Serie unida" : "Promedio", color: "#f0f5ff", spectrum: average }]
       : passes;
-  }, [comparisonPasses, independentRevs, derived?.mag, derived?.df]);
+  }, [comparisonPasses, independentRevs, isExtendedTest, basicPasses, derived?.mag, derived?.df, derived?.st.feedbackSpeedDegS]);
   const selectedExtendedPass = comparisonPasses.find((pass) => pass.id === selectedFftSeries);
   const manualPeakKey = extendedFftSeries.length ? selectedFftSeries : "current";
   const selectedPeaks = manualPeaksBySeries[manualPeakKey] ?? [];
@@ -1087,7 +1113,7 @@ export default function FlipperLab({
       ctx.lineWidth = 1;
       const errorStride = Math.max(1, Math.ceil(data.length / Math.max(40, w / 12)));
       for (let i = 0; i < data.length; i += errorStride) {
-        const phase = sequentialCartesian ? data.angles[i] : ((data.angles[i] % 360) + 360) % 360;
+        const phase = cartesianAngle(data.angles[i]);
         if (phase < minAngle || phase > maxAngle) continue;
         const x = X(phase);
         const y = Y(data.amps[i]);
@@ -1125,7 +1151,7 @@ export default function FlipperLab({
           previousPhase = null;
           continue;
         }
-        const phase = sequentialCartesian ? data.angles[i] : ((data.angles[i] % 360) + 360) % 360;
+        const phase = cartesianAngle(data.angles[i]);
         if (phase < minAngle || phase > maxAngle || !Number.isFinite(data.amps[i])) {
           started = false;
           previousPhase = null;
@@ -1149,7 +1175,7 @@ export default function FlipperLab({
       const stride = renderStride(series.currents.length, w);
       for (let i = 0; i < series.currents.length; i += stride) {
         const current = series.currents[i];
-        const phase = sequentialCartesian ? series.angles[i] : ((series.angles[i] % 360) + 360) % 360;
+        const phase = cartesianAngle(series.angles[i]);
         if (phase < minAngle || phase > maxAngle || !Number.isFinite(current)) {
           started = false;
           previousPhase = null;
@@ -1167,7 +1193,7 @@ export default function FlipperLab({
       ctx.lineWidth = 0.8;
       const errorStride = Math.max(stride, Math.ceil(series.currents.length / Math.max(40, w / 12)));
       for (let i = 0; i < series.currents.length; i += errorStride) {
-        const phase = sequentialCartesian ? series.angles[i] : ((series.angles[i] % 360) + 360) % 360;
+        const phase = cartesianAngle(series.angles[i]);
         if (phase < minAngle || phase > maxAngle || !Number.isFinite(series.currents[i])) continue;
         const x = X(phase), y = Y(series.currents[i]);
         const y0 = Y(series.currents[i] - series.currentErr[i]);
@@ -1525,7 +1551,7 @@ export default function FlipperLab({
             />
             <datalist id="average-presets">{AVGS.map((value) => <option key={value} value={value} />)}</datalist>
           </label>
-          <label
+          {!isExtendedTest && basicPasses.length > 1 && <label
             className="hidden cursor-pointer items-center gap-1.5 font-mono text-[10px] text-dim md:flex"
             title="Activada: cada revolución ocupa su tramo consecutivo (0–360°, 360–720°…), y el promedio, la FFT y las estadísticas se calculan sobre la serie unida. Desactivada: las vueltas se superponen en 0–360° y se promedian entre sí."
           >
@@ -1536,7 +1562,7 @@ export default function FlipperLab({
               className="accent-[#f5a524]"
             />
             revs. independientes
-          </label>
+          </label>}
           {view !== "stats" && view !== "ai" && (
             <>
               <button
