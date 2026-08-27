@@ -28,6 +28,7 @@ const freshProfile = (): ExtendedTestProfile => ({
 export default function ExtendedTestProfilesModal({ open, profiles, selectedId, onProfiles, onSelect, onClose }: Props) {
   const [editingId, setEditingId] = useState(selectedId);
   const [draft, setDraft] = useState<ExtendedTestProfile | null>(null);
+  const [profileMenu, setProfileMenu] = useState<{ id: string; x: number; y: number } | null>(null);
   useEffect(() => {
     if (!open) return;
     const profile = profiles.find((item) => item.id === editingId) ?? profiles.find((item) => item.id === selectedId) ?? profiles[0];
@@ -38,10 +39,14 @@ export default function ExtendedTestProfilesModal({ open, profiles, selectedId, 
   }, [open, editingId, profiles, selectedId]);
   useEffect(() => {
     if (!open) return;
-    const close = (event: KeyboardEvent) => event.key === "Escape" && onClose();
+    const close = (event: KeyboardEvent) => {
+      if (event.key !== "Escape") return;
+      if (profileMenu) setProfileMenu(null);
+      else onClose();
+    };
     window.addEventListener("keydown", close);
     return () => window.removeEventListener("keydown", close);
-  }, [open, onClose]);
+  }, [open, onClose, profileMenu]);
   if (!open || !draft) return null;
 
   const patchStep = (id: string, patch: Partial<ExtendedTestStep>) => setDraft((current) => current && ({
@@ -84,6 +89,21 @@ export default function ExtendedTestProfilesModal({ open, profiles, selectedId, 
     onSelect(next[0].id);
     setEditingId(next[0].id);
   };
+  const duplicate = (id: string) => {
+    const source = profiles.find((profile) => profile.id === id);
+    if (!source) return;
+    const copy: ExtendedTestProfile = {
+      ...cloneExtendedProfile(source),
+      id: `perfil-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+      name: `${source.name} (copia)`,
+      steps: source.steps.map((step) => ({ ...step, id: newExtendedStepId() })),
+    };
+    onProfiles([...profiles, copy]);
+    onSelect(copy.id);
+    setEditingId(copy.id);
+    setDraft(cloneExtendedProfile(copy));
+    setProfileMenu(null);
+  };
 
   return (
     <div className="fixed inset-0 z-[80] flex items-center justify-center bg-[#020711]/90 p-3 backdrop-blur-sm" role="dialog" aria-modal="true">
@@ -95,7 +115,7 @@ export default function ExtendedTestProfilesModal({ open, profiles, selectedId, 
           </div>
           <button onClick={onClose} className={`${button} ml-auto`}>CERRAR · ESC</button>
         </header>
-        <div className="grid min-h-0 flex-1 grid-cols-[270px_minmax(0,1fr)]">
+        <div className="grid min-h-0 flex-1 grid-cols-[360px_minmax(0,1fr)] max-lg:grid-cols-[310px_minmax(0,1fr)]">
           <aside className="min-h-0 overflow-y-auto border-r border-line bg-[#081120] p-3">
             <div className="mb-2 flex items-center justify-between">
               <span className="font-display text-[10px] font-bold uppercase tracking-[0.18em] text-dim">Perfiles</span>
@@ -103,7 +123,12 @@ export default function ExtendedTestProfilesModal({ open, profiles, selectedId, 
             </div>
             <div className="grid gap-1.5">
               {profiles.map((profile) => (
-                <div key={profile.id} className={`flex items-center rounded border ${editingId === profile.id ? "border-ember/60 bg-ember/10" : "border-line bg-[#0c1930]"}`}>
+                <div key={profile.id} onContextMenu={(event) => {
+                  event.preventDefault();
+                  setEditingId(profile.id);
+                  onSelect(profile.id);
+                  setProfileMenu({ id: profile.id, x: Math.min(event.clientX, window.innerWidth - 190), y: Math.min(event.clientY, window.innerHeight - 60) });
+                }} className={`flex items-center rounded border ${editingId === profile.id ? "border-ember/60 bg-ember/10" : "border-line bg-[#0c1930]"}`}>
                   <button className="min-w-0 flex-1 truncate px-2 py-2 text-left font-mono text-[10.5px] text-fog" onClick={() => { setEditingId(profile.id); onSelect(profile.id); }}> {profile.name}</button>
                   <button title="Editar" aria-label={`Editar ${profile.name}`} className="px-2 text-ion" onClick={() => setEditingId(profile.id)}>✎</button>
                   <button title="Eliminar" aria-label={`Eliminar ${profile.name}`} className="px-2 text-alert disabled:opacity-25" disabled={profiles.length <= 1} onClick={() => remove(profile.id)}>×</button>
@@ -127,7 +152,7 @@ export default function ExtendedTestProfilesModal({ open, profiles, selectedId, 
                     <button className={`${button} text-alert`} onClick={() => setDraft({ ...draft, steps: draft.steps.filter((item) => item.id !== step.id) })}>×</button>
                   </div>
                   <div className="mt-2 grid grid-cols-2 gap-2 lg:grid-cols-6">
-                    <label className="grid gap-1 text-[9px] uppercase tracking-wider text-dim">Acción<select className={field} value={step.kind} onChange={(event) => replaceKind(step, event.target.value as ExtendedTestStep["kind"])}><option value="motion">Mover eje</option><option value="stationary">Medir sin mover</option></select></label>
+                    <label className="grid gap-1 text-[9px] uppercase tracking-wider text-dim">Acción<select className={field} value={step.kind} onChange={(event) => replaceKind(step, event.target.value as ExtendedTestStep["kind"])}><option value="motion">Mover eje</option><option value="stationary">Medición de ruido</option></select></label>
                     <label className="grid gap-1 text-[9px] uppercase tracking-wider text-dim">Eje<select className={field} value={step.axis} onChange={(event) => patchStep(step.id, { axis: Number(event.target.value) as 1 | 2 })}><option value="1">AR / RA</option><option value="2">DEC</option></select></label>
                     {step.kind === "motion" ? <>
                       <label className="grid gap-1 text-[9px] uppercase tracking-wider text-dim">Sentido<select className={field} value={step.direction} onChange={(event) => patchStep(step.id, { direction: event.target.value as "cw" | "ccw" })}><option value="cw">CW</option><option value="ccw">CCW</option></select></label>
@@ -141,12 +166,18 @@ export default function ExtendedTestProfilesModal({ open, profiles, selectedId, 
             </div>
             <div className="mt-3 flex flex-wrap gap-2">
               <button className={button} onClick={() => setDraft({ ...draft, steps: [...draft.steps, { id: newExtendedStepId(), kind: "motion", name: "Movimiento", axis: 1, direction: "cw", speedDegS: 3.34, sampleRateHz: 500, revolutions: 1 }] })}>+ MOVIMIENTO</button>
-              <button className={button} onClick={() => setDraft({ ...draft, steps: [...draft.steps, { id: newExtendedStepId(), kind: "stationary", name: "Medición estacionaria", axis: 1, sampleRateHz: 500, durationSec: 20 }] })}>+ MEDICIÓN SIN MOVIMIENTO</button>
+              <button className={button} onClick={() => setDraft({ ...draft, steps: [...draft.steps, { id: newExtendedStepId(), kind: "stationary", name: "Medición de ruido", axis: 1, sampleRateHz: 500, durationSec: 20 }] })}>+ MEDICIÓN DE RUIDO</button>
               <button className="ml-auto rounded bg-ember px-4 py-2 font-display text-[10px] font-bold uppercase tracking-[0.16em] text-[#1c1204] disabled:opacity-30" disabled={!draft.name.trim() || !draft.steps.length} onClick={save}>GUARDAR PERFIL</button>
             </div>
           </main>
         </div>
       </section>
+      {profileMenu && <>
+        <button type="button" aria-label="Cerrar menú contextual" className="fixed inset-0 z-[81] cursor-default" onClick={() => setProfileMenu(null)} />
+        <div role="menu" className="fixed z-[82] w-44 rounded border border-ember/50 bg-[#0b1729] p-1 shadow-2xl" style={{ left: profileMenu.x, top: profileMenu.y }}>
+          <button role="menuitem" className="w-full rounded px-2 py-2 text-left font-display text-[9px] font-bold uppercase tracking-[0.12em] text-fog hover:bg-ember/15 hover:text-ember" onClick={() => duplicate(profileMenu.id)}>DUPLICAR PERFIL</button>
+        </div>
+      </>}
     </div>
   );
 }
