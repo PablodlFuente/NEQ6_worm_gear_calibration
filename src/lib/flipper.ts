@@ -247,6 +247,13 @@ export function capturedAngleDeltaDeg(
   return (deltaSteps * 360) / cpr;
 }
 
+export function basicRevolutionSeriesCount(angleTravelDeg: number): number {
+  const travel = Math.max(0, angleTravelDeg);
+  const completed = Math.max(0, Math.floor((travel + 0.05) / 360));
+  const endsOnBoundary = completed > 0 && Math.abs(travel - completed * 360) <= 0.05;
+  return Math.max(1, completed + (endsOnBoundary ? 0 : 1));
+}
+
 export interface Session {
   id: string;
   name: string;

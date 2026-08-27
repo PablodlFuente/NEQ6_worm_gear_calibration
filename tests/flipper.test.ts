@@ -6,6 +6,7 @@ import {
   adcToAmps,
   chooseSampleClockOffset,
   averageAngleSeries,
+  basicRevolutionSeriesCount,
   angleAt,
   averageFftSpectra,
   buildMeasurementCsv,
@@ -33,6 +34,15 @@ function frame(timestamp: number, adc: number): Uint8Array {
     (adc >>> 8) & 0xff,
   ]);
 }
+
+test("el test básico conserva la vuelta parcial sin crear una residual en 360°", () => {
+  assert.equal(basicRevolutionSeriesCount(0), 1);
+  assert.equal(basicRevolutionSeriesCount(359.98), 1);
+  assert.equal(basicRevolutionSeriesCount(360), 1);
+  assert.equal(basicRevolutionSeriesCount(540), 2);
+  assert.equal(basicRevolutionSeriesCount(720), 2);
+  assert.equal(basicRevolutionSeriesCount(721), 3);
+});
 
 test("separa respuestas ASCII de tramas binarias partidas", () => {
   const parser = new StreamParser();

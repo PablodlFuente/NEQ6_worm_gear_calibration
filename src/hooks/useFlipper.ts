@@ -6,6 +6,7 @@ import {
   averageFftSpectra,
   chooseSampleClockOffset,
   averageAngleSeries,
+  basicRevolutionSeriesCount,
   binCartesian,
   angleAt,
   buildMeasurementCsv,
@@ -480,6 +481,7 @@ export function useFlipper({ cpr1 }: Props) {
     let revOf: Int32Array | null = null;
     const revTimes: number[] = [];
     let nRevs = 0;
+    let angleTravelDeg = 0;
     if (unwrapped.length >= 2) {
       perUnw = new Float64Array(n);
       let has = false;
@@ -508,6 +510,7 @@ export function useFlipper({ cpr1 }: Props) {
           }
           revOf[i] = k;
         }
+        angleTravelDeg = maxTravel;
         nRevs = Math.max(0, Math.floor((maxTravel + 0.05) / 360));
       }
     }
@@ -592,6 +595,94 @@ export function useFlipper({ cpr1 }: Props) {
     }
     st.maxA = mx;
 
+    const basicPasses: ExtendedPassResult[] = [];
+    if (perUnw && revOf) {
+      // Durante la captura se conserva también la vuelta parcial actual.
+      // En el punto final 360°·N, esa muestra cierra la vuelta anterior.
+      const revolutionCount = basicRevolutionSeriesCount(angleTravelDeg);
+      const revolutionTs = Array.from({ length: revolutionCount }, () => [] as number[]);
+      const revolutionAngles = Array.from({ length: revolutionCount }, () => [] as number[]);
+      const revolutionAmps = Array.from({ length: revolutionCount }, () => [] as number[]);
+      for (let i = 0; i < n; i++) {
+        if (!Number.isFinite(perUnw[i])) continue;
+        // La muestra situada exactamente en 360°·N pertenece al final de
+        // la última vuelta solicitada, no a una revolución residual nueva.
+        const revolution = Math.min(revolutionCount - 1, Math.max(0, revOf[i]));
+        revolutionTs[revolution].push(tsRef.current[i]);
+        revolutionAngles[revolution].push(perUnw[i]);
+        revolutionAmps[revolution].push(amps[i]);
+      }
+      for (let revolution = 0; revolution < revolutionCount; revolution++) {
+        const timestamps = revolutionTs[revolution];
+        const angles = revolutionAngles[revolution];
+        const currents = revolutionAmps[revolution];
+        if (currents.length < 2) continue;
+        const durationS = (timestamps[timestamps.length - 1] - timestamps[0]) / 1e6;
+        const angleSpan = Math.abs(angles[angles.length - 1] - angles[0]);
+        const speeds: number[] = [];
+        for (let i = 1; i < angles.length; i++) {
+          const dt = (timestamps[i] - timestamps[i - 1]) / 1e6;
+          const da = Math.abs(angles[i] - angles[i - 1]);
+          if (dt > 0 && da > 0) speeds.push(da / dt);
+        }
+        const currentArray = Float64Array.from(currents);
+        const sdA = std(currentArray);
+        let maxA = -Infinity;
+        let maxAngleDeg: number | null = null;
+        const binSum = new Float64Array(360);
+        const binCount = new Uint32Array(360);
+        currents.forEach((current, index) => {
+          const phase = ((angles[index] % 360) + 360) % 360;
+          const bin = Math.min(359, Math.floor(phase));
+          binSum[bin] += current;
+          binCount[bin]++;
+          if (current > maxA) { maxA = current; maxAngleDeg = phase; }
+        });
+        const circular = circularStats(angles, currents);
+        const spectrum = currents.length >= 64 && durationS > 0.5
+          ? { dfHz: 1 / durationS, magnitude: Array.from(fftMag(resampleUniform(timestamps, currentArray, 4096))) }
+          : undefined;
+        const measuredSpeedDegS = speeds.length ? median(speeds) : null;
+        basicPasses.push({
+          id: `basic-rev-${revolution + 1}`,
+          label: `Revolución ${revolution + 1}`,
+          direction: captureMetadata.direction ?? "cw",
+          requestedSpeedDegS: st.feedbackSpeedDegS ?? 0,
+          measuredSpeedDegS,
+          peaks: spectrum ? topPeaks(Float64Array.from(spectrum.magnitude), spectrum.dfHz, 40).map((peak) => ({
+            frequencyHz: peak.freq,
+            periodMountDeg: measuredSpeedDegS ? peak.period * measuredSpeedDegS : null,
+            magnitude: peak.mag,
+          })) : [],
+          statistics: {
+            n: currents.length,
+            durationS,
+            effectiveRateHz: durationS > 0 ? (currents.length - 1) / durationS : 0,
+            meanA: mean(currentArray),
+            medianA: median(currentArray),
+            sdA,
+            semA: currents.length > 1 ? sdA / Math.sqrt(currents.length) : 0,
+            maxA: Number.isFinite(maxA) ? maxA : 0,
+            maxAngleDeg,
+            angleSpanDeg: angleSpan,
+            measuredSpeedDegS,
+            samplesPerDeg: angleSpan > 0 ? currents.length / angleSpan : null,
+            circularMeanDeg: circular.meanDeg,
+            circularR: circular.R,
+            circularStdDeg: circular.stdDeg,
+            ellipse: angleSpan >= 330 && currents.length >= 12 ? fitPolarEllipse(angles, currents) : null,
+          },
+          spectrum,
+          revolutionSpectra: spectrum ? [spectrum] : [],
+          samples: { anglesDeg: angles, currentA: currents },
+          profile: {
+            anglesDeg: Array.from({ length: 360 }, (_, index) => index + 0.5),
+            currentA: Array.from(binSum, (sum, index) => binCount[index] ? sum / binCount[index] : null),
+          },
+        });
+      }
+    }
+
     return {
       amps,
       perUnw,
@@ -606,12 +697,13 @@ export function useFlipper({ cpr1 }: Props) {
       minSector,
       mag,
       peaks,
+      basicPasses,
       df: D > 0 ? 1 / D : 0,
       st,
       hasAngle: Boolean(plot?.length),
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [version, avgFactor, cpr1, tick, calibration]);
+  }, [version, avgFactor, cpr1, tick, calibration, captureMetadata.direction]);
 
   /* ── export / import / sesiones ──────────────────────── */
   const makeSamples = (): Sample[] =>
