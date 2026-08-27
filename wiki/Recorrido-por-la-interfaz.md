@@ -21,8 +21,19 @@ La consola conserva orden temporal, dirección TX/RX y decodificación. Consulta
 ![Vista de ajustes](images/ajustes_view.png)
 
 En esta vista se conecta la montura y el Flipper Zero al software. El diagnóstico lee firmware, CPR, temporizador y ratio de alta velocidad. CPR y
-TMR no son valores ornamentales: determinan la conversión entre cuentas,
-grados, T1 y velocidad.También se elige la calibración del shunt.
+TMR determinan la conversión entre cuentas, grados, T1 y velocidad. También se
+elige la calibración del shunt y se administran los perfiles del test extendido.
+
+El editor de perfiles ocupa una ventana independiente. Su columna izquierda
+permite añadir, seleccionar, editar y eliminar perfiles con nombre propio. La
+secuencia de la derecha se ejecuta de arriba abajo y admite dos tipos de paso:
+
+- **Mover eje**: eje AR/DEC, CW/CCW, velocidad, revoluciones y tasa ADC.
+- **Medir sin mover**: eje asociado a la sesión, duración y tasa ADC.
+
+Los pasos se pueden reordenar y cada perfil queda guardado en el navegador. El
+perfil inicial reproduce el ensayo comparativo anterior: ruido estacionario y
+cuatro vueltas a dos velocidades en ambos sentidos.
 
 ## Test durante la adquisición
 
@@ -30,7 +41,9 @@ grados, T1 y velocidad.También se elige la calibración del shunt.
 
 Durante un test se muestran corriente instantánea, I RMS, muestras, progreso , etc. En cada test el motor retrocede 2°, invierte el sentido y
 cruza el origen ya en régimen. Existen dos test, el basico y el extendido. El básico la montura gira según los parametros configurados de eje, número de rotaciones y velocidad haciendo el analisis de uno de los ejes.
-En el caso del test extendido la montura rota 4 veces (2 velocidades diferentes y ambos sentidos) con el fin de detectar las frecuencias que podrían provenir de problemas mecánicos, hace un análisis más riguroso al tener en cuenta más datos.
+Al pulsar **Iniciar test extendido** se despliega la lista de perfiles y se elige
+la secuencia que se va a ejecutar. El perfil activo no hereda silenciosamente
+los parámetros del test básico: cada paso contiene todos sus parámetros.
 
 ## Estadísticas durante el test
 
@@ -55,9 +68,9 @@ también su periodo angular, calculado con la velocidad.
 
 ![Análisis comparativo FFT](images/test-en-ejecucion-fft-analisis.png)
 
-El test extendido añade una fase de ruido con motores parados y cuatro pasadas
-móviles. Laclasificación mecánica o eléctrica es comparativa y debe contrastarse
-con la arquitectura de la montura.
+El perfil extendido inicial añade una fase de ruido con motores parados y cuatro
+pasadas móviles. La clasificación mecánica o eléctrica es comparativa y debe
+contrastarse con la arquitectura de la montura.
 
 ## Representación polar
 

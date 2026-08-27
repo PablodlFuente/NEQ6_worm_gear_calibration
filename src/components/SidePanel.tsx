@@ -9,6 +9,7 @@ import DecoderPanel from "./DecoderPanel";
 import FlipperConnection from "./FlipperConnection";
 import { IconBook, IconPlug, IconRadar, IconStop, IconUnplug } from "./icons";
 import { DEFAULT_ADC_CALIBRATION } from "../lib/flipper";
+import type { ExtendedTestProfile } from "../lib/extendedTestProfiles";
 
 export interface AutoState {
   running: boolean;
@@ -35,6 +36,9 @@ interface Props {
   auto: AutoState;
   onRunDiag: () => void;
   onCancelDiag: () => void;
+  extendedProfiles: ExtendedTestProfile[];
+  selectedExtendedProfileId: string;
+  onOpenExtendedProfiles: () => void;
 }
 
 const selCls =
@@ -76,6 +80,9 @@ export default function SidePanel({
   auto,
   onRunDiag,
   onCancelDiag,
+  extendedProfiles,
+  selectedExtendedProfileId,
+  onOpenExtendedProfiles,
 }: Props) {
   const open = status === "open";
   const locked = status !== "closed";
@@ -289,6 +296,22 @@ export default function SidePanel({
               RESTAURAR
             </button>
           </div>
+        </section>
+      )}
+
+      {ajustes && (
+        <section className="rise rounded-md border border-line bg-panel p-3 shadow-[inset_0_1px_0_rgba(255,255,255,0.04)]">
+          <Head>Configuración test extendido</Head>
+          <div className="mt-2 flex items-center justify-between gap-3 font-mono text-[10px] text-dim">
+            <span>{extendedProfiles.length} {extendedProfiles.length === 1 ? "perfil" : "perfiles"}</span>
+            <span className="truncate text-fog">{extendedProfiles.find((item) => item.id === selectedExtendedProfileId)?.name ?? "—"}</span>
+          </div>
+          <button
+            onClick={onOpenExtendedProfiles}
+            className="mt-2.5 flex w-full items-center justify-center rounded border border-ion/50 bg-ion/10 px-3 py-2 font-display text-[10px] font-bold uppercase tracking-[0.16em] text-ion transition-colors hover:bg-ion/20"
+          >
+            EDITAR PERFILES Y SECUENCIAS
+          </button>
         </section>
       )}
 

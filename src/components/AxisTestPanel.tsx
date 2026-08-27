@@ -1,6 +1,8 @@
 import type { FlipperApi } from "../hooks/useFlipper";
 import { calculateMotionTiming, type MountProfile } from "../lib/protocol";
 import { IconAlert, IconPlay, IconStop } from "./icons";
+import { estimateExtendedProfileSeconds, type ExtendedTestProfile } from "../lib/extendedTestProfiles";
+import { useState } from "react";
 
 export interface AxisTestInputs {
   axis: 1 | 2;
@@ -38,7 +40,10 @@ interface Props {
   profile: MountProfile;
   movePhase: string;
   onStart: () => void;
-  onStartExtended: () => void;
+  onStartExtended: (profileId: string) => void;
+  extendedProfiles: ExtendedTestProfile[];
+  selectedExtendedProfileId: string;
+  onSelectedExtendedProfile: (id: string) => void;
   onStop: () => void;
 }
 
@@ -58,8 +63,12 @@ export default function AxisTestPanel({
   movePhase,
   onStart,
   onStartExtended,
+  extendedProfiles,
+  selectedExtendedProfileId,
+  onSelectedExtendedProfile,
   onStop,
 }: Props) {
+  const [extendedChooserOpen, setExtendedChooserOpen] = useState(false);
   const revs = Number(inputs.revolutions.replace(",", "."));
   const speed = Number(inputs.speed.replace(",", "."));
   const valuesOk = Number.isInteger(revs) && revs >= 1 && revs <= 10 && speed > 0 && speed <= 5;
@@ -74,6 +83,8 @@ export default function AxisTestPanel({
   const measuredSamplesPerDeg = flip.derived?.st.samplesPerDeg ?? null;
   const effectiveRate = flip.derived?.st.rateEst ?? null;
   const estimatedDurationSec = timing ? state.targetDeg / timing.realDegPerSec : null;
+  const selectedExtendedProfile = extendedProfiles.find((item) => item.id === selectedExtendedProfileId) ?? extendedProfiles[0];
+  const estimatedExtendedDurationSec = estimateExtendedProfileSeconds(selectedExtendedProfile);
   const formatTime = (seconds: number) => {
     const mins = Math.floor(seconds / 60);
     const secs = Math.round(seconds % 60);
@@ -196,7 +207,7 @@ export default function AxisTestPanel({
         <span className="text-dim">tiempo estimado</span>
         <span className="text-right tabular-nums text-fog">{estimatedDurationSec ? formatTime(estimatedDurationSec) : "—"}</span>
         <span className="text-dim">tiempo extendido ≈</span>
-        <span className="text-right tabular-nums text-fog">{estimatedDurationSec ? formatTime(estimatedDurationSec * 6 + 20) : "—"}</span>
+        <span className="text-right tabular-nums text-fog">{estimatedExtendedDurationSec ? formatTime(estimatedExtendedDurationSec) : "—"}</span>
         <span className="text-dim">tiempo {state.running ? "transcurrido" : "real"}</span>
         <span className="text-right tabular-nums text-ion">
           {state.running
@@ -243,13 +254,41 @@ export default function AxisTestPanel({
             <IconPlay className="h-4 w-4" /> INICIAR TEST BÁSICO
           </button>
           <button
-            onClick={onStartExtended}
+            onClick={() => setExtendedChooserOpen((value) => !value)}
             disabled={!ready}
-            title="Cinco fases: ruido con motores parados y cuatro vueltas a dos velocidades, CW y CCW"
+            title="Seleccionar un perfil de secuencia para ejecutar"
             className="flex w-full items-center justify-center gap-2 rounded border border-ion/60 bg-ion/10 px-3 py-2.5 font-display text-[11px] font-bold tracking-[0.18em] text-ion transition-all hover:bg-ion/20 disabled:cursor-not-allowed disabled:opacity-35"
           >
             <IconPlay className="h-4 w-4" /> INICIAR TEST EXTENDIDO
           </button>
+          {extendedChooserOpen && (
+            <div className="rounded border border-ion/40 bg-[#081120] p-2">
+              <label className="font-mono text-[9px] uppercase tracking-[0.12em] text-dim">
+                Perfil de ejecución
+                <select
+                  className={`${inputClass} mt-1`}
+                  value={selectedExtendedProfile?.id ?? ""}
+                  onChange={(event) => onSelectedExtendedProfile(event.target.value)}
+                >
+                  {extendedProfiles.map((profileItem) => <option key={profileItem.id} value={profileItem.id}>{profileItem.name}</option>)}
+                </select>
+              </label>
+              <div className="mt-2 flex items-center justify-between gap-2 font-mono text-[9.5px] text-dim">
+                <span>{selectedExtendedProfile?.steps.length ?? 0} pasos · ≈ {estimatedExtendedDurationSec ? formatTime(estimatedExtendedDurationSec) : "—"}</span>
+                <button
+                  disabled={!ready || !selectedExtendedProfile}
+                  onClick={() => {
+                    if (!selectedExtendedProfile) return;
+                    setExtendedChooserOpen(false);
+                    onStartExtended(selectedExtendedProfile.id);
+                  }}
+                  className="rounded bg-ion px-3 py-1.5 font-display text-[9.5px] font-bold uppercase tracking-[0.13em] text-[#04131a] disabled:opacity-30"
+                >
+                  EJECUTAR PERFIL
+                </button>
+              </div>
+            </div>
+          )}
         </div>
       )}
 

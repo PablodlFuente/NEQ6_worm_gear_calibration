@@ -8,6 +8,7 @@ import type { FlipperApi } from "../hooks/useFlipper";
 import type { DecodedState } from "./DecoderPanel";
 import { IconCrosshair, IconSettings, IconTelescope, IconZap } from "./icons";
 import FlipperSerialConsole from "./FlipperSerialConsole";
+import type { ExtendedTestProfile } from "../lib/extendedTestProfiles";
 
 export type Tab = "mov" | "montura" | "ajustes" | "test";
 
@@ -47,8 +48,12 @@ interface Props {
   axisTest: AxisTestState;
   extendedTest: ExtendedTestState;
   onStartAxisTest: () => void;
-  onStartExtendedTest: () => void;
+  onStartExtendedTest: (profileId: string) => void;
   onStopAxisTest: () => void;
+  extendedProfiles: ExtendedTestProfile[];
+  selectedExtendedProfileId: string;
+  onSelectedExtendedProfile: (id: string) => void;
+  onOpenExtendedProfiles: () => void;
   onInsertFlipperCommand: (command: string) => void;
   serialTarget: "mount" | "flipper";
   onSerialTarget: (target: "mount" | "flipper") => void;
@@ -143,6 +148,9 @@ export default function RightPanel(props: Props) {
                 auto={props.auto}
                 onRunDiag={props.onRunDiag}
                 onCancelDiag={props.onCancelDiag}
+                extendedProfiles={props.extendedProfiles}
+                selectedExtendedProfileId={props.selectedExtendedProfileId}
+                onOpenExtendedProfiles={props.onOpenExtendedProfiles}
               />
             ) : <FlipperSerialConsole flip={props.flip} view="commands" onInsertCommand={props.onInsertFlipperCommand} />}
           </div>
@@ -167,6 +175,9 @@ export default function RightPanel(props: Props) {
             auto={props.auto}
             onRunDiag={props.onRunDiag}
             onCancelDiag={props.onCancelDiag}
+            extendedProfiles={props.extendedProfiles}
+            selectedExtendedProfileId={props.selectedExtendedProfileId}
+            onOpenExtendedProfiles={props.onOpenExtendedProfiles}
           />
         )}
 
@@ -183,6 +194,9 @@ export default function RightPanel(props: Props) {
             movePhase={props.move.phase}
             onStart={props.onStartAxisTest}
             onStartExtended={props.onStartExtendedTest}
+            extendedProfiles={props.extendedProfiles}
+            selectedExtendedProfileId={props.selectedExtendedProfileId}
+            onSelectedExtendedProfile={props.onSelectedExtendedProfile}
             onStop={props.onStopAxisTest}
           />
         )}

@@ -344,6 +344,9 @@ export default function FlipperLab({
         })()
     : derived?.peaks ?? [];
   const displayedFftSpeed = selectedExtendedPass?.measuredSpeedDegS ?? (extendedFftSeries.length ? null : derived?.st.feedbackSpeedDegS ?? null);
+  const displayedFftDfHz = extendedFftSeries.length
+    ? extendedFftSeries.find((series) => series.id === selectedFftSeries)?.spectrum.dfHz ?? derived?.df ?? 0
+    : derived?.df ?? 0;
   const extendedDisplaySeries = useMemo(() => comparisonPasses
     .filter((pass) => pass.direction !== "stationary")
     .flatMap((pass, passIndex) => {
@@ -1597,7 +1600,9 @@ export default function FlipperLab({
                     {displayedFftPeaks.map((p, i) => (
                       <tr key={`auto-${p.bin}`} className="border-t border-line/60 text-fog">
                         <td className="px-2 py-1 text-ember">A{i + 1}</td>
-                        <td className="px-2 py-1 tabular-nums">{p.freq.toFixed(3)} Hz</td>
+                        <td className="px-2 py-1 tabular-nums" title={`Resolución FFT Δf=${displayedFftDfHz.toPrecision(4)} Hz`}>
+                          {p.freq.toFixed(3)} ± {(displayedFftDfHz / 2).toPrecision(2)} Hz
+                        </td>
                         <td className="px-2 py-1 tabular-nums">
                           {p.period >= 1 ? `${p.period.toFixed(3)} s` : `${(p.period * 1000).toFixed(1)} ms`}
                         </td>
@@ -1644,14 +1649,13 @@ export default function FlipperLab({
             )}
             {view === "fft" && derived && (
               <p className="font-mono text-[9.5px] text-dim">
-                Espectro · {derived.st.durS.toFixed(1)} s de señal · resolución{" "}
-                {(1 / (derived.st.durS || 1)).toFixed(3)} Hz · ventana de Hann · grados calculados con el feedback de posición de la montura
+                Espectro · {derived.st.durS.toFixed(1)} s de señal · resolución {displayedFftDfHz.toFixed(3)} Hz · ventana de Hann · grados calculados con el feedback de posición de la montura
               </p>
             )}
             {view === "fft" && flip.extendedAnalysis && (
               <div className="overflow-hidden rounded border border-ion/35">
                 <p className="border-b border-line bg-ion/5 px-2 py-1.5 font-display text-[9.5px] font-bold uppercase tracking-[0.14em] text-ion">
-                  Comparación del test extendido · {flip.extendedAnalysis.passes.length}/5 fases
+                  Comparación del test extendido · {flip.extendedAnalysis.passes.length} fases completadas
                 </p>
                 <p className="border-b border-line px-2 py-1.5 font-mono text-[9px] text-dim">
                   Cada coincidencia reúne picos de distintas pasadas que conservan aproximadamente sus Hz o su periodicidad en grados. Se analizan hasta 40 máximos locales por pasada, no sólo los cinco destacados en la gráfica.
@@ -1682,7 +1686,7 @@ export default function FlipperLab({
                       <div className="max-h-48 overflow-y-auto border-t border-line/60 p-2 font-mono text-[9px] text-dim">
                         {pass.peaks.map((peak, peakIndex) => (
                           <span key={`${pass.id}-${peakIndex}`} className="mr-3 inline-block py-0.5 tabular-nums">
-                            {peak.frequencyHz.toFixed(3)} Hz · {peak.periodMountDeg !== null ? `${peak.periodMountDeg.toFixed(3)}°` : "—"} · {peak.magnitude.toExponential(2)}
+                            {peak.frequencyHz.toFixed(3)} ± {(peak.uncertaintyHz ?? (pass.spectrum?.dfHz ?? 0) / 2).toPrecision(2)} Hz · {peak.periodMountDeg !== null ? `${peak.periodMountDeg.toFixed(3)}°` : "—"} · {peak.magnitude.toExponential(2)}
                           </span>
                         ))}
                       </div>
@@ -1704,7 +1708,7 @@ export default function FlipperLab({
               subtitle={independentRevs
                 ? `${comparisonPasses.length} revoluciones consecutivas · estadísticas sobre la adquisición completa`
                 : isExtendedTest
-                ? `${comparisonPasses.length}/5 fases terminadas · ± = incertidumbre estándar entre las vueltas`
+                ? `${comparisonPasses.length} fases terminadas · ± = incertidumbre estándar entre las vueltas`
                 : `${comparisonPasses.length} ${comparisonPasses.length === 1 ? "revolución" : "revoluciones"} · ± = incertidumbre estándar entre vueltas`}
             >
               <StatCell k="corriente media" v={`${extendedSummary.current.mean.toFixed(5)} ± ${extendedSummary.current.uncertainty.toFixed(5)} A`} tone="text-mint" />
