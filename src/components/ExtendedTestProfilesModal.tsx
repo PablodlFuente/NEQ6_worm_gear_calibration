@@ -18,6 +18,7 @@ interface Props {
 
 const field = "rounded border border-line bg-[#0c1930] px-2 py-1.5 font-mono text-[11px] text-fog focus:border-ember/70 focus:outline-none";
 const button = "rounded border border-line px-2 py-1.5 font-display text-[9.5px] font-bold uppercase tracking-[0.12em] text-dim transition-colors hover:border-ember/60 hover:text-fog";
+const interfaceHelp = "Interfaz usa el valor actual de Parámetros del test en la pestaña Test ejes en el momento de ejecutar el perfil.";
 
 const freshProfile = (): ExtendedTestProfile => ({
   id: `perfil-${Date.now()}`,
@@ -36,7 +37,22 @@ export default function ExtendedTestProfilesModal({ open, profiles, selectedId, 
       setEditingId(profile.id);
       setDraft(cloneExtendedProfile(profile));
     }
-  }, [open, editingId, profiles, selectedId]);
+  }, [open, editingId, selectedId]);
+  useEffect(() => {
+    if (!open || !draft || !draft.name.trim() || !draft.steps.length) return;
+    const timer = window.setTimeout(() => {
+      const valid = sanitizeExtendedProfile(draft);
+      if (!valid) return;
+      const stored = profiles.find((profile) => profile.id === valid.id);
+      if (stored && JSON.stringify(stored) === JSON.stringify(valid)) return;
+      const next = stored
+        ? profiles.map((profile) => profile.id === valid.id ? cloneExtendedProfile(valid) : profile)
+        : [...profiles, cloneExtendedProfile(valid)];
+      onProfiles(next);
+      onSelect(valid.id);
+    }, 220);
+    return () => window.clearTimeout(timer);
+  }, [open, draft, profiles, onProfiles, onSelect]);
   useEffect(() => {
     if (!open) return;
     const close = (event: KeyboardEvent) => {
@@ -65,16 +81,6 @@ export default function ExtendedTestProfilesModal({ open, profiles, selectedId, 
     [steps[index], steps[index + offset]] = [steps[index + offset], steps[index]];
     return { ...current, steps };
   });
-  const save = () => {
-    const valid = sanitizeExtendedProfile(draft);
-    if (!valid) return;
-    const next = profiles.some((profile) => profile.id === valid.id)
-      ? profiles.map((profile) => profile.id === valid.id ? cloneExtendedProfile(valid) : profile)
-      : [...profiles, cloneExtendedProfile(valid)];
-    onProfiles(next);
-    onSelect(valid.id);
-    setDraft(cloneExtendedProfile(valid));
-  };
   const add = () => {
     const profile = freshProfile();
     onProfiles([...profiles, profile]);
@@ -153,13 +159,13 @@ export default function ExtendedTestProfilesModal({ open, profiles, selectedId, 
                   </div>
                   <div className="mt-2 grid grid-cols-2 gap-2 lg:grid-cols-6">
                     <label className="grid gap-1 text-[9px] uppercase tracking-wider text-dim">Acción<select className={field} value={step.kind} onChange={(event) => replaceKind(step, event.target.value as ExtendedTestStep["kind"])}><option value="motion">Mover eje</option><option value="stationary">Medición de ruido</option></select></label>
-                    <label className="grid gap-1 text-[9px] uppercase tracking-wider text-dim">Eje<select className={field} value={step.axis} onChange={(event) => patchStep(step.id, { axis: Number(event.target.value) as 1 | 2 })}><option value="1">AR / RA</option><option value="2">DEC</option></select></label>
+                    <label title={interfaceHelp} className="grid cursor-help gap-1 text-[9px] uppercase tracking-wider text-dim">Eje<select className={field} value={step.axis} onChange={(event) => patchStep(step.id, { axis: event.target.value === "interface" ? "interface" : Number(event.target.value) as 1 | 2 })}><option value="interface">Interfaz</option><option value="1">AR / RA</option><option value="2">DEC</option></select></label>
                     {step.kind === "motion" ? <>
-                      <label className="grid gap-1 text-[9px] uppercase tracking-wider text-dim">Sentido<select className={field} value={step.direction} onChange={(event) => patchStep(step.id, { direction: event.target.value as "cw" | "ccw" })}><option value="cw">CW</option><option value="ccw">CCW</option></select></label>
-                      <label className="grid gap-1 text-[9px] uppercase tracking-wider text-dim">Velocidad °/s<input className={field} type="number" min="0.01" max="5" step="0.01" value={step.speedDegS} onChange={(event) => patchStep(step.id, { speedDegS: Number(event.target.value) })} /></label>
-                      <label className="grid gap-1 text-[9px] uppercase tracking-wider text-dim">Revoluciones<input className={field} type="number" min="1" max="10" step="1" value={step.revolutions} onChange={(event) => patchStep(step.id, { revolutions: Number(event.target.value) })} /></label>
+                      <label title={interfaceHelp} className="grid cursor-help gap-1 text-[9px] uppercase tracking-wider text-dim">Sentido<select className={field} value={step.direction} onChange={(event) => patchStep(step.id, { direction: event.target.value as "cw" | "ccw" | "interface" })}><option value="interface">Interfaz</option><option value="cw">CW</option><option value="ccw">CCW</option></select></label>
+                      <label title={interfaceHelp} className="grid cursor-help gap-1 text-[9px] uppercase tracking-wider text-dim">Velocidad °/s<div className="flex gap-1"><select aria-label="Origen de velocidad" className={`${field} w-24`} value={step.speedDegS === "interface" ? "interface" : "fixed"} onChange={(event) => patchStep(step.id, { speedDegS: event.target.value === "interface" ? "interface" : 1 })}><option value="interface">Interfaz</option><option value="fixed">Fija</option></select>{step.speedDegS !== "interface" && <input aria-label="Velocidad fija" className={`${field} min-w-0 flex-1`} type="number" min="0.01" max="5" step="0.01" value={step.speedDegS} onChange={(event) => patchStep(step.id, { speedDegS: Number(event.target.value) })} />}</div></label>
+                      <label title={interfaceHelp} className="grid cursor-help gap-1 text-[9px] uppercase tracking-wider text-dim">Revoluciones<div className="flex gap-1"><select aria-label="Origen de revoluciones" className={`${field} w-24`} value={step.revolutions === "interface" ? "interface" : "fixed"} onChange={(event) => patchStep(step.id, { revolutions: event.target.value === "interface" ? "interface" : 1 })}><option value="interface">Interfaz</option><option value="fixed">Fijas</option></select>{step.revolutions !== "interface" && <input aria-label="Revoluciones fijas" className={`${field} min-w-0 flex-1`} type="number" min="1" max="10" step="1" value={step.revolutions} onChange={(event) => patchStep(step.id, { revolutions: Number(event.target.value) })} />}</div></label>
                     </> : <label className="grid gap-1 text-[9px] uppercase tracking-wider text-dim lg:col-span-3">Duración s<input className={field} type="number" min="1" max="3600" step="1" value={step.durationSec} onChange={(event) => patchStep(step.id, { durationSec: Number(event.target.value) })} /></label>}
-                    <label className="grid gap-1 text-[9px] uppercase tracking-wider text-dim">ADC Hz<input className={field} type="number" min="10" max="1000" step="1" value={step.sampleRateHz} onChange={(event) => patchStep(step.id, { sampleRateHz: Number(event.target.value) })} /></label>
+                    <label title={interfaceHelp} className="grid cursor-help gap-1 text-[9px] uppercase tracking-wider text-dim">ADC Hz<div className="flex gap-1"><select aria-label="Origen de muestreo ADC" className={`${field} w-24`} value={step.sampleRateHz === "interface" ? "interface" : "fixed"} onChange={(event) => patchStep(step.id, { sampleRateHz: event.target.value === "interface" ? "interface" : 500 })}><option value="interface">Interfaz</option><option value="fixed">Fijo</option></select>{step.sampleRateHz !== "interface" && <input aria-label="Muestreo ADC fijo" className={`${field} min-w-0 flex-1`} type="number" min="10" max="1000" step="1" value={step.sampleRateHz} onChange={(event) => patchStep(step.id, { sampleRateHz: Number(event.target.value) })} />}</div></label>
                   </div>
                 </article>
               ))}
@@ -167,7 +173,7 @@ export default function ExtendedTestProfilesModal({ open, profiles, selectedId, 
             <div className="mt-3 flex flex-wrap gap-2">
               <button className={button} onClick={() => setDraft({ ...draft, steps: [...draft.steps, { id: newExtendedStepId(), kind: "motion", name: "Movimiento", axis: 1, direction: "cw", speedDegS: 3.34, sampleRateHz: 500, revolutions: 1 }] })}>+ MOVIMIENTO</button>
               <button className={button} onClick={() => setDraft({ ...draft, steps: [...draft.steps, { id: newExtendedStepId(), kind: "stationary", name: "Medición de ruido", axis: 1, sampleRateHz: 500, durationSec: 20 }] })}>+ MEDICIÓN DE RUIDO</button>
-              <button className="ml-auto rounded bg-ember px-4 py-2 font-display text-[10px] font-bold uppercase tracking-[0.16em] text-[#1c1204] disabled:opacity-30" disabled={!draft.name.trim() || !draft.steps.length} onClick={save}>GUARDAR PERFIL</button>
+              <span className="ml-auto self-center font-mono text-[9px] uppercase tracking-[0.12em] text-mint">● autoguardado</span>
             </div>
           </main>
         </div>

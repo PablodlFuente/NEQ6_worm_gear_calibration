@@ -29,12 +29,21 @@ permite añadir, seleccionar, editar y eliminar perfiles con nombre propio. El
 botón derecho sobre un perfil abre la opción para duplicarlo. La
 secuencia de la derecha se ejecuta de arriba abajo y admite dos tipos de paso:
 
+![Configuración del test extendido](images/configuracion-test-extendido.png)
+
 - **Mover eje**: eje AR/DEC, CW/CCW, velocidad, revoluciones y tasa ADC.
 - **Medición de ruido**: eje asociado a la sesión, duración y tasa ADC, con los motores parados.
 
 Los pasos se pueden reordenar y cada perfil queda guardado en el navegador. El
 perfil inicial reproduce el ensayo comparativo anterior: ruido estacionario y
 cuatro vueltas a dos velocidades en ambos sentidos.
+
+Los campos **eje**, **sentido**, **velocidad**, **revoluciones** y **ADC Hz**
+pueden conservar un valor fijo o elegir **Interfaz**. En ese modo no se copia el
+valor al editar: cada paso toma el valor que exista en **Parámetros del test**
+justo al iniciar el perfil. Esto permite reutilizar una secuencia con distintos
+ejes o condiciones sin duplicarla. Las modificaciones del perfil se guardan
+automáticamente.
 
 ## Test durante la adquisición
 
@@ -56,7 +65,8 @@ Con **Revs. independientes** activada, las vueltas se analizan como series
 superpuestas en `0–360°`. Desactivada, forman una adquisición continua de
 hasta `N×360°`.
 El cambio afecta también al promedio, la FFT y el resumen estadístico; el
-indicador de modo aparece en las vistas correspondientes.
+indicador de modo aparece en las vistas correspondientes. El mismo criterio se
+aplica a cualquier paso del test extendido que contenga más de una revolución.
 
 ## FFT de una serie
 

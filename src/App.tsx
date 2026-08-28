@@ -36,7 +36,9 @@ const {
 } = ACTIVE_MOUNT_DRIVER;
 import HelpModal from "./components/HelpModal";
 import ExtendedTestProfilesModal from "./components/ExtendedTestProfilesModal";
+import InterfaceTooltip from "./components/InterfaceTooltip";
 import { useExtendedTestProfiles } from "./hooks/useExtendedTestProfiles";
+import { resolveExtendedTestStep } from "./lib/extendedTestProfiles";
 import {
   IconActivity,
   IconAlert,
@@ -730,7 +732,7 @@ export default function App() {
       setMove(IDLE_MOVE);
       return false;
     }
-    setMove((state) => ({ ...state, phase: "velocidad estable · feedback :j" }));
+    setMove((state) => ({ ...state, phase: "velocidad estable" }));
 
     let previousPosition: number | null = null;
     let travelledSteps = 0;
@@ -1318,7 +1320,13 @@ export default function App() {
     const selectedProfile = extendedProfiles.profiles.find((item) => item.id === profileId);
     if (!selectedProfile?.steps.length) return;
     extendedProfiles.setSelectedId(selectedProfile.id);
-    const passes = selectedProfile.steps;
+    const passes = selectedProfile.steps.map((step) => resolveExtendedTestStep(step, {
+      axis: axisTestInputs.axis,
+      direction: axisTestInputs.direction,
+      speedDegS: Number(axisTestInputs.speed.replace(",", ".")),
+      sampleRateHz: axisTestInputs.sampleRate,
+      revolutions: Number(axisTestInputs.revolutions.replace(",", ".")),
+    }));
     extendedTestCancelRef.current = false;
     flip.setExtendedAnalysis(null);
     flip.resetExtendedArchive();
@@ -1727,6 +1735,7 @@ export default function App() {
         onSelect={extendedProfiles.setSelectedId}
         onClose={() => setExtendedProfilesOpen(false)}
       />
+      <InterfaceTooltip />
     </div>
   );
 }
