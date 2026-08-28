@@ -8,3 +8,13 @@ docs/docs_dev/
 .tools/
 tmp/
 **/.vscode/
+
+# Datos locales del usuario: nunca forman parte del repositorio.
+sessions/
+sesiones/
+exports/
+exportaciones/
+neq6-sesiones-*.zip
+neq6-captura-*.zip
+captura-*.zip
+*.neq6-session.json

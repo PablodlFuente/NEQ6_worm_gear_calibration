@@ -874,6 +874,54 @@ export function movingWindowStats(values: ArrayLike<number>, factor: number): Mo
   return out;
 }
 
+/** Ventana móvil centrada con tamaño reducido en los bordes. Conserva una
+ * salida por muestra, por lo que una curva no pierde sus extremos al aplicar
+ * el promedio visual. */
+export function centeredMovingWindowStats(values: ArrayLike<number>, factor: number): MovingWindowStats | null {
+  const n = values.length;
+  if (!n) return null;
+  const width = Math.max(1, Math.floor(factor));
+  const left = Math.floor(width / 2);
+  const right = Math.max(0, width - left - 1);
+  const sums = new Float64Array(n + 1);
+  const squares = new Float64Array(n + 1);
+  const adjacent = new Float64Array(n + 1);
+  for (let index = 0; index < n; index++) {
+    const value = Number(values[index]);
+    sums[index + 1] = sums[index] + value;
+    squares[index + 1] = squares[index] + value * value;
+    adjacent[index + 1] = adjacent[index] + (index ? Number(values[index - 1]) * value : 0);
+  }
+  const out: MovingWindowStats = {
+    length: n,
+    mean: new Float64Array(n),
+    std: new Float64Array(n),
+    sem: new Float64Array(n),
+    effectiveN: new Float64Array(n),
+  };
+  for (let index = 0; index < n; index++) {
+    const start = Math.max(0, index - left);
+    const end = Math.min(n - 1, index + right);
+    const count = end - start + 1;
+    const sum = sums[end + 1] - sums[start];
+    const sum2 = squares[end + 1] - squares[start];
+    const average = sum / count;
+    const populationVariance = count > 1 ? Math.max(0, sum2 / count - average * average) : 0;
+    const sampleVariance = count > 1 ? populationVariance * count / (count - 1) : 0;
+    const pairCount = count - 1;
+    const pairSum = pairCount > 0 ? adjacent[end + 1] - adjacent[start + 1] : 0;
+    const rho1 = pairCount > 0 && populationVariance > 1e-18
+      ? Math.max(0, Math.min(0.999, (pairSum / pairCount - average * average) / populationVariance))
+      : 0;
+    const effectiveN = count / (1 + 2 * (1 - 1 / count) * rho1);
+    out.mean[index] = average;
+    out.std[index] = Math.sqrt(sampleVariance);
+    out.effectiveN[index] = effectiveN;
+    out.sem[index] = out.std[index] / Math.sqrt(effectiveN);
+  }
+  return out;
+}
+
 /** Aplica una media móvil temporal de N muestras que tienen ángulo.
  * Con N=1 se conserva cada dato; con N>1 cada nueva muestra completa una
  * ventana y por tanto la curva conserva la resolución temporal. */

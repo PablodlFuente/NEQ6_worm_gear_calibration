@@ -6,6 +6,7 @@ import {
   adcToAmps,
   chooseSampleClockOffset,
   averageAngleSeries,
+  centeredMovingWindowStats,
   basicRevolutionSeriesCount,
   angleAt,
   averageFftSpectra,
@@ -298,6 +299,14 @@ test("media móvil conserva x1 y calcula SEM correlacionado en ambos ejes", () =
   assert.deepEqual(Array.from(x2!.angleStd), [Math.SQRT2, Math.SQRT2, Math.SQRT2]);
   assert.deepEqual(Array.from(x2!.angleErr), [1, 1, 1]);
   assert.deepEqual(Array.from(x2!.counts), [2, 2, 2]);
+});
+
+test("la media móvil centrada conserva los extremos de la serie", () => {
+  const centered = centeredMovingWindowStats([1, 3, 5, 7], 3);
+  assert.ok(centered);
+  assert.equal(centered.length, 4);
+  assert.deepEqual(Array.from(centered.mean), [2, 3, 5, 6]);
+  assert.ok(centered.sem.every(Number.isFinite));
 });
 
 test("CSV procesado incluye errores X/Y y tamaño de bloque", () => {

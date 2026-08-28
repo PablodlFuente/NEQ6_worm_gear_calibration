@@ -1,16 +1,20 @@
-# NEQ6 - Ajuste Sinfín-Corona
+# NEQ6 - Diagnóstico electromecánico por corriente
 
 Aplicación web para controlar los ejes de una montura SkyWatcher NEQ6/EQ6 y
-medir la corriente del motor durante una o varias vueltas. Relaciona cada
-muestra del ADC con el contador de posición `:j` de la controladora para localizar
-excentricidad, rozamiento o zonas de carga irregular del conjunto sinfín-corona.
+analizar la corriente del motor durante una o varias vueltas. Cada muestra del
+ADC se relaciona con la posición informada por la controladora para construir
+un perfil angular del esfuerzo exigido al accionamiento.
 
-Su objetivo principal es analizar, mediante la medida de corriente, el esfuerzo
-del sistema mecánico a lo largo del giro para ajustar el eje sinfín-corona y
-detectar otros problemas mecánicos. También permite comandar la montura por
-serial EQDirect.
-
+El ajuste del conjunto sinfín-corona fue el origen del proyecto, pero no limita
+su uso. Una variación repetible de corriente puede revelar rozamiento o
+excentricidad del sinfín-corona, desalineación o flexión de ejes, rodamientos
+dañados, defectos de transmisión, desequilibrio de carga u otros problemas
+mecánicos que modifiquen el par requerido. La comparación con el ruido de los
+motores detenidos y con distintas velocidades también puede señalar anomalías
+eléctricas, del driver, de alimentación o de adquisición. La aplicación permite
+además comandar la montura mediante EQDirect por puerto serie.
 ![Test de eje en ejecución](docs/images/test-en-ejecucion.png)
+![Serial view](docs\images\serial_view.png)
 
 ## Funciones principales
 
@@ -18,8 +22,7 @@ serial EQDirect.
 - Comunicación con la montura por serial.
 - Medición de corriente de la montura mediante ADC del Flipper Zero conectado
   por BLE (o por su segundo puerto USB-COM).
-- Test automático de esfuerzo mecánico del motor con el sinfín-corona en ambos
-  ejes:
+- Test automático del esfuerzo electromecánico del accionamiento en ambos ejes:
 
   - Análisis de Fourier (FFT).
   - Gráficas online: representación polar, cartesiana y FFT.
@@ -78,24 +81,23 @@ el ADC.
 
 ## Resultados
 
-![Análisis polar](docs/images/analisis-polar.png)
-
-![Análisis cartesiano](docs/images/analisis-cartesiano.png)
-
 - **Polar:** corriente frente a fase angular.
+![Análisis polar](docs/images/analisis-polar.png)
 - **Cartesiano:** corriente frente a grados.
+![Análisis cartesiano](docs/images/analisis-cartesiano.png)
 - **FFT básica:** cinco picos automáticos y picos manuales; convierte cada periodo a
   separación angular usando la velocidad medida.
+![Análisis Fourier 1](docs\images\test-en-ejecucion-fft.png)
+![Análisis Fourier 2](docs\images\test-en-ejecucion-fft-analisis.png)
 - **Estadísticas:** corriente, ruido, tasa efectiva, muestras por grado,
   parámetros de la elipse, esfericidad y estadísticas circulares.
-
+![Análisis estadisticas](docs\images\test-en-ejecucion-estadisticas.png)
 ## Evolución prevista
 
 El Flipper Zero se empleó porque era el dispositivo disponible durante unas
 vacaciones, no porque sea un requisito del proyecto. El siguiente paso previsto
 es sustituirlo por un microcontrolador con ADC propio o externo, por ejemplo un
-ESP32 con ADC externo, un Arduino Mini u otra placa que mantenga el formato de
-muestras y la comunicación serie.
+ESP32 con ADC externo, un Arduino u otra placa de facil acceso.
 
 
 ## Seguridad
@@ -109,12 +111,11 @@ resistencia o conjunto de resistencias.
 
 ### Configuración usada y cálculos
 
-La configuración inicial usa `R_shunt = 0,323 Ω` y `K = 1,0025189`. Las
+La configuración inicial usa `R_shunt = 0,323 Ω` . Las
 resistencias que forman este shunt eran las que tenía a mano en ese momento;
-por ello la resistencia total y el factor de calibración se pueden modificar en
+la resistencia total y el factor de calibración se pueden modificar en
 **Ajustes** y se guardan con cada sesión.
 
-- Conversión configurada: `I = ADC_raw × 2,5 × K / (4096 × R_shunt)`.
 - Un paso de ADC equivale a `2,5 / 4096 = 0,610 mV`; con esta calibración son
   aproximadamente `1,894 mA` por cuenta.
 - Caída en el shunt: `V_shunt = I × 0,323 Ω`. A `2,5 A`, la caída es

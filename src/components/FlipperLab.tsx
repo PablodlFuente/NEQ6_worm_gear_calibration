@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import type { FlipperApi } from "../hooks/useFlipper";
-import { averageAngularSeriesSpectrum, averageFftSpectra, basicRevolutionSeriesCount, circularStats, fitPolarEllipse, movingWindowStats, topPeaks, travelFromCaptureOrigin, type ExtendedPassResult } from "../lib/flipper";
+import { averageAngularSeriesSpectrum, averageFftSpectra, basicRevolutionSeriesCount, centeredMovingWindowStats, circularStats, fitPolarEllipse, topPeaks, travelFromCaptureOrigin, type ExtendedPassResult } from "../lib/flipper";
 import { IconAlert, IconDownload, IconTrash, IconZoom } from "./icons";
 import AiAnalysisPanel, { type AiDataAttachment } from "./AiAnalysisPanel";
 import { analysisFingerprint, getAiResponse, saveAiResponse, useAiResponseVersion, useAiSettings } from "../hooks/useAiAnalysis";
@@ -336,14 +336,21 @@ export default function FlipperLab({
    * siguen siendo cargables; sencillamente no se dibujan como multipasada. */
   const extendedPasses = useMemo(() => (flip.extendedAnalysis?.passes ?? []).filter((pass) => Boolean(pass.statistics)), [flip.extendedAnalysis]);
   const basicPasses = useMemo(() => derived?.basicPasses ?? [], [derived]);
-  const comparisonPasses = useMemo(() => extendedPasses.length ? extendedPasses : basicPasses, [extendedPasses, basicPasses]);
+  const liveExtendedPasses = useMemo(() => flip.capturing && extendedPasses.length
+    ? basicPasses.map((pass) => ({ ...pass, id: `live:${pass.id}`, label: `En vivo · ${pass.label}` }))
+    : [], [flip.capturing, extendedPasses.length, basicPasses]);
+  const comparisonPasses = useMemo(() => extendedPasses.length
+    ? [...extendedPasses, ...liveExtendedPasses]
+    : basicPasses, [extendedPasses, liveExtendedPasses, basicPasses]);
   const isExtendedTest = extendedPasses.length > 0;
   const extendedRevolutionCount = useMemo(() => extendedPasses.reduce((maximum, pass) => {
     const angles = pass.samples?.anglesDeg ?? [];
     if (angles.length < 2) return Math.max(maximum, pass.revolutionSpectra?.length ?? 1);
     return Math.max(maximum, basicRevolutionSeriesCount(Math.abs(angles[angles.length - 1] - angles[0])));
   }, 1), [extendedPasses]);
-  const totalRevolutionCount = isExtendedTest ? extendedRevolutionCount : Math.max(1, basicPasses.length);
+  const totalRevolutionCount = isExtendedTest
+    ? Math.max(extendedRevolutionCount, basicPasses.length)
+    : Math.max(1, basicPasses.length);
   const hasMultipleRevolutions = totalRevolutionCount > 1;
   /* La casilla significa literalmente revoluciones independientes:
    * marcada = superpuestas 0–360°; desmarcada = serie continua N×360°. */
@@ -453,15 +460,18 @@ export default function FlipperLab({
     const factor = Math.max(1, Math.floor(flip.avgFactor));
     if (pass.samples?.anglesDeg?.length) {
       const length = Math.min(pass.samples.anglesDeg.length, pass.samples.currentA.length);
-      const angleStats = movingWindowStats(pass.samples.anglesDeg.slice(0, length), factor);
-      const currentStats = movingWindowStats(pass.samples.currentA.slice(0, length), factor);
+      const sourceAngles = pass.samples.anglesDeg.slice(0, length);
+      const angleStats = centeredMovingWindowStats(sourceAngles, factor);
+      const currentStats = centeredMovingWindowStats(pass.samples.currentA.slice(0, length), factor);
       if (!angleStats || !currentStats) return [];
       const angles: number[] = [];
       const currents: number[] = [];
       const angleErr: number[] = [];
       const currentErr: number[] = [];
       for (let index = 0; index < angleStats.length; index++) {
-        angles.push(angleStats.mean[index]);
+        // La media se calcula alrededor de esta muestra, pero la coordenada
+        // central se conserva para no recortar el inicio o el final del giro.
+        angles.push(sourceAngles[index]);
         currents.push(currentStats.mean[index]);
         angleErr.push(angleStats.sem[index]);
         currentErr.push(currentStats.sem[index]);
