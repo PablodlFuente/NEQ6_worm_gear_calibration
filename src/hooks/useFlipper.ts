@@ -992,7 +992,7 @@ export function useFlipper({ cpr1 }: Props) {
     setNotice("Exportación preparada: medidas sin agrupar, gráficas y análisis FFT.");
   };
 
-  const exportSavedSessions = async () => {
+  const exportSavedSessions = async (includeAi = false) => {
     if (!sessions.length) return;
     const files = sessions.flatMap((session) => {
       const safeName = session.name.replace(/[^a-z0-9_-]+/gi, "_");
@@ -1018,6 +1018,12 @@ export function useFlipper({ cpr1 }: Props) {
         let comparison = "grupo,clasificacion,frecuencia_hz,periodicidad_grados,pasadas,evidencia\n";
         for (const group of session.extendedAnalysis.groups) comparison += `${group.id},${group.classification},${group.representativeHz.toFixed(9)},${group.representativeDeg?.toFixed(9) ?? ""},\"${group.passes.join(" | ")}\",\"${group.reason.replace(/"/g, '""')}\"\n`;
         result.push({ name: `${base}/fft/analisis-comparativo.csv`, data: comparison });
+      }
+      if (includeAi) {
+        for (const analysis of session.aiAnalyses ?? []) {
+          const safeProvider = analysis.providerName.replace(/[^a-z0-9_-]+/gi, "-").replace(/^-|-$/g, "") || "ia";
+          result.push({ name: `${base}/analisis-ia/${safeProvider}.txt`, data: analysis.text });
+        }
       }
       return result;
     });
@@ -1045,7 +1051,7 @@ export function useFlipper({ cpr1 }: Props) {
     );
   };
 
-  const saveSession = async () => {
+  const saveSession = async (aiAnalyses: NonNullable<Session["aiAnalyses"]> = []) => {
     if (!adcRef.current.length) {
       setNotice("No hay muestras que guardar.");
       return;
@@ -1064,6 +1070,7 @@ export function useFlipper({ cpr1 }: Props) {
       calibration: { ...calibrationRef.current },
       extendedAnalysis,
       extendedFiles: extendedFilesRef.current.map((file) => ({ ...file })),
+      aiAnalyses: aiAnalyses.map((analysis) => ({ ...analysis })),
     };
     await idb.save(s);
     setSessions(await idb.list());

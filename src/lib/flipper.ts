@@ -396,6 +396,13 @@ export interface Session {
   calibration?: AdcCalibration;
   extendedAnalysis?: ExtendedAnalysis | null;
   extendedFiles?: { name: string; data: string }[];
+  aiAnalyses?: Array<{
+    providerId: string;
+    providerName: string;
+    fingerprint: string;
+    text: string;
+    updatedAt: number;
+  }>;
 }
 
 export const FLIPPER_COMMANDS = [

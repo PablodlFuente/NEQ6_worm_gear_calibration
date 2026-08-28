@@ -1,7 +1,9 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import type { FlipperApi } from "../hooks/useFlipper";
-import { averageAngularSeriesSpectrum, averageFftSpectra, basicRevolutionSeriesCount, centeredMovingWindowStats, circularStats, fitPolarEllipse, topPeaks, travelFromCaptureOrigin } from "../lib/flipper";
+import { averageAngularSeriesSpectrum, averageFftSpectra, basicRevolutionSeriesCount, centeredMovingWindowStats, circularStats, fitPolarEllipse, topPeaks, travelFromCaptureOrigin, type ExtendedPassResult } from "../lib/flipper";
 import { IconAlert, IconDownload, IconTrash, IconZoom } from "./icons";
+import AiAnalysisPanel, { type AiDataAttachment } from "./AiAnalysisPanel";
+import { analysisFingerprint, getAiResponse, saveAiResponse, useAiResponseVersion, useAiSettings } from "../hooks/useAiAnalysis";
 
 const AVGS = [1, 2, 5, 10, 20, 50, 100];
 const REV_COLORS = [
@@ -12,8 +14,45 @@ const renderStride = (length: number, pixelWidth: number, pointsPerPixel = 3) =>
   Math.max(1, Math.ceil(length / Math.max(600, pixelWidth * pointsPerPixel)));
 const axisDecimals = (step: number) => Math.max(2, Math.min(6, Number.isFinite(step) && step > 0 ? Math.ceil(-Math.log10(step)) : 2));
 
-type View = "vivo" | "polar" | "cartesiano" | "fft" | "stats";
+type View = "vivo" | "polar" | "cartesiano" | "fft" | "stats" | "ai";
 type Peak = { bin: number; freq: number; period: number; mag: number };
+
+const csvCell = (value: string | number | null | undefined) => {
+  if (value === null || value === undefined) return "";
+  const text = String(value);
+  return /[",\r\n]/.test(text) ? `"${text.replace(/"/g, '""')}"` : text;
+};
+
+function buildAiDataAttachment(passes: readonly ExtendedPassResult[]): AiDataAttachment | null {
+  if (!passes.length) return null;
+  const availableSamples = passes.reduce((sum, pass) => sum + Math.min(pass.samples?.anglesDeg?.length ?? 0, pass.samples?.currentA?.length ?? 0), 0);
+  const maxSampleRows = 100_000;
+  const stride = Math.max(1, Math.ceil(availableSamples / maxSampleRows));
+  const rows = [
+    "# Datos de resultado para análisis técnico",
+    `# muestras_angulares_disponibles=${availableSamples}; paso_exportacion=${stride}; ${stride === 1 ? "sin reducción" : "submuestreo uniforme"}`,
+    "tipo,serie,sentido,velocidad_deg_s,angulo_deg,corriente_a,frecuencia_hz,incertidumbre_hz,periodo_montura_deg,magnitud",
+  ];
+  passes.forEach((pass) => {
+    const angles: number[] = pass.samples?.anglesDeg ?? [];
+    const current: number[] = pass.samples?.currentA ?? [];
+    const length = Math.min(angles.length, current.length);
+    for (let index = 0; index < length; index += stride) {
+      rows.push(["muestra_angular", pass.label, pass.direction, pass.measuredSpeedDegS ?? pass.requestedSpeedDegS, angles[index], current[index], null, null, null, null].map(csvCell).join(","));
+    }
+    if (!length && pass.profile?.anglesDeg?.length) {
+      pass.profile.anglesDeg.forEach((angle: number, index: number) => {
+        const amps = pass.profile?.currentA?.[index];
+        if (amps !== null && Number.isFinite(amps)) rows.push(["perfil_angular", pass.label, pass.direction, pass.measuredSpeedDegS ?? pass.requestedSpeedDegS, angle, amps, null, null, null, null].map(csvCell).join(","));
+      });
+    }
+    pass.peaks?.forEach((peak) => rows.push([
+      "pico_fft", pass.label, pass.direction, pass.measuredSpeedDegS ?? pass.requestedSpeedDegS,
+      null, null, peak.frequencyHz, peak.uncertaintyHz ?? null, peak.periodMountDeg, peak.magnitude,
+    ].map(csvCell).join(",")));
+  });
+  return { name: "resultados-medicion.csv", mimeType: "text/csv", text: rows.join("\n") };
+}
 /** Fracción visible de los dominios completos X/Y. Es el equivalente a
  * set_xlim/set_ylim: los dibujantes vuelven a proyectar los datos, no se
  * recorta una imagen de la gráfica. */
@@ -276,6 +315,7 @@ export default function FlipperLab({
     cartesiano: RESET_VIEWPORT,
     fft: RESET_VIEWPORT,
     stats: RESET_VIEWPORT,
+    ai: RESET_VIEWPORT,
   });
   const [manualPeaksBySeries, setManualPeaksBySeries] = useState<Record<string, Peak[]>>({});
   const [hiddenExtendedSeries, setHiddenExtendedSeries] = useState<Set<string>>(() => new Set());
@@ -286,6 +326,9 @@ export default function FlipperLab({
   const [exportMenu, setExportMenu] = useState(false);
   const [cursorLabel, setCursorLabel] = useState("");
   const fileRef = useRef<HTMLInputElement>(null);
+  const [aiSettings] = useAiSettings();
+  const aiResponseVersion = useAiResponseVersion();
+  const visibleViews = aiSettings.enabled ? [...VIEWS, { id: "ai" as const, label: "Análisis IA" }] : VIEWS;
 
   const { derived, stats } = flip;
   const n = stats.n;
@@ -651,6 +694,81 @@ export default function FlipperLab({
       totalDurationS: passStats.reduce((sum, item) => sum + item.durationS, 0),
     };
   }, [comparisonPasses, continuousRevs, isExtendedTest, derived]);
+  const aiPrompt = useMemo(() => {
+    if (!derived && !extendedSummary) return "";
+    const axis = flip.captureMetadata.axis === 1 ? "AR" : flip.captureMetadata.axis === 2 ? "DEC" : "no indicado";
+    const direction = flip.captureMetadata.direction?.toUpperCase() ?? "no indicada";
+    const lines = [
+      "Actúa como analista técnico de una montura astronómica Sky-Watcher NEQ6.",
+      "Interpreta el perfil angular de corriente y sus espectros sin presuponer el origen del problema.",
+      "Contrasta hipótesis de ejes o alineación, rodamientos, transmisión, motor/driver, electrónica y adquisición; no favorezcas una familia ni afirmes una causa sin evidencia suficiente.",
+      "Intenta asociar las frecuencias y periodicidades significativas con elementos concretos de la NEQ6 usando relaciones de transmisión y datos técnicos conocidos. Si el proveedor dispone de búsqueda, consulta fuentes técnicas; separa claramente coincidencias documentadas de inferencias y no inventes relaciones ausentes.",
+      "Si se adjunta un CSV, úsalo como fuente principal junto al resumen y señala cualquier limitación del muestreo.",
+      "Responde de forma concisa, sin introducción ni explicaciones generales, usando exactamente estas tres secciones:",
+      "1. ANÁLISIS DE RESULTADOS: resume los patrones relevantes y cita los valores que los sostienen.",
+      "2. CAUSAS MÁS PROBABLES: hipótesis ordenadas por plausibilidad, indicando brevemente la evidencia y una comprobación discriminante.",
+      "3. ANÁLISIS DE RIESGO: nivel bajo/medio/alto, justificación y si conviene detener, vigilar o ajustar la montura.",
+      "Extensión máxima: 350 palabras.",
+      "",
+      `Eje: ${axis}`,
+      `Sentido: ${direction}`,
+      `Tipo: ${flip.extendedAnalysis ? "test extendido" : "test básico"}`,
+      `Media móvil: ${flip.avgFactor} muestras`,
+      `Modo de revoluciones: ${continuousRevs ? "serie continua; adquisición temporal concatenada" : "revoluciones independientes; superpuestas y promediadas entre vueltas"}`,
+    ];
+    if (derived && !flip.extendedAnalysis) {
+      lines.push(
+        `Muestras: ${derived.st.n}`,
+        `Duración: ${derived.st.durS.toFixed(3)} s`,
+        `Tasa efectiva: ${derived.st.rateEst.toFixed(3)} Hz`,
+        `Recorrido: ${derived.st.angleSpanDeg.toFixed(3)}°`,
+        `Velocidad medida: ${derived.st.feedbackSpeedDegS?.toFixed(6) ?? "no disponible"} °/s`,
+        `Corriente: media ${derived.st.mean.toFixed(6)} A; desviación ${derived.st.sd.toFixed(6)} A; mediana ${derived.st.median.toFixed(6)} A; máximo ${derived.st.maxA.toFixed(6)} A a ${derived.st.maxAngleDeg?.toFixed(3) ?? "?"}°`,
+      );
+      if (polarLoadAnalysis) lines.push(`Carga circular: dirección ${polarLoadAnalysis.circular.meanDeg.toFixed(3)}°; R ${polarLoadAnalysis.circular.R.toFixed(6)}; dispersión ${polarLoadAnalysis.circular.stdDeg.toFixed(3)}°`);
+      if (derived.ellipse) lines.push(`Elipse: a ${derived.ellipse.semiMajor.toFixed(6)} A; b ${derived.ellipse.semiMinor.toFixed(6)} A; a/b ${(derived.ellipse.semiMajor / derived.ellipse.semiMinor).toFixed(6)}; inclinación ${derived.ellipse.angleDeg.toFixed(3)}°; RMS ${derived.ellipse.rms.toFixed(6)}`);
+      lines.push("Picos FFT:");
+      derived.peaks.forEach((peak, index) => lines.push(`${index + 1}. ${peak.freq.toFixed(6)} Hz; periodo angular ${derived.st.feedbackSpeedDegS ? (peak.period * derived.st.feedbackSpeedDegS).toFixed(6) : "?"}°; magnitud ${peak.mag.toExponential(6)}`));
+    }
+    if (!flip.extendedAnalysis && extendedSummary && basicPasses.length) {
+      lines.push(
+        `Revoluciones analizadas: ${basicPasses.length}`,
+        `${continuousRevs ? "Corriente de la serie unida" : "Corriente media entre vueltas"}: ${extendedSummary.current.mean.toFixed(6)} ± ${extendedSummary.current.uncertainty.toFixed(6)} A`,
+        `${continuousRevs ? "Velocidad de la serie" : "Velocidad media"}: ${extendedSummary.speed.mean.toFixed(6)}${continuousRevs ? "" : ` ± ${extendedSummary.speed.uncertainty.toFixed(6)}`} °/s`,
+        `${continuousRevs ? "Concentración circular de la serie" : "Concentración circular media"}: ${extendedSummary.circularR.mean.toFixed(6)}${continuousRevs ? "" : ` ± ${extendedSummary.circularR.uncertainty.toFixed(6)}`}`,
+        "Resumen por revolución:",
+      );
+      basicPasses.forEach((pass) => {
+        lines.push(`${pass.label}: ${pass.statistics.meanA.toFixed(6)} ± ${pass.statistics.semA.toFixed(6)} A; máximo ${pass.statistics.maxA.toFixed(6)} A a ${pass.statistics.maxAngleDeg?.toFixed(3) ?? "?"}°; ${pass.statistics.measuredSpeedDegS?.toFixed(6) ?? "?"} °/s`);
+        pass.peaks.slice(0, 8).forEach((peak) => lines.push(`  FFT ${peak.frequencyHz.toFixed(6)} Hz; ${peak.periodMountDeg?.toFixed(6) ?? "?"}°; magnitud ${peak.magnitude.toExponential(4)}`));
+      });
+    }
+    if (flip.extendedAnalysis && extendedSummary) {
+      lines.push(
+        `Fases móviles: ${extendedPasses.filter((pass) => pass.direction !== "stationary").length}`,
+        `Corriente media entre fases: ${extendedSummary.current.mean.toFixed(6)} ± ${extendedSummary.current.uncertainty.toFixed(6)} A`,
+        `Velocidad media: ${extendedSummary.speed.mean.toFixed(6)} ± ${extendedSummary.speed.uncertainty.toFixed(6)} °/s`,
+        `Máximo global: ${extendedSummary.maxA.toFixed(6)} A`,
+        "Coincidencias espectrales:",
+      );
+      flip.extendedAnalysis.groups.forEach((group, index) => lines.push(`${index + 1}. ${group.classification}; ${group.representativeHz.toFixed(6)} Hz; ${group.representativeDeg?.toFixed(6) ?? "?"}°; fases ${group.passes.join("/")}; ${group.reason}`));
+      lines.push("Resumen por fase:");
+      extendedPasses.forEach((pass) => lines.push(`${pass.label}: ${pass.statistics.meanA.toFixed(6)} ± ${pass.statistics.semA.toFixed(6)} A; ${pass.statistics.measuredSpeedDegS?.toFixed(6) ?? "?"} °/s; ${pass.statistics.angleSpanDeg.toFixed(3)}°; ${pass.peaks.length} picos`));
+    }
+    return lines.join("\n");
+  }, [derived, extendedSummary, extendedPasses, basicPasses, flip.avgFactor, flip.captureMetadata, flip.extendedAnalysis, polarLoadAnalysis, continuousRevs]);
+  void aiResponseVersion;
+  const currentAiFingerprint = analysisFingerprint(aiPrompt);
+  const currentAiAnalyses = aiSettings.enabled ? aiSettings.providers.flatMap((provider) => {
+    const saved = getAiResponse(provider.id, currentAiFingerprint);
+    return saved ? [{
+      providerId: provider.id,
+      providerName: provider.name,
+      fingerprint: currentAiFingerprint,
+      text: saved.text,
+      updatedAt: saved.updatedAt,
+    }] : [];
+  }) : [];
   void flip.tick;
   useEffect(() => {
     if (!n) setManualPeaksBySeries({});
@@ -663,6 +781,9 @@ export default function FlipperLab({
   useEffect(() => {
     if (flip.extendedAnalysis) setManualPeaksBySeries({});
   }, [flip.extendedAnalysis]);
+  useEffect(() => {
+    if (!aiSettings.enabled && view === "ai") setView("stats");
+  }, [aiSettings.enabled, view]);
   useEffect(() => {
     if (!extendedFftSeries.some((series) => series.id === selectedFftSeries)) {
       setSelectedFftSeries(extendedFftSeries.some((series) => series.id === "average") ? "average" : extendedFftSeries[0]?.id ?? "average");
@@ -1469,12 +1590,17 @@ export default function FlipperLab({
         derived.st.feedbackSpeedDegS ? (peak.period * derived.st.feedbackSpeedDegS).toFixed(9) : ""
       },${peak.mag.toExponential(9)}\n`;
     }
+    const aiFiles = currentAiAnalyses.map((analysis) => {
+      const safeName = analysis.providerName.replace(/[^a-z0-9_-]+/gi, "-").replace(/^-|-$/g, "") || "ia";
+      return { name: `analisis-ia/${safeName}.txt`, data: analysis.text };
+    });
     await flip.exportBundle([
       { name: "graficas/corriente-tiempo.png", data: live },
       { name: "graficas/polar-elipse.png", data: polar },
       { name: "graficas/cartesiana.png", data: cart },
       { name: "graficas/fft.png", data: fft },
       ...(!flip.extendedAnalysis ? [{ name: "datos/fft-picos.csv", data: peaksCsv }] : []),
+      ...aiFiles,
     ]);
   };
 
@@ -1537,7 +1663,7 @@ export default function FlipperLab({
 
       {/* subpestañas de visualización */}
       <div className="flex shrink-0 items-center gap-1 border-b border-line bg-[#0a1424]/60 px-3 py-1.5">
-        {VIEWS.map((v) => (
+        {visibleViews.map((v) => (
           <button
             key={v.id}
             onClick={() => setView(v.id)}
@@ -1581,7 +1707,7 @@ export default function FlipperLab({
             />
             revs. independientes
           </label>}
-          {view !== "stats" && (
+          {view !== "stats" && view !== "ai" && (
             <>
               <button
                 onClick={() => setRegionZoom((active) => !active)}
@@ -1641,7 +1767,9 @@ export default function FlipperLab({
 
       {/* zona de gráfico / estadísticas */}
       <div className="min-h-0 flex-1 overflow-y-auto p-3">
-        {view !== "stats" ? (
+        {view === "ai" ? (
+          <AiAnalysisPanel prompt={aiPrompt} getAttachment={() => buildAiDataAttachment(comparisonPasses)} />
+        ) : view !== "stats" ? (
           <div className="flex min-h-[300px] flex-col gap-2">
             {(view === "polar" || view === "cartesiano") && extendedDisplaySeries.length > 0 && (
               <div className="flex flex-wrap items-center gap-1.5 rounded border border-line bg-[#0c1930] px-2 py-1.5 font-mono text-[9px]">
@@ -1921,7 +2049,7 @@ export default function FlipperLab({
               </button>
               {exportMenu && <div className="absolute bottom-full left-0 z-20 mb-1 w-full overflow-hidden rounded border border-line bg-[#0c1930] shadow-xl">
                 <button onClick={() => { setExportMenu(false); void exportAll(); }} className="w-full px-2 py-2 text-left font-mono text-[9px] text-fog hover:bg-ion/10 hover:text-ion">Sesión actual</button>
-                {flip.sessions.length > 1 && <button onClick={() => { setExportMenu(false); void flip.exportSavedSessions(); }} className="w-full border-t border-line px-2 py-2 text-left font-mono text-[9px] text-fog hover:bg-ion/10 hover:text-ion">Todas las sesiones ({flip.sessions.length})</button>}
+                {flip.sessions.length > 1 && <button onClick={() => { setExportMenu(false); void flip.exportSavedSessions(aiSettings.enabled); }} className="w-full border-t border-line px-2 py-2 text-left font-mono text-[9px] text-fog hover:bg-ion/10 hover:text-ion">Todas las sesiones ({flip.sessions.length})</button>}
               </div>}
             </div>
             <button
@@ -1931,7 +2059,7 @@ export default function FlipperLab({
               <IconDownload className="h-3 w-3 rotate-180" /> IMPORTAR
             </button>
             <button
-              onClick={() => void flip.saveSession()}
+              onClick={() => void flip.saveSession(currentAiAnalyses)}
               className="flex items-center justify-center gap-1.5 rounded border border-line px-2 py-1.5 font-display text-[9.5px] font-bold tracking-[0.1em] text-fog transition-colors hover:border-mint/50 hover:text-mint"
             >
               GUARDAR SESIÓN
@@ -1961,7 +2089,12 @@ export default function FlipperLab({
                     </p>
                   </div>
                   <button
-                    onClick={() => flip.loadSession(s)}
+                    onClick={() => {
+                      flip.loadSession(s);
+                      if (aiSettings.enabled) for (const analysis of s.aiAnalyses ?? []) {
+                        saveAiResponse(analysis.providerId, analysis.fingerprint, analysis.text, analysis.updatedAt);
+                      }
+                    }}
                     className="shrink-0 rounded border border-line px-2 py-1 font-display text-[9px] font-bold tracking-wider text-ion transition-colors hover:border-ion/50 hover:bg-ion/10"
                   >
                     CARGAR
