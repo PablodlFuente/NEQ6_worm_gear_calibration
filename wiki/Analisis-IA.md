@@ -1,8 +1,10 @@
 # Análisis IA
 
+![Análisis IA integrado](images/analisis-ia.png)
+
 Esta función es opcional y permanece desactivada por defecto. Envía el resumen numérico del ensayo a la interfaz web de un chat mediante un navegador local automatizado; la aplicación no incorpora claves API. También intenta adjuntar un CSV con las muestras angulares y los picos espectrales. Si el chat no expone una entrada de archivos, continúa únicamente con el resumen textual. La respuesta se conserva en el navegador junto a la huella del informe y se incluye en la exportación de la sesión.
 
-El informe solicita tres apartados breves: análisis de resultados, causas más probables y análisis de riesgo. El contexto no presupone un defecto concreto: pide contrastar ejes y alineación, rodamientos, transmisión, motor y driver, electrónica y posibles artefactos de adquisición. Sigue siendo una hipótesis auxiliar que debe contrastarse con las medidas y una inspección independiente.
+El informe solicita tres apartados breves: análisis de resultados, causas más probables y análisis de riesgo. El contexto no presupone un defecto concreto: pide contrastar ejes y alineación, rodamientos, transmisión, motor y driver, electrónica y posibles artefactos de adquisición. También solicita relacionar las periodicidades con datos técnicos y relaciones de transmisión conocidas de la NEQ6, diferenciando coincidencias documentadas de inferencias. Sigue siendo una hipótesis auxiliar que debe contrastarse con las medidas y una inspección independiente.
 
 ## Configurar un proveedor
 

@@ -1,20 +1,25 @@
+export type InterfaceValue = "interface";
+export type ExtendedAxis = 1 | 2 | InterfaceValue;
+export type ExtendedDirection = "cw" | "ccw" | InterfaceValue;
+export type ExtendedNumber = number | InterfaceValue;
+
 export type ExtendedTestMotionStep = {
   id: string;
   kind: "motion";
   name: string;
-  axis: 1 | 2;
-  direction: "cw" | "ccw";
-  speedDegS: number;
-  sampleRateHz: number;
-  revolutions: number;
+  axis: ExtendedAxis;
+  direction: ExtendedDirection;
+  speedDegS: ExtendedNumber;
+  sampleRateHz: ExtendedNumber;
+  revolutions: ExtendedNumber;
 };
 
 export type ExtendedTestStationaryStep = {
   id: string;
   kind: "stationary";
   name: string;
-  axis: 1 | 2;
-  sampleRateHz: number;
+  axis: ExtendedAxis;
+  sampleRateHz: ExtendedNumber;
   durationSec: number;
 };
 
@@ -25,6 +30,24 @@ export interface ExtendedTestProfile {
   name: string;
   steps: ExtendedTestStep[];
 }
+
+export interface ExtendedInterfaceValues {
+  axis: 1 | 2;
+  direction: "cw" | "ccw";
+  speedDegS: number;
+  sampleRateHz: number;
+  revolutions: number;
+}
+
+export type ResolvedExtendedTestStep =
+  | (Omit<ExtendedTestStationaryStep, "axis" | "sampleRateHz"> & { axis: 1 | 2; sampleRateHz: number })
+  | (Omit<ExtendedTestMotionStep, "axis" | "direction" | "speedDegS" | "sampleRateHz" | "revolutions"> & {
+    axis: 1 | 2;
+    direction: "cw" | "ccw";
+    speedDegS: number;
+    sampleRateHz: number;
+    revolutions: number;
+  });
 
 export const DEFAULT_EXTENDED_TEST_PROFILE: ExtendedTestProfile = {
   id: "comparativa-dos-velocidades",
@@ -42,6 +65,9 @@ const finiteRange = (value: unknown, fallback: number, min: number, max: number)
   const number = Number(value);
   return Number.isFinite(number) ? Math.max(min, Math.min(max, number)) : fallback;
 };
+
+const interfaceOrRange = (value: unknown, fallback: number, min: number, max: number, integer = false): ExtendedNumber =>
+  value === "interface" ? "interface" : (integer ? Math.round(finiteRange(value, fallback, min, max)) : finiteRange(value, fallback, min, max));
 
 export const newExtendedStepId = () =>
   typeof crypto !== "undefined" && "randomUUID" in crypto
@@ -61,8 +87,8 @@ export function sanitizeExtendedProfile(value: unknown): ExtendedTestProfile | n
     const common = {
       id: typeof step.id === "string" && step.id ? step.id : newExtendedStepId(),
       name: typeof step.name === "string" && step.name.trim() ? step.name.trim() : "Paso",
-      axis: step.axis === 2 ? 2 as const : 1 as const,
-      sampleRateHz: Math.round(finiteRange(step.sampleRateHz, 500, 10, 1000)),
+      axis: step.axis === "interface" ? "interface" as const : step.axis === 2 ? 2 as const : 1 as const,
+      sampleRateHz: interfaceOrRange(step.sampleRateHz, 500, 10, 1000, true),
     };
     if (step.kind === "stationary") {
       return [{ ...common, kind: "stationary", durationSec: finiteRange(step.durationSec, 20, 1, 3600) }];
@@ -71,9 +97,9 @@ export function sanitizeExtendedProfile(value: unknown): ExtendedTestProfile | n
       return [{
         ...common,
         kind: "motion",
-        direction: step.direction === "ccw" ? "ccw" : "cw",
-        speedDegS: finiteRange(step.speedDegS, 1, 0.01, 5),
-        revolutions: Math.round(finiteRange(step.revolutions, 1, 1, 10)),
+        direction: step.direction === "interface" ? "interface" : step.direction === "ccw" ? "ccw" : "cw",
+        speedDegS: interfaceOrRange(step.speedDegS, 1, 0.01, 5),
+        revolutions: interfaceOrRange(step.revolutions, 1, 1, 10, true),
       }];
     }
     return [];
@@ -82,9 +108,26 @@ export function sanitizeExtendedProfile(value: unknown): ExtendedTestProfile | n
   return { id: raw.id, name: raw.name.trim() || "Perfil sin nombre", steps };
 }
 
-export function estimateExtendedProfileSeconds(profile: ExtendedTestProfile | undefined): number | null {
+export function resolveExtendedTestStep(step: ExtendedTestStep, values: ExtendedInterfaceValues): ResolvedExtendedTestStep {
+  const axis = step.axis === "interface" ? values.axis : step.axis;
+  const sampleRateHz = step.sampleRateHz === "interface" ? values.sampleRateHz : step.sampleRateHz;
+  if (step.kind === "stationary") return { ...step, axis, sampleRateHz };
+  return {
+    ...step,
+    axis,
+    sampleRateHz,
+    direction: step.direction === "interface" ? values.direction : step.direction,
+    speedDegS: step.speedDegS === "interface" ? values.speedDegS : step.speedDegS,
+    revolutions: step.revolutions === "interface" ? values.revolutions : step.revolutions,
+  };
+}
+
+export function estimateExtendedProfileSeconds(profile: ExtendedTestProfile | undefined, values?: ExtendedInterfaceValues): number | null {
   if (!profile) return null;
-  return profile.steps.reduce((total, step) => total + (step.kind === "stationary"
-    ? step.durationSec
-    : (step.revolutions * 360 + 4) / step.speedDegS), 0);
+  if (!values && profile.steps.some((step) => step.axis === "interface" || step.sampleRateHz === "interface" || (step.kind === "motion" && (step.direction === "interface" || step.speedDegS === "interface" || step.revolutions === "interface")))) return null;
+  const fallback: ExtendedInterfaceValues = values ?? { axis: 1, direction: "cw", speedDegS: 1, sampleRateHz: 500, revolutions: 1 };
+  return profile.steps.reduce((total, step) => {
+    const resolved = resolveExtendedTestStep(step, fallback);
+    return total + (resolved.kind === "stationary" ? resolved.durationSec : (resolved.revolutions * 360 + 4) / resolved.speedDegS);
+  }, 0);
 }

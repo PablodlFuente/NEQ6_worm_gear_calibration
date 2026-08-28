@@ -84,7 +84,13 @@ export default function AxisTestPanel({
   const effectiveRate = flip.derived?.st.rateEst ?? null;
   const estimatedDurationSec = timing ? state.targetDeg / timing.realDegPerSec : null;
   const selectedExtendedProfile = extendedProfiles.find((item) => item.id === selectedExtendedProfileId) ?? extendedProfiles[0];
-  const estimatedExtendedDurationSec = estimateExtendedProfileSeconds(selectedExtendedProfile);
+  const estimatedExtendedDurationSec = estimateExtendedProfileSeconds(selectedExtendedProfile, {
+    axis: inputs.axis,
+    direction: inputs.direction,
+    speedDegS: speed,
+    sampleRateHz: inputs.sampleRate,
+    revolutions: revs,
+  });
   const formatTime = (seconds: number) => {
     const mins = Math.floor(seconds / 60);
     const secs = Math.round(seconds % 60);

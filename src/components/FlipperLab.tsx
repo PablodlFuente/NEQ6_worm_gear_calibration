@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import type { FlipperApi } from "../hooks/useFlipper";
-import { averageAngularSeriesSpectrum, averageFftSpectra, circularStats, fitPolarEllipse, movingWindowStats, topPeaks, travelFromCaptureOrigin, type ExtendedPassResult } from "../lib/flipper";
+import { averageAngularSeriesSpectrum, averageFftSpectra, basicRevolutionSeriesCount, circularStats, fitPolarEllipse, movingWindowStats, topPeaks, travelFromCaptureOrigin, type ExtendedPassResult } from "../lib/flipper";
 import { IconAlert, IconDownload, IconTrash, IconZoom } from "./icons";
 import AiAnalysisPanel, { type AiDataAttachment } from "./AiAnalysisPanel";
 import { analysisFingerprint, getAiResponse, saveAiResponse, useAiResponseVersion, useAiSettings } from "../hooks/useAiAnalysis";
@@ -12,6 +12,7 @@ const REV_COLORS = [
 ];
 const renderStride = (length: number, pixelWidth: number, pointsPerPixel = 3) =>
   Math.max(1, Math.ceil(length / Math.max(600, pixelWidth * pointsPerPixel)));
+const axisDecimals = (step: number) => Math.max(2, Math.min(6, Number.isFinite(step) && step > 0 ? Math.ceil(-Math.log10(step)) : 2));
 
 type View = "vivo" | "polar" | "cartesiano" | "fft" | "stats" | "ai";
 type Peak = { bin: number; freq: number; period: number; mag: number };
@@ -337,12 +338,21 @@ export default function FlipperLab({
   const basicPasses = useMemo(() => derived?.basicPasses ?? [], [derived]);
   const comparisonPasses = useMemo(() => extendedPasses.length ? extendedPasses : basicPasses, [extendedPasses, basicPasses]);
   const isExtendedTest = extendedPasses.length > 0;
-  const independentRevs = !flip.overlayRevs && !isExtendedTest && basicPasses.length > 1;
-  const sequentialCartesian = independentRevs;
-  const cartesianFullAngleDeg = sequentialCartesian ? basicPasses.length * 360 : 360;
+  const extendedRevolutionCount = useMemo(() => extendedPasses.reduce((maximum, pass) => {
+    const angles = pass.samples?.anglesDeg ?? [];
+    if (angles.length < 2) return Math.max(maximum, pass.revolutionSpectra?.length ?? 1);
+    return Math.max(maximum, basicRevolutionSeriesCount(Math.abs(angles[angles.length - 1] - angles[0])));
+  }, 1), [extendedPasses]);
+  const totalRevolutionCount = isExtendedTest ? extendedRevolutionCount : Math.max(1, basicPasses.length);
+  const hasMultipleRevolutions = totalRevolutionCount > 1;
+  /* La casilla significa literalmente revoluciones independientes:
+   * marcada = superpuestas 0–360°; desmarcada = serie continua N×360°. */
+  const continuousRevs = !flip.overlayRevs && hasMultipleRevolutions;
+  const sequentialCartesian = continuousRevs;
+  const cartesianFullAngleDeg = sequentialCartesian ? totalRevolutionCount * 360 : 360;
   const sequenceOriginDeg = basicPasses[0]?.samples.anglesDeg[0]
     ?? (derived?.plot?.length ? derived.plot.angles[0] : 0);
-  const cartesianAngle = (angle: number) => independentRevs
+  const cartesianAngle = (angle: number) => continuousRevs
     ? travelFromCaptureOrigin(angle, sequenceOriginDeg)
     : ((angle % 360) + 360) % 360;
   const fftReferenceSpeed = useMemo(() => {
@@ -353,29 +363,54 @@ export default function FlipperLab({
     return speeds.length ? speeds.reduce((sum, speed) => sum + speed, 0) / speeds.length : null;
   }, [comparisonPasses]);
   const extendedFftSeries = useMemo(() => {
-    const passes = comparisonPasses.flatMap((pass, index) => pass.spectrum ? [{
-      id: pass.id,
-      label: pass.label,
-      color: REV_COLORS[index % REV_COLORS.length],
-      spectrum: pass.direction !== "stationary" && fftReferenceSpeed && pass.samples?.anglesDeg?.length
-        ? averageAngularSeriesSpectrum([{
-            anglesDeg: pass.samples.anglesDeg,
-            currentA: pass.samples.currentA,
-            speedDegS: pass.measuredSpeedDegS,
-          }], fftReferenceSpeed) ?? pass.spectrum
-        : pass.spectrum,
-    }] : []);
-    const movingSpectra = passes.filter((series) => comparisonPasses.find((pass) => pass.id === series.id)?.direction !== "stationary");
-    const joined = independentRevs && derived?.mag
+    const angularInputs: Array<{ anglesDeg: number[]; currentA: number[]; speedDegS: number | null }> = [];
+    const passes = comparisonPasses.flatMap((pass, index) => {
+      if (!pass.spectrum) return [];
+      if (pass.direction === "stationary" || !pass.samples?.anglesDeg?.length || !fftReferenceSpeed) return [{
+        id: pass.id, label: pass.label, color: REV_COLORS[index % REV_COLORS.length], spectrum: pass.spectrum, direction: pass.direction,
+      }];
+      const length = Math.min(pass.samples.anglesDeg.length, pass.samples.currentA.length);
+      const origin = pass.samples.anglesDeg[0];
+      const travel = pass.samples.anglesDeg.slice(0, length).map((angle) => travelFromCaptureOrigin(angle, origin));
+      const count = basicRevolutionSeriesCount(travel[travel.length - 1] ?? 0);
+      const slices = !continuousRevs && count > 1
+        ? Array.from({ length: count }, (_, revolution) => {
+            const indices = travel.map((angle, sample) => ({ angle, sample })).filter(({ angle }) => Math.min(count - 1, Math.floor(Math.max(0, angle - 1e-6) / 360)) === revolution);
+            return {
+              anglesDeg: indices.map(({ angle }) => angle % 360),
+              currentA: indices.map(({ sample }) => pass.samples.currentA[sample]),
+              speedDegS: pass.measuredSpeedDegS,
+              revolution,
+            };
+          }).filter((slice) => {
+            if (slice.anglesDeg.length < 64) return false;
+            let minimum = Infinity;
+            let maximum = -Infinity;
+            for (const angle of slice.anglesDeg) {
+              if (angle < minimum) minimum = angle;
+              if (angle > maximum) maximum = angle;
+            }
+            return maximum - minimum >= 300;
+          })
+        : [{ anglesDeg: pass.samples.anglesDeg.slice(0, length), currentA: pass.samples.currentA.slice(0, length), speedDegS: pass.measuredSpeedDegS, revolution: -1 }];
+      angularInputs.push(...slices.map(({ anglesDeg, currentA, speedDegS }) => ({ anglesDeg, currentA, speedDegS })));
+      return slices.flatMap((slice, revolutionIndex) => {
+        const spectrum = averageAngularSeriesSpectrum([slice], fftReferenceSpeed) ?? (slice.revolution < 0 ? pass.spectrum : null);
+        return spectrum ? [{
+          id: slice.revolution < 0 ? pass.id : `${pass.id}:rev:${slice.revolution}`,
+          label: slice.revolution < 0 ? pass.label : `${pass.label} · rev ${slice.revolution + 1}`,
+          color: REV_COLORS[(index + revolutionIndex) % REV_COLORS.length],
+          spectrum,
+          direction: pass.direction,
+        }] : [];
+      });
+    });
+    const movingSpectra = passes.filter((series) => series.direction !== "stationary");
+    const joined = continuousRevs && !isExtendedTest && derived?.mag
       ? { dfHz: derived.df, magnitude: Array.from(derived.mag) }
       : null;
-    const angularAverage = !independentRevs ? averageAngularSeriesSpectrum(comparisonPasses.flatMap((pass) => {
-      if (pass.direction === "stationary") return [];
-      if (pass.samples?.anglesDeg?.length && pass.samples.currentA.length) return [{
-        anglesDeg: pass.samples.anglesDeg,
-        currentA: pass.samples.currentA,
-        speedDegS: pass.measuredSpeedDegS,
-      }];
+    const legacyAngularInputs = comparisonPasses.flatMap((pass) => {
+      if (pass.direction === "stationary" || pass.samples?.anglesDeg?.length) return [];
       if (pass.profile?.currentA?.length) {
         const anglesDeg: number[] = [];
         const currentA: number[] = [];
@@ -387,12 +422,13 @@ export default function FlipperLab({
         return [{ anglesDeg, currentA, speedDegS: pass.measuredSpeedDegS }];
       }
       return [];
-    })) : null;
+    });
+    const angularAverage = !continuousRevs ? averageAngularSeriesSpectrum([...angularInputs, ...legacyAngularInputs], fftReferenceSpeed ?? undefined) : null;
     const average = joined ?? angularAverage ?? averageFftSpectra((movingSpectra.length ? movingSpectra : passes).map((series) => series.spectrum));
     return average && passes.length > 1
       ? [...passes, { id: "average", label: joined ? "Serie unida" : "Promedio", color: "#f0f5ff", spectrum: average }]
       : passes;
-  }, [comparisonPasses, independentRevs, derived?.mag, derived?.df, fftReferenceSpeed]);
+  }, [comparisonPasses, continuousRevs, isExtendedTest, derived?.mag, derived?.df, fftReferenceSpeed]);
   const selectedExtendedPass = comparisonPasses.find((pass) => pass.id === selectedFftSeries);
   const manualPeakKey = extendedFftSeries.length ? selectedFftSeries : "current";
   const selectedPeaks = manualPeaksBySeries[manualPeakKey] ?? [];
@@ -430,7 +466,27 @@ export default function FlipperLab({
         angleErr.push(angleStats.sem[index]);
         currentErr.push(currentStats.sem[index]);
       }
-      return [{ id: pass.id, label: pass.label, color: REV_COLORS[passIndex % REV_COLORS.length], angles, currents, angleErr, currentErr }];
+      const origin = angles[0] ?? 0;
+      const travelAngles = angles.map((angle) => travelFromCaptureOrigin(angle, origin));
+      if (flip.overlayRevs) {
+        const revolutionCount = basicRevolutionSeriesCount(travelAngles[travelAngles.length - 1] ?? 0);
+        if (revolutionCount > 1) return Array.from({ length: revolutionCount }, (_, revolution) => {
+          const indices = travelAngles.map((angle, index) => ({ angle, index })).filter(({ angle }) => Math.min(revolutionCount - 1, Math.floor(Math.max(0, angle - 1e-6) / 360)) === revolution);
+          return {
+            id: `${pass.id}:rev:${revolution}`,
+            label: `${pass.label} · rev ${revolution + 1}`,
+            color: REV_COLORS[(passIndex + revolution) % REV_COLORS.length],
+            angles: indices.map(({ angle }) => angle % 360),
+            currents: indices.map(({ index }) => currents[index]),
+            angleErr: indices.map(({ index }) => angleErr[index]),
+            currentErr: indices.map(({ index }) => currentErr[index]),
+          };
+        });
+      }
+      const continuousAngles = !isExtendedTest && basicPasses.length > 1
+        ? travelAngles.map((angle) => angle + passIndex * 360)
+        : travelAngles;
+      return [{ id: pass.id, label: pass.label, color: REV_COLORS[passIndex % REV_COLORS.length], angles: continuousAngles, currents, angleErr, currentErr }];
     }
     if (pass.profile?.currentA?.length) {
       const currents: number[] = [];
@@ -443,7 +499,7 @@ export default function FlipperLab({
       return [{ id: pass.id, label: `${pass.label} · sesión antigua`, color: REV_COLORS[passIndex % REV_COLORS.length], angles, currents, angleErr: currents.map(() => 0), currentErr: currents.map(() => 0) }];
     }
       return [];
-    }), [comparisonPasses, flip.avgFactor]);
+    }), [comparisonPasses, flip.avgFactor, flip.overlayRevs, isExtendedTest, basicPasses.length]);
   const activeExtendedSeries = useMemo(
     () => extendedDisplaySeries.filter((series) => !hiddenExtendedSeries.has(series.id)),
     [extendedDisplaySeries, hiddenExtendedSeries],
@@ -594,7 +650,7 @@ export default function FlipperLab({
       ? circularStats(directionValues.map((item) => item.circularMeanDeg!), directionValues.map((item) => item.circularR!))
       : null;
     const ellipses = passStats.map((item) => item.ellipse).filter((ellipse): ellipse is NonNullable<typeof ellipse> => ellipse !== null);
-    if (independentRevs && derived) {
+    if (continuousRevs && !isExtendedTest && derived) {
       const ellipse = derived.ellipse;
       return {
         mode: "joined" as const,
@@ -627,7 +683,7 @@ export default function FlipperLab({
       totalSamples: passStats.reduce((sum, item) => sum + item.n, 0),
       totalDurationS: passStats.reduce((sum, item) => sum + item.durationS, 0),
     };
-  }, [comparisonPasses, independentRevs, derived]);
+  }, [comparisonPasses, continuousRevs, isExtendedTest, derived]);
   const aiPrompt = useMemo(() => {
     if (!derived && !extendedSummary) return "";
     const axis = flip.captureMetadata.axis === 1 ? "AR" : flip.captureMetadata.axis === 2 ? "DEC" : "no indicado";
@@ -636,6 +692,7 @@ export default function FlipperLab({
       "Actúa como analista técnico de una montura astronómica Sky-Watcher NEQ6.",
       "Interpreta el perfil angular de corriente y sus espectros sin presuponer el origen del problema.",
       "Contrasta hipótesis de ejes o alineación, rodamientos, transmisión, motor/driver, electrónica y adquisición; no favorezcas una familia ni afirmes una causa sin evidencia suficiente.",
+      "Intenta asociar las frecuencias y periodicidades significativas con elementos concretos de la NEQ6 usando relaciones de transmisión y datos técnicos conocidos. Si el proveedor dispone de búsqueda, consulta fuentes técnicas; separa claramente coincidencias documentadas de inferencias y no inventes relaciones ausentes.",
       "Si se adjunta un CSV, úsalo como fuente principal junto al resumen y señala cualquier limitación del muestreo.",
       "Responde de forma concisa, sin introducción ni explicaciones generales, usando exactamente estas tres secciones:",
       "1. ANÁLISIS DE RESULTADOS: resume los patrones relevantes y cita los valores que los sostienen.",
@@ -647,7 +704,7 @@ export default function FlipperLab({
       `Sentido: ${direction}`,
       `Tipo: ${flip.extendedAnalysis ? "test extendido" : "test básico"}`,
       `Media móvil: ${flip.avgFactor} muestras`,
-      `Modo de revoluciones: ${independentRevs ? "serie continua; adquisición temporal concatenada" : "revoluciones independientes; superpuestas y promediadas entre vueltas"}`,
+      `Modo de revoluciones: ${continuousRevs ? "serie continua; adquisición temporal concatenada" : "revoluciones independientes; superpuestas y promediadas entre vueltas"}`,
     ];
     if (derived && !flip.extendedAnalysis) {
       lines.push(
@@ -666,9 +723,9 @@ export default function FlipperLab({
     if (!flip.extendedAnalysis && extendedSummary && basicPasses.length) {
       lines.push(
         `Revoluciones analizadas: ${basicPasses.length}`,
-        `${independentRevs ? "Corriente de la serie unida" : "Corriente media entre vueltas"}: ${extendedSummary.current.mean.toFixed(6)} ± ${extendedSummary.current.uncertainty.toFixed(6)} A`,
-        `${independentRevs ? "Velocidad de la serie" : "Velocidad media"}: ${extendedSummary.speed.mean.toFixed(6)}${independentRevs ? "" : ` ± ${extendedSummary.speed.uncertainty.toFixed(6)}`} °/s`,
-        `${independentRevs ? "Concentración circular de la serie" : "Concentración circular media"}: ${extendedSummary.circularR.mean.toFixed(6)}${independentRevs ? "" : ` ± ${extendedSummary.circularR.uncertainty.toFixed(6)}`}`,
+        `${continuousRevs ? "Corriente de la serie unida" : "Corriente media entre vueltas"}: ${extendedSummary.current.mean.toFixed(6)} ± ${extendedSummary.current.uncertainty.toFixed(6)} A`,
+        `${continuousRevs ? "Velocidad de la serie" : "Velocidad media"}: ${extendedSummary.speed.mean.toFixed(6)}${continuousRevs ? "" : ` ± ${extendedSummary.speed.uncertainty.toFixed(6)}`} °/s`,
+        `${continuousRevs ? "Concentración circular de la serie" : "Concentración circular media"}: ${extendedSummary.circularR.mean.toFixed(6)}${continuousRevs ? "" : ` ± ${extendedSummary.circularR.uncertainty.toFixed(6)}`}`,
         "Resumen por revolución:",
       );
       basicPasses.forEach((pass) => {
@@ -689,7 +746,7 @@ export default function FlipperLab({
       extendedPasses.forEach((pass) => lines.push(`${pass.label}: ${pass.statistics.meanA.toFixed(6)} ± ${pass.statistics.semA.toFixed(6)} A; ${pass.statistics.measuredSpeedDegS?.toFixed(6) ?? "?"} °/s; ${pass.statistics.angleSpanDeg.toFixed(3)}°; ${pass.peaks.length} picos`));
     }
     return lines.join("\n");
-  }, [derived, extendedSummary, extendedPasses, basicPasses, flip.avgFactor, flip.captureMetadata, flip.extendedAnalysis, polarLoadAnalysis, independentRevs]);
+  }, [derived, extendedSummary, extendedPasses, basicPasses, flip.avgFactor, flip.captureMetadata, flip.extendedAnalysis, polarLoadAnalysis, continuousRevs]);
   void aiResponseVersion;
   const currentAiFingerprint = analysisFingerprint(aiPrompt);
   const currentAiAnalyses = aiSettings.enabled ? aiSettings.providers.flatMap((provider) => {
@@ -1106,7 +1163,7 @@ export default function FlipperLab({
     const X = (a: number) => L + ((a - minAngle) / (maxAngle - minAngle || 1)) * (w - L - Rg);
     const Y = (v: number) => h - Bm - ((v - minI) / (maxI - minI || 1)) * (h - T - Bm);
     if (polarLoadAnalysis?.zones.length && extendedDisplaySeries.length) {
-      const repetitions = sequentialCartesian ? basicPasses.length : 1;
+      const repetitions = sequentialCartesian ? totalRevolutionCount : 1;
       for (let revolution = 0; revolution < repetitions; revolution++) {
         for (const zone of polarLoadAnalysis.zones) {
           const ranges = zone.startDeg + zone.widthDeg <= 360
@@ -1134,6 +1191,8 @@ export default function FlipperLab({
     ctx.font = "8.5px IBM Plex Mono, monospace";
     ctx.strokeStyle = "rgba(29,48,80,0.9)";
     ctx.fillStyle = "#42567a";
+    const yTickStep = (maxI - minI) / 4;
+    const yDecimals = axisDecimals(yTickStep);
     for (let g = 0; g <= 4; g++) {
       const v = minI + ((maxI - minI) * g) / 4;
       const y = Y(v);
@@ -1142,7 +1201,7 @@ export default function FlipperLab({
       ctx.lineTo(w - Rg, y);
       ctx.stroke();
       ctx.textAlign = "right";
-      ctx.fillText(v.toFixed(2), L - 4, y + 3);
+      ctx.fillText(v.toFixed(yDecimals), L - 4, y + 3);
     }
     ctx.textAlign = "center";
     for (let tick = 0; tick <= 6; tick++) {
@@ -1155,6 +1214,27 @@ export default function FlipperLab({
     ctx.beginPath();
     ctx.rect(L, T, w - L - Rg, h - T - Bm);
     ctx.clip();
+    if (polarLoadAnalysis) {
+      ctx.save();
+      ctx.strokeStyle = "rgba(76,201,240,0.72)";
+      ctx.fillStyle = "rgba(76,201,240,0.9)";
+      ctx.lineWidth = 1;
+      ctx.setLineDash([4, 5]);
+      const repetitions = Math.max(1, Math.ceil(cartesianFullAngleDeg / 360));
+      for (let revolution = 0; revolution < repetitions; revolution++) {
+        const angle = polarLoadAnalysis.circular.meanDeg + revolution * 360;
+        if (angle < minAngle || angle > maxAngle) continue;
+        const x = X(angle);
+        ctx.beginPath(); ctx.moveTo(x, T); ctx.lineTo(x, h - Bm); ctx.stroke();
+        if (revolution === 0) {
+          ctx.setLineDash([]);
+          ctx.textAlign = "left";
+          ctx.fillText(`carga ${polarLoadAnalysis.circular.meanDeg.toFixed(1)}°`, Math.min(w - 75, x + 4), T + 10);
+          ctx.setLineDash([4, 5]);
+        }
+      }
+      ctx.restore();
+    }
     if (data && data.factor > 1) {
       ctx.strokeStyle = "rgba(76,201,240,0.85)";
       ctx.lineWidth = 1;
@@ -1222,7 +1302,7 @@ export default function FlipperLab({
       const stride = renderStride(series.currents.length, w);
       for (let i = 0; i < series.currents.length; i += stride) {
         const current = series.currents[i];
-        const phase = cartesianAngle(series.angles[i]);
+        const phase = continuousRevs ? series.angles[i] : ((series.angles[i] % 360) + 360) % 360;
         if (phase < minAngle || phase > maxAngle || !Number.isFinite(current)) {
           started = false;
           previousPhase = null;
@@ -1240,7 +1320,7 @@ export default function FlipperLab({
       ctx.lineWidth = 0.8;
       const errorStride = Math.max(stride, Math.ceil(series.currents.length / Math.max(40, w / 12)));
       for (let i = 0; i < series.currents.length; i += errorStride) {
-        const phase = cartesianAngle(series.angles[i]);
+        const phase = continuousRevs ? series.angles[i] : ((series.angles[i] % 360) + 360) % 360;
         if (phase < minAngle || phase > maxAngle || !Number.isFinite(series.currents[i])) continue;
         const x = X(phase), y = Y(series.currents[i]);
         const y0 = Y(series.currents[i] - series.currentErr[i]);
@@ -1267,13 +1347,20 @@ export default function FlipperLab({
           angleErr: meanSeries.angleErr.filter((_, index) => valid[index]),
           currentErr: meanSeries.currentErr.filter((_, index) => valid[index]),
         };
-        const meanCopies = independentRevs && data
-          ? [{
+        const meanCopies = continuousRevs
+          ? isExtendedTest
+            ? Array.from({ length: totalRevolutionCount }, (_, revolution) => ({
+                angles: compact.angles.map((angle) => angle + revolution * 360),
+                currents: compact.currents,
+                angleErr: compact.angleErr,
+                currentErr: compact.currentErr,
+              }))
+            : data ? [{
               angles: Array.from(data.angles),
               currents: Array.from(data.amps),
               angleErr: Array.from(data.angleErr),
               currentErr: Array.from(data.ampsErr),
-            }]
+            }] : [compact]
           : [compact];
         meanCopies.forEach((series) => plotSeries(series, "rgba(240,245,255,0.62)", 2.4, false));
         ctx.strokeStyle = "rgba(240,245,255,0.6)";
@@ -1598,7 +1685,7 @@ export default function FlipperLab({
             />
             <datalist id="average-presets">{AVGS.map((value) => <option key={value} value={value} />)}</datalist>
           </label>
-          {!isExtendedTest && basicPasses.length > 1 && <label
+          {hasMultipleRevolutions && <label
             className="hidden cursor-pointer items-center gap-1.5 font-mono text-[10px] text-dim md:flex"
             title="Activada: las revoluciones se consideran independientes, se superponen en 0–360° y se promedian. Desactivada: forman una serie continua en 0–360°, 360–720°…; la FFT y las estadísticas usan la adquisición concatenada."
           >
@@ -1635,12 +1722,12 @@ export default function FlipperLab({
           <span className="text-dim">muestras </span>
           <span className="tabular-nums text-fog">{n.toLocaleString("es-ES")}</span>
         </span>
-        {(view === "stats" || view === "fft") && basicPasses.length > 1 && !isExtendedTest && (
+        {(view === "stats" || view === "fft") && hasMultipleRevolutions && (
           <span
             className="rounded border border-ion/40 bg-ion/5 px-1.5 py-px text-ion"
-            title={independentRevs ? "Serie continua: estadísticas y FFT calculadas sobre todas las revoluciones concatenadas." : "Revoluciones independientes superpuestas: estadísticas y FFT promediadas entre vueltas sobre 0–360°."}
+            title={continuousRevs ? "Serie continua: estadísticas y FFT calculadas sobre todas las revoluciones concatenadas." : "Revoluciones independientes superpuestas: estadísticas y FFT promediadas entre vueltas sobre 0–360°."}
           >
-            {independentRevs ? "SERIE CONTINUA" : "REVS. INDEPENDIENTES · SUPERPUESTAS"}
+            {continuousRevs ? "SERIE CONTINUA" : "REVS. INDEPENDIENTES · SUPERPUESTAS"}
           </span>
         )}
         <span className="rounded border border-line bg-[#0c1930] px-1.5 py-px">
@@ -1699,7 +1786,7 @@ export default function FlipperLab({
                     onClick={() => setShowExtendedMean((visible) => !visible)}
                     className={`rounded border border-fog px-2 py-0.5 text-fog transition-opacity ${showExtendedMean ? "opacity-80" : "opacity-35"}`}
                   >
-                    ━ {independentRevs ? "SERIE UNIDA" : "PROMEDIO"}
+                    ━ {continuousRevs ? "SERIE UNIDA" : "PROMEDIO"}
                   </button>
                 )}
               </div>
@@ -1853,26 +1940,26 @@ export default function FlipperLab({
         ) : extendedSummary ? (
           <div className="space-y-2">
             <StatSection
-              title={independentRevs ? "Resumen de la serie unida" : isExtendedTest ? "Resumen medio del test extendido" : "Resumen medio del test básico"}
-              subtitle={independentRevs
+              title={continuousRevs ? "Resumen de la serie unida" : isExtendedTest ? "Resumen medio del test extendido" : "Resumen medio del test básico"}
+              subtitle={continuousRevs
                 ? `${comparisonPasses.length} revoluciones consecutivas · estadísticas sobre la adquisición completa`
                 : isExtendedTest
                 ? `${comparisonPasses.length} fases terminadas · ± = incertidumbre estándar entre las vueltas`
-                : `${comparisonPasses.length} ${comparisonPasses.length === 1 ? "revolución" : "revoluciones"} · ± = incertidumbre estándar entre vueltas`}
+                : `${comparisonPasses.length} ${comparisonPasses.length === 1 ? "revolución" : "revoluciones"} `}
             >
               <StatCell k="corriente media" v={`${extendedSummary.current.mean.toFixed(5)} ± ${extendedSummary.current.uncertainty.toFixed(5)} A`} tone="text-mint" />
               <StatCell k="N total" v={extendedSummary.totalSamples.toLocaleString("es-ES")} />
               <StatCell k="tiempo total adquisición" v={`${extendedSummary.totalDurationS.toFixed(1)} s`} />
-              <StatCell k={independentRevs ? "tasa ADC efectiva" : "tasa ADC media"} v={independentRevs ? `${extendedSummary.rate.mean.toFixed(1)} Hz` : `${extendedSummary.rate.mean.toFixed(1)} ± ${extendedSummary.rate.uncertainty.toFixed(1)} Hz`} />
-              <StatCell k={independentRevs ? "velocidad de la serie" : "velocidad media"} v={independentRevs ? `${extendedSummary.speed.mean.toFixed(4)} °/s` : `${extendedSummary.speed.mean.toFixed(4)} ± ${extendedSummary.speed.uncertainty.toFixed(4)} °/s`} tone="text-ion" />
+              <StatCell k={continuousRevs ? "tasa ADC efectiva" : "tasa ADC media"} v={continuousRevs ? `${extendedSummary.rate.mean.toFixed(1)} Hz` : `${extendedSummary.rate.mean.toFixed(1)} ± ${extendedSummary.rate.uncertainty.toFixed(1)} Hz`} />
+              <StatCell k={continuousRevs ? "velocidad de la serie" : "velocidad media"} v={continuousRevs ? `${extendedSummary.speed.mean.toFixed(4)} °/s` : `${extendedSummary.speed.mean.toFixed(4)} ± ${extendedSummary.speed.uncertainty.toFixed(4)} °/s`} tone="text-ion" />
               <StatCell k="máximo global" v={`${extendedSummary.maxA.toFixed(4)} A`} tone="text-ember" />
-              <StatCell k={independentRevs ? "concentración R̄" : "concentración R̄ media"} v={independentRevs ? extendedSummary.circularR.mean.toFixed(4) : `${extendedSummary.circularR.mean.toFixed(4)} ± ${extendedSummary.circularR.uncertainty.toFixed(4)}`} tone="text-ion" />
+              <StatCell k={continuousRevs ? "concentración R̄" : "concentración R̄ media"} v={continuousRevs ? extendedSummary.circularR.mean.toFixed(4) : `${extendedSummary.circularR.mean.toFixed(4)} ± ${extendedSummary.circularR.uncertainty.toFixed(4)}`} tone="text-ion" />
               {extendedSummary.direction && <StatCell k="dirección de carga media" v={`${extendedSummary.direction.mean.toFixed(2)}° ± ${extendedSummary.direction.uncertainty.toFixed(2)}°${extendedSummary.circularR.mean < 0.05 ? " · no representativa" : ""}`} tone="text-ion" />}
               {polarLoadAnalysis?.dominantZone && <StatCell k="zona sobre la media" v={`${polarLoadAnalysis.dominantZone.startDeg.toFixed(0)}° → ${polarLoadAnalysis.dominantZone.endDeg.toFixed(0)}° · ancho ${polarLoadAnalysis.dominantZone.widthDeg.toFixed(0)}° · ${polarLoadAnalysis.dominantZone.meanA.toFixed(4)} ± ${polarLoadAnalysis.dominantZone.uncertaintyA.toFixed(4)} A`} tone="text-ember" />}
-              {extendedSummary.semiMajor && <StatCell k={independentRevs ? "semieje a" : "semieje a medio"} v={independentRevs ? `${extendedSummary.semiMajor.mean.toFixed(4)} A` : `${extendedSummary.semiMajor.mean.toFixed(4)} ± ${extendedSummary.semiMajor.uncertainty.toFixed(4)} A`} tone="text-ion" />}
-              {extendedSummary.semiMinor && <StatCell k={independentRevs ? "semieje b" : "semieje b medio"} v={independentRevs ? `${extendedSummary.semiMinor.mean.toFixed(4)} A` : `${extendedSummary.semiMinor.mean.toFixed(4)} ± ${extendedSummary.semiMinor.uncertainty.toFixed(4)} A`} tone="text-ion" />}
-              {extendedSummary.ellipseRatio && <StatCell k={independentRevs ? "cociente a/b" : "cociente a/b medio"} v={independentRevs ? extendedSummary.ellipseRatio.mean.toFixed(4) : `${extendedSummary.ellipseRatio.mean.toFixed(4)} ± ${extendedSummary.ellipseRatio.uncertainty.toFixed(4)}`} tone="text-ion" />}
-              {extendedSummary.ellipseAngle && <StatCell k={independentRevs ? "inclinación φ" : "inclinación φ media"} v={independentRevs ? `${extendedSummary.ellipseAngle.mean.toFixed(2)}°` : `${extendedSummary.ellipseAngle.mean.toFixed(2)}° ± ${extendedSummary.ellipseAngle.uncertainty.toFixed(2)}°`} tone="text-ion" />}
+              {extendedSummary.semiMajor && <StatCell k={continuousRevs ? "semieje a" : "semieje a medio"} v={continuousRevs ? `${extendedSummary.semiMajor.mean.toFixed(4)} A` : `${extendedSummary.semiMajor.mean.toFixed(4)} ± ${extendedSummary.semiMajor.uncertainty.toFixed(4)} A`} tone="text-ion" />}
+              {extendedSummary.semiMinor && <StatCell k={continuousRevs ? "semieje b" : "semieje b medio"} v={continuousRevs ? `${extendedSummary.semiMinor.mean.toFixed(4)} A` : `${extendedSummary.semiMinor.mean.toFixed(4)} ± ${extendedSummary.semiMinor.uncertainty.toFixed(4)} A`} tone="text-ion" />}
+              {extendedSummary.ellipseRatio && <StatCell k={continuousRevs ? "cociente a/b" : "cociente a/b medio"} v={continuousRevs ? extendedSummary.ellipseRatio.mean.toFixed(4) : `${extendedSummary.ellipseRatio.mean.toFixed(4)} ± ${extendedSummary.ellipseRatio.uncertainty.toFixed(4)}`} tone="text-ion" />}
+              {extendedSummary.ellipseAngle && <StatCell k={continuousRevs ? "inclinación φ" : "inclinación φ media"} v={continuousRevs ? `${extendedSummary.ellipseAngle.mean.toFixed(2)}°` : `${extendedSummary.ellipseAngle.mean.toFixed(2)}° ± ${extendedSummary.ellipseAngle.uncertainty.toFixed(2)}°`} tone="text-ion" />}
             </StatSection>
             {comparisonPasses.map((pass, index) => {
               const st = pass.statistics;
