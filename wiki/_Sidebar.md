@@ -9,7 +9,7 @@
 - [Configuración del Flipper](Configuracion-del-Flipper)
 - [Protocolo del logger](Protocolo-del-logger-Flipper)
 - [Procedimiento de ensayo](Procedimiento-de-ensayo)
-- [Análisis de datos e IA](Analisis-de-datos)
+- [Análisis de datos](Analisis-de-datos)
 - [Datos y exportación](Formato-de-datos-y-exportacion)
 - [Registro y diagnóstico](Registro-y-diagnostico)
 - [Seguridad y autoría](Seguridad-limitaciones-y-autoria)

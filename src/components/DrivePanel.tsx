@@ -105,9 +105,7 @@ export default function DrivePanel({
         <span className="font-display text-[11px] font-bold tracking-[0.24em] text-fog">
           CONTROL DE GIRO
         </span>
-        <span className="hidden font-mono text-[9.5px] text-dim xl:inline">
-          :j→:G→:I/:T→:S→:M→:J
-        </span>
+        
         <span
           className={`ml-auto rounded border px-2 py-0.5 font-mono text-[9.5px] tracking-[0.14em] transition-colors ${
             move.running

@@ -181,16 +181,11 @@ La clasificación usa tolerancias de coincidencia y es orientativa. Un pico pued
 tener varios orígenes y una componente mecánica puede excitar una resonancia
 eléctrica o estructural.
 
-## Análisis IA opcional
+## Análisis IA (opcional)
 
 ![Análisis IA integrado](images/analisis-ia.png)
 
-Esta función permanece desactivada por defecto. En **Ajustes → Análisis IA**
-se activa el interruptor y se edita un proveedor existente con el lápiz, o se
-añade uno nuevo. La configuración y las respuestas se guardan sólo en el
-navegador del usuario.
-
-Al analizar, la aplicación entrega al proveedor un resumen de la adquisición,
+Al analizar, la aplicación entrega al proveedor (tres por defecto pero se pueden configurar más) un resumen de la adquisición,
 las estadísticas y los picos espectrales; cuando el proveedor lo admite,
 adjunta también los datos. El informe pide tres apartados breves: resultados,
 causas más probables y riesgo. No presupone un defecto concreto: debe valorar
