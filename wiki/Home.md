@@ -32,7 +32,7 @@ por serie. Para ello habría que modificar ligeramnte el código o contactar con
 - [Configuración detallada del Flipper](Configuracion-del-Flipper.md)
 - [Protocolo del logger Flipper](Protocolo-del-logger-Flipper.md)
 - [Procedimiento de ensayo](Procedimiento-de-ensayo.md)
-- [Análisis de datos](Analisis-de-datos.md)
+- [Análisis de datos e IA](Analisis-de-datos.md)
 - [Formato de datos y exportación](Formato-de-datos-y-exportacion.md)
 - [Registro y diagnóstico](Registro-y-diagnostico.md)
 - [Recorrido por la interfaz](Recorrido-por-la-interfaz.md)

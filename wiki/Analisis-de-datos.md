@@ -181,6 +181,28 @@ La clasificación usa tolerancias de coincidencia y es orientativa. Un pico pued
 tener varios orígenes y una componente mecánica puede excitar una resonancia
 eléctrica o estructural.
 
+## Análisis IA opcional
+
+![Análisis IA integrado](images/analisis-ia.png)
+
+Esta función permanece desactivada por defecto. En **Ajustes → Análisis IA**
+se activa el interruptor y se edita un proveedor existente con el lápiz, o se
+añade uno nuevo. La configuración y las respuestas se guardan sólo en el
+navegador del usuario.
+
+Al analizar, la aplicación entrega al proveedor un resumen de la adquisición,
+las estadísticas y los picos espectrales; cuando el proveedor lo admite,
+adjunta también los datos. El informe pide tres apartados breves: resultados,
+causas más probables y riesgo. No presupone un defecto concreto: debe valorar
+alineación y flexión de ejes, rodamientos, transmisión, motor/driver,
+electrónica y artefactos de adquisición. También puede relacionar
+periodicidades con relaciones de transmisión conocidas, diferenciando una
+coincidencia documentada de una inferencia.
+
+El resultado es una hipótesis de trabajo y no sustituye la repetición del
+ensayo ni la inspección mecánica o eléctrica independiente. Se conserva con la
+sesión y se incluye en su exportación si esta función está activada.
+
 ## Comparación correcta de sesiones
 
 1. Mantén carga, equilibrado, sentido, velocidad, tasa y calibración.

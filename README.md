@@ -92,6 +92,13 @@ el ADC.
 - **Estadísticas:** corriente, ruido, tasa efectiva, muestras por grado,
   parámetros de la elipse, esfericidad y estadísticas circulares.
 ![Análisis estadisticas](docs\images\test-en-ejecucion-estadisticas.png)
+- **Análisis IA opcional:** compara el resumen, las series y los espectros del
+  ensayo con un proveedor configurado por el usuario. El informe separa
+  resultados, causas probables y riesgo; puede proponer hipótesis mecánicas,
+  de transmisión, electrónicas o de adquisición, pero siempre requiere
+  contrastación experimental.
+![Análisis IA](docs/images/analisis-ia.png)
+
 ## Evolución prevista
 
 El Flipper Zero se empleó porque era el dispositivo disponible durante unas
