@@ -48,7 +48,7 @@ export default function HelpModal({ open, onClose }: Props) {
       <section className="flex max-h-[92dvh] w-full max-w-4xl flex-col overflow-hidden rounded-md border border-ember/40 bg-[#081120] shadow-[0_20px_80px_rgba(0,0,0,0.75)]">
         <header className="flex items-center border-b border-line bg-[#0a1424] px-4 py-3">
           <div>
-            <h2 className="font-display text-[13px] font-bold tracking-[0.2em] text-fog">AYUDA · NEQ6 WORM-GEAR</h2>
+            <h2 className="font-display text-[13px] font-bold tracking-[0.2em] text-fog">AYUDA · NEQ6 DIAGNÓSTICO</h2>
             <p className="mt-1 font-mono text-[9.5px] text-dim">Control de montura y perfil de corriente angular</p>
           </div>
           <button onClick={onClose} className="ml-auto rounded border border-line px-3 py-1.5 font-display text-[10px] text-fog hover:border-ember/50 hover:text-ember">CERRAR · ESC</button>

@@ -1532,7 +1532,7 @@ export default function App() {
         <IconCrosshair className="spin-slow h-7 w-7 shrink-0 text-ember" />
         <div className="min-w-0">
           <h1 className="font-display text-[15px] font-bold leading-none tracking-[0.16em] text-[#e8f0ff]">
-            NEQ6 <span className="text-ember">-</span> AJUSTE SINFÍN-CORONA
+            NEQ6 <span className="text-ember">-</span> DIAGNÓSTICO ELECTROMECÁNICO
           </h1>
         </div>
 
