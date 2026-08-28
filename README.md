@@ -14,7 +14,7 @@ motores detenidos y con distintas velocidades también puede señalar anomalías
 eléctricas, del driver, de alimentación o de adquisición. La aplicación permite
 además comandar la montura mediante EQDirect por puerto serie.
 ![Test de eje en ejecución](docs/images/test-en-ejecucion.png)
-![Serial view](docs\images\serial_view.png)
+![Serial view](docs/images/serial_view.png)
 
 ## Funciones principales
 
@@ -87,11 +87,11 @@ el ADC.
 ![Análisis cartesiano](docs/images/analisis-cartesiano.png)
 - **FFT básica:** cinco picos automáticos y picos manuales; convierte cada periodo a
   separación angular usando la velocidad medida.
-![Análisis Fourier 1](docs\images\test-en-ejecucion-fft.png)
-![Análisis Fourier 2](docs\images\test-en-ejecucion-fft-analisis.png)
+![Análisis Fourier 1](docs/images/test-en-ejecucion-fft.png)
+![Análisis Fourier 2](docs/images/test-en-ejecucion-fft-analisis.png)
 - **Estadísticas:** corriente, ruido, tasa efectiva, muestras por grado,
   parámetros de la elipse, esfericidad y estadísticas circulares.
-![Análisis estadisticas](docs\images\test-en-ejecucion-estadisticas.png)
+![Análisis estadisticas](docs/images/test-en-ejecucion-estadisticas.png)
 - **Análisis IA opcional:** compara el resumen, las series y los espectros del
   ensayo con un proveedor configurado por el usuario. El informe separa
   resultados, causas probables y riesgo; puede proponer hipótesis mecánicas,
